@@ -162,4 +162,72 @@ public class JobExecutionQueryServiceTests
 
         Assert.Equal(["b2"], entries.Select(e => e.Message));
     }
+
+    [Fact]
+    public async Task GetExecutionsAsync_FlagsRowsWithASummary_WithoutSelectingTheText()
+    {
+        // The list projection deliberately leaves ResultSummary out — the grid only needs to know
+        // whether one exists, and the column is unbounded.
+        using var factory = new SqliteDbContextFactory();
+        var baseline = new DateTimeOffset(DateTime.UtcNow.Date) + TimeSpan.FromHours(12);
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "With summary",
+                JobTypeName = "Test.WithSummary",
+                StartedAt = baseline.AddMinutes(1),
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test",
+                ResultSummary = "Totals\n------\n  Rows: 12"
+            });
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Without summary",
+                JobTypeName = "Test.WithoutSummary",
+                StartedAt = baseline,
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test"
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var page = await new JobExecutionQueryService(factory)
+            .GetExecutionsAsync(new ExecutionFilter(), after: null, pageSize: 10);
+
+        Assert.True(Assert.Single(page.Items, i => i.JobName == "With summary").HasResultSummary);
+        Assert.False(Assert.Single(page.Items, i => i.JobName == "Without summary").HasResultSummary);
+    }
+
+    [Fact]
+    public async Task GetExecutionAsync_ReturnsTheSummaryWithItsNewlinesIntact()
+    {
+        using var factory = new SqliteDbContextFactory();
+        var summary = "Totals\n------\n  Rows: 12\n  Skipped: 3";
+        long executionId;
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var execution = new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Job A",
+                JobTypeName = "Test.JobA",
+                StartedAt = DateTimeOffset.UtcNow,
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test",
+                ResultSummary = summary
+            };
+            dbContext.JobExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            executionId = execution.Id;
+        }
+
+        var loaded = await new JobExecutionQueryService(factory).GetExecutionAsync(executionId);
+
+        Assert.Equal(summary, loaded!.ResultSummary);
+    }
 }

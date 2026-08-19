@@ -1,4 +1,5 @@
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
+using OptiPowerTools.ScheduledJobsInsights.Logging;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Configuration;
 
@@ -14,5 +15,6 @@ public class OptiPowerToolScheduledJobsInsightsOptionsTests
         Assert.True(options.EnableStandardAuthorization);
         Assert.Equal(CmsMenuPlacement.CmsSection, options.MenuPlacement);
         Assert.Contains("Administrators", options.AuthorizedRoles);
+        Assert.Equal(JobResultSummary.DefaultMaxLength, options.MaxResultSummaryLength);
     }
 }

@@ -112,4 +112,138 @@ public class LoggedScheduledJobBaseTests
 
         writer.Received(1).BeginExecution(Arg.Any<Guid>(), nameof(TestLoggedJob), Arg.Any<string>());
     }
+
+    [Fact]
+    public void Execute_WithNoSummaryRecorded_NeverWritesOne()
+    {
+        // The summary is opt-in: a job that never touches it must not cost an extra round trip.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(11L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>());
+
+        job.Execute();
+
+        writer.DidNotReceive().SetResultSummary(Arg.Any<long>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Execute_WithSummaryRecorded_PersistsItBeforeCompleting()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(12L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "12 rows exported"
+        };
+
+        job.Execute();
+
+        // Ordering matters: the detail view reads both from the same row, and a summary landing after
+        // the execution is marked finished would briefly show a completed run with no summary.
+        Received.InOrder(() =>
+        {
+            writer.SetResultSummary(12L, Arg.Is<string>(text => text.StartsWith("12 rows exported")));
+            writer.Complete(12L, true, Arg.Any<string>(), null);
+        });
+    }
+
+    [Fact]
+    public void Execute_PreservesNewlinesInTheSummary()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(13L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "first line"
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(13L, $"first line{Environment.NewLine}");
+    }
+
+    [Fact]
+    public void Execute_OnFailure_StillPersistsTheSummary()
+    {
+        // Whatever the job managed to summarise before throwing is usually the most useful thing on
+        // the page when diagnosing that failure.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(14L);
+        var thrown = new InvalidOperationException("boom");
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "aborted at row 42",
+            ExceptionToThrow = thrown
+        };
+
+        Assert.Throws<InvalidOperationException>(() => job.Execute());
+
+        writer.Received(1).SetResultSummary(14L, Arg.Is<string>(text => text.Contains("aborted at row 42")));
+        writer.Received(1).Complete(14L, false, null, thrown);
+    }
+
+    [Fact]
+    public void SetSummary_ReplacesTheSummaryContent()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(15L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "the whole summary",
+            UseSetSummary = true
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(15L, "the whole summary");
+    }
+
+    [Fact]
+    public void FlushSummary_WritesACheckpoint_AndTheFinalFlushStillFollows()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(16L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "batch 1 committed",
+            CheckpointSummary = true
+        };
+
+        job.Execute();
+
+        // Once mid-run, once on the way out — each overwriting the last.
+        writer.Received(2).SetResultSummary(16L, Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Summary_HonoursTheWriterConfiguredLimit()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(17L);
+        writer.MaxResultSummaryLength.Returns(24);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = new string('x', 500)
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(17L, Arg.Is<string>(text => text.Length <= 24));
+    }
+
+    [Fact]
+    public void Summary_FallsBackToTheDefaultLimit_WhenTheWriterReportsNone()
+    {
+        // A substituted writer reports 0 for an int property, and a job must not blow up on that.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(18L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "still recorded"
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(18L, Arg.Is<string>(text => text.Contains("still recorded")));
+    }
 }

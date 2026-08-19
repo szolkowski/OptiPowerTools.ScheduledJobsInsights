@@ -39,6 +39,18 @@
     white-space: nowrap;
 }
 
+.summary-marker {
+    display: inline-block;
+    margin-right: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    opacity: 0.7;
+}
+
 .pagination {
     display: flex;
     gap: 0.5rem;

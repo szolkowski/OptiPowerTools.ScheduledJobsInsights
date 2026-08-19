@@ -50,6 +50,18 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     public TimeSpan LogFlushInterval { get; set; } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
+    /// Maximum number of characters retained in an execution's result summary. Appends past this
+    /// limit are discarded and the stored text ends with a truncation notice.
+    /// Defaults to <see cref="Logging.JobResultSummary.DefaultMaxLength"/> (100,000).
+    /// </summary>
+    /// <remarks>
+    /// The summary is stored in a single unbounded column, so this is the only thing standing
+    /// between a job that appends a line per processed row and a multi-megabyte row. Values of zero
+    /// or less are ignored in favour of the default.
+    /// </remarks>
+    public int MaxResultSummaryLength { get; set; } = Logging.JobResultSummary.DefaultMaxLength;
+
+    /// <summary>
     /// Number of executions shown per page in the Blazor execution list.
     /// Defaults to 50.
     /// </summary>

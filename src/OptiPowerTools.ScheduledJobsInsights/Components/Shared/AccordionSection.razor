@@ -1,0 +1,42 @@
+@* A collapsible section of the execution detail view.
+
+   Built on native <details>/<summary> rather than a click handler and a bool, for three reasons:
+   it expands and collapses during prerendering before the Blazor circuit connects — the same
+   progressive-enhancement rule the execution list follows with its real <a href> rows; keyboard and
+   screen-reader behaviour comes for free; and there is no component state, so the detail page's
+   two-second poll cannot collapse a section the user just opened.
+
+   Open is only the *initial* state. Blazor renders the open attribute once and, because the value
+   never changes between renders, the diff never touches it again — so a section the user toggles by
+   hand keeps its state across every subsequent re-render. *@
+
+<details class="accordion" open="@Open">
+    <summary class="accordion-summary">
+        <span class="accordion-title">@Title</span>
+        @if (!string.IsNullOrEmpty(Badge))
+        {
+            <span class="accordion-badge">@Badge</span>
+        }
+    </summary>
+    <div class="accordion-body">
+        @ChildContent
+    </div>
+</details>
+
+@code {
+    /// <summary>Heading shown on the always-visible summary row.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Optional short annotation beside the title — a count, a size, a unit.</summary>
+    [Parameter]
+    public string? Badge { get; set; }
+
+    /// <summary>Whether the section starts expanded. Defaults to collapsed.</summary>
+    [Parameter]
+    public bool Open { get; set; }
+
+    /// <summary>The section's content, rendered only once expanded.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

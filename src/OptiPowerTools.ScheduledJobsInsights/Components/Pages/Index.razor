@@ -85,7 +85,15 @@ else
                     </td>
                     <td>@execution.StartedAt.LocalDateTime.ToString("g")</td>
                     <td>@FormatDuration(execution)</td>
-                    <td class="result-cell">@(execution.ResultMessage ?? execution.ExceptionMessage)</td>
+                    <td class="result-cell">
+                        @* Marks rows worth opening for their summary. The flag is computed in SQL,
+                           so the summary text itself never enters the list query. *@
+                        @if (execution.HasResultSummary)
+                        {
+                            <span class="summary-marker" title="This execution recorded a result summary">summary</span>
+                        }
+                        @(execution.ResultMessage ?? execution.ExceptionMessage)
+                    </td>
                 </tr>
             }
         </tbody>
@@ -179,7 +187,7 @@ else
     private void GoToDetail(long executionId) =>
         Navigation.NavigateTo(DetailUrl(executionId), forceLoad: true);
 
-    private static string FormatDuration(Data.Entities.JobExecution execution)
+    private static string FormatDuration(ExecutionListItem execution)
     {
         if (execution.CompletedAt is null)
             return "—";

@@ -27,6 +27,13 @@ internal class JobExecution
     /// <summary>The string returned by <c>Execute()</c> on success.</summary>
     public string? ResultMessage { get; set; }
 
+    /// <summary>
+    /// Optional multi-line report built during the run via
+    /// <see cref="Logging.LoggedScheduledJobBase.Summary"/>. Unlike <see cref="ResultMessage"/>,
+    /// which Optimizely renders in a single admin grid cell, this keeps its newlines and length.
+    /// </summary>
+    public string? ResultSummary { get; set; }
+
     public string? ExceptionMessage { get; set; }
 
     public string? ExceptionStackTrace { get; set; }

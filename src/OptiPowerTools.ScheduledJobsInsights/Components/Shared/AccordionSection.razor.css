@@ -1,0 +1,57 @@
+.accordion {
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+}
+
+.accordion-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+    /* A faint tint so the header reads as a header: the 1px border above is nearly invisible against
+       the CMS shell's white background, and without this the sections run together. */
+    background-color: rgba(128, 128, 128, 0.06);
+    border-radius: 5px;
+}
+
+.accordion[open] > .accordion-summary {
+    border-radius: 5px 5px 0 0;
+}
+
+.accordion-summary:hover {
+    background-color: rgba(79, 195, 247, 0.12);
+}
+
+/* The native marker is replaced rather than kept. Firefox only draws it on display: list-item, so the
+   flex display above already suppresses it there; Chrome and Safari need the explicit rule below, as
+   their marker sits in a pseudo-element outside the flex layout and pushes the title onto its own
+   line. Driving the glyph from ::before gives both the same inline arrow, still switched purely by
+   [open] with no state of ours to keep in sync. */
+.accordion-summary::-webkit-details-marker {
+    display: none;
+}
+
+.accordion-summary::before {
+    content: "▸";
+    font-size: 0.75rem;
+    opacity: 0.6;
+}
+
+.accordion[open] > .accordion-summary::before {
+    content: "▾";
+}
+
+.accordion-badge {
+    font-size: 0.8rem;
+    font-weight: 400;
+    opacity: 0.65;
+}
+
+.accordion-body {
+    padding: 0.75rem;
+    border-top: 1px solid rgba(128, 128, 128, 0.2);
+}

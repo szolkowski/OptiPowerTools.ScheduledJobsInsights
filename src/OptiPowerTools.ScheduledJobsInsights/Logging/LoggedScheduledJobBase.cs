@@ -9,7 +9,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// <summary>
 /// Base class for Optimizely scheduled jobs that persists execution history: every
 /// <c>OnStatusChanged</c> message, the job's final return value, unhandled exceptions,
-/// automatic execution metrics, and anything logged via <see cref="Log"/>/<see cref="LogInputData"/>/<see cref="RecordMetric"/>.
+/// automatic execution metrics, and anything recorded via <see cref="Log"/>/<see cref="LogInputData"/>/
+/// <see cref="RecordMetric"/>/<see cref="Summary"/>.
 /// </summary>
 /// <remarks>
 /// Derive from this instead of <see cref="ScheduledJobBase"/> directly and implement
@@ -25,6 +26,7 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     private readonly IScheduledJobRepository _scheduledJobRepository;
     private long _executionId;
     private int _logSequence;
+    private JobResultSummary? _summary;
 
     /// <summary>
     /// Initializes the base class. Derived jobs must forward both parameters to this constructor —
@@ -53,6 +55,7 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         var jobName = TryResolveJobName(ScheduledJobId);
         _executionId = _writer.BeginExecution(ScheduledJobId, jobName, GetType().FullName ?? GetType().Name);
         _logSequence = 0;
+        _summary = null;
 
         var stopwatch = Stopwatch.StartNew();
         var allocatedStart = GC.GetAllocatedBytesForCurrentThread();
@@ -63,12 +66,16 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         {
             var result = ExecuteJob();
             RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
+            FlushSummary();
             _writer.Complete(_executionId, succeeded: true, resultMessage: result, exception: null);
             return result;
         }
         catch (Exception ex)
         {
             RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
+            // Flushed on the failure path too: whatever the job managed to summarise before throwing
+            // is usually the most useful thing on the page when diagnosing that failure.
+            FlushSummary();
             _writer.Complete(_executionId, succeeded: false, resultMessage: null, exception: ex);
             throw; // Never swallow — Optimizely's own executor sets HasLastExecutionFailed/LastExecutionMessage from this.
         }
@@ -95,6 +102,59 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// <summary>Records a custom numeric metric for the current execution.</summary>
     protected void RecordMetric(string name, double value, string? unit = null) =>
         _writer.RecordMetric(_executionId, name, value, unit);
+
+    /// <summary>
+    /// Optional multi-line report for this run, rendered as the <em>Result summary</em> section of
+    /// the execution detail view. Append to it as the job works; nothing is written unless something
+    /// was appended.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this for the readable account of what the run did — counts, skipped items, per-step
+    /// outcomes — and keep the string returned from <see cref="ExecuteJob"/> to one line, since that
+    /// value is Optimizely's "last execution message" and shows in a single admin grid cell.
+    /// </para>
+    /// <para>
+    /// Persisted once, just before the execution is completed, on both the success and failure
+    /// paths. A job that runs for a long time and wants the summary visible while it is still
+    /// running can checkpoint it with <see cref="FlushSummary"/>.
+    /// </para>
+    /// </remarks>
+    protected JobResultSummary Summary => _summary ??= CreateSummary();
+
+    /// <summary>
+    /// Replaces the whole summary with <paramref name="summary"/>, for jobs that already hold the
+    /// finished text rather than building it up.
+    /// </summary>
+    /// <param name="summary">The summary text. Newlines are preserved.</param>
+    protected void SetSummary(string summary)
+    {
+        Summary.Clear();
+        Summary.Append(summary);
+    }
+
+    /// <summary>
+    /// Persists the summary as it currently stands. Called automatically when the job finishes;
+    /// call it directly only to make a partial summary visible part-way through a long run.
+    /// </summary>
+    protected void FlushSummary()
+    {
+        if (_summary is null || _summary.IsEmpty)
+            return;
+
+        _writer.SetResultSummary(_executionId, _summary.ToString());
+    }
+
+    /// <summary>
+    /// Builds the summary bounded by the configured limit. A writer that reports a non-positive
+    /// limit — a test double left at its default, typically — falls back to
+    /// <see cref="JobResultSummary.DefaultMaxLength"/> rather than throwing.
+    /// </summary>
+    private JobResultSummary CreateSummary()
+    {
+        var maxLength = _writer.MaxResultSummaryLength;
+        return new JobResultSummary(maxLength > 0 ? maxLength : JobResultSummary.DefaultMaxLength);
+    }
 
     private void RecordAutomaticMetrics(
         Stopwatch stopwatch,

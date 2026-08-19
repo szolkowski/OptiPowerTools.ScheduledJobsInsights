@@ -1,0 +1,254 @@
+@* One execution's detail and console log. Hosted by ScheduledJobsInsightsCmsController's view inside
+   the CMS shell — see Views/ScheduledJobsInsightsCms/Index.cshtml — so this is not a routable page;
+   Id arrives as a component parameter from the MVC route rather than from Blazor routing. *@
+@implements IAsyncDisposable
+@using OptiPowerTools.ScheduledJobsInsights.Cms
+@using OptiPowerTools.ScheduledJobsInsights.Components.Shared
+@using OptiPowerTools.ScheduledJobsInsights.Configuration
+@using OptiPowerTools.ScheduledJobsInsights.Data.Entities
+@using OptiPowerTools.ScheduledJobsInsights.Repositories
+@inject IJobExecutionQueryService QueryService
+@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject IJSRuntime JS
+
+<p><a href="@Options.Value.CmsShellPath">&larr; Back to executions</a></p>
+
+@if (_execution is null)
+{
+    @* Distinguishing these two matters: without it a bad id sits on "Loading…" forever. *@
+    <p role="status">@(_loaded ? $"Execution #{Id} was not found." : "Loading…")</p>
+}
+else
+{
+    <div class="page-header">
+        <h1>@_execution.JobName</h1>
+        @* Straight to this job's own CMS settings page. Hidden for executions with no CMS job behind
+           them — SeedHistoryJob's synthetic rows, for instance, carry ids that resolve to nothing. *@
+        @if (_execution.ScheduledJobId != Guid.Empty)
+        {
+            <a class="action-link" href="@CmsAdminUrls.ScheduledJobDetail(_execution.ScheduledJobId)">Scheduled job settings &rarr;</a>
+        }
+    </div>
+
+    <div class="summary">
+        <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(_execution.Status)">
+            @ExecutionStatusStyles.Label(_execution.Status)
+        </span>
+        <span>Started: @_execution.StartedAt.LocalDateTime.ToString("G")</span>
+        @if (_execution.CompletedAt is not null)
+        {
+            <span>Completed: @_execution.CompletedAt.Value.LocalDateTime.ToString("G")</span>
+        }
+        <span>Machine: @_execution.MachineName</span>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_execution.ResultMessage))
+    {
+        <p><strong>Result:</strong> @_execution.ResultMessage</p>
+    }
+    @if (!string.IsNullOrEmpty(_execution.ExceptionMessage))
+    {
+        <p class="error-text"><strong>Exception:</strong> @_execution.ExceptionMessage</p>
+        @if (!string.IsNullOrEmpty(_execution.ExceptionStackTrace))
+        {
+            <details>
+                <summary>Stack trace</summary>
+                <pre>@_execution.ExceptionStackTrace</pre>
+            </details>
+        }
+    }
+
+    @if (!string.IsNullOrEmpty(_execution.InputDataJson))
+    {
+        <details>
+            <summary>Input data</summary>
+            <pre>@_execution.InputDataJson</pre>
+        </details>
+    }
+
+    @if (_metrics.Count > 0)
+    {
+        <h2>Metrics</h2>
+        <table class="metrics-table">
+            <thead>
+                <tr><th scope="col">Name</th><th scope="col">Value</th><th scope="col">Unit</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var metric in _metrics)
+                {
+                    <tr @key="metric.Id">
+                        <td>@metric.Name</td>
+                        <td>@metric.Value.ToString("0.##")</td>
+                        <td>@metric.Unit</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <div class="log-header">
+        <h2>
+            Log
+            @if (_logEntries.Count > 0)
+            {
+                <span class="log-count">@_logEntries.Count.ToString("N0") lines</span>
+            }
+            @if (_isPolling)
+            {
+                <span class="live-indicator" role="status">live</span>
+            }
+        </h2>
+        @if (_logEntries.Count > 0)
+        {
+            @* Only useful once the circuit is up, since jumping needs JS interop. *@
+            <div class="log-actions">
+                <button type="button" disabled="@(_consoleModule is null)" @onclick="ScrollToTopAsync">Jump to start</button>
+                <button type="button" disabled="@(_consoleModule is null)" @onclick="ScrollToEndAsync">Jump to end</button>
+            </div>
+        }
+    </div>
+    <div class="console" @ref="_consoleElement">
+        @if (_logEntries.Count == 0)
+        {
+            <p role="status">No log lines recorded.</p>
+        }
+        else
+        {
+            @* Virtualize renders only the visible slice — a chatty job can log thousands of lines. *@
+            <Virtualize TItem="JobLogEntry" Items="_logEntries" Context="entry">
+                <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
+                    <span class="console-timestamp">@entry.Timestamp.LocalDateTime.ToString("HH:mm:ss.fff")</span>
+                    <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
+                    <span class="console-message">@entry.Message</span>
+                </div>
+            </Virtualize>
+        }
+    </div>
+}
+
+@code {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+
+    private readonly List<JobLogEntry> _logEntries = [];
+    private readonly CancellationTokenSource _disposalCts = new();
+
+    private ElementReference _consoleElement;
+    private IJSObjectReference? _consoleModule;
+    private JobExecution? _execution;
+    private IReadOnlyList<JobMetric> _metrics = [];
+    private Task? _pollingTask;
+    private bool _loaded;
+    private bool _isPolling;
+
+    /// <summary>Execution to display. Supplied by the hosting view from the MVC route's id segment.</summary>
+    [Parameter, EditorRequired]
+    public long Id { get; set; }
+
+    protected override async Task OnInitializedAsync() =>
+        await LoadAsync(_disposalCts.Token);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Everything here needs the circuit. OnAfterRender does not run during prerendering, which is
+        // exactly what we want: JS interop is unavailable then, and a timer started then would tick
+        // into a renderer that can never flush and leak until the component was disposed.
+        if (!firstRender)
+            return;
+
+        _consoleModule = await JS.InvokeAsync<IJSObjectReference>(
+            "import", "./_content/OptiPowerTools.ScheduledJobsInsights/js/console-scroll.js");
+
+        if (_execution?.Status == ExecutionStatus.Running)
+        {
+            _isPolling = true;
+            _pollingTask = PollUntilFinishedAsync(_disposalCts.Token);
+        }
+
+        // Re-render so the jump buttons enable and the "live" indicator appears now, rather than
+        // waiting for the first poll tick (or never, on a finished execution).
+        StateHasChanged();
+    }
+
+    private async Task ScrollToTopAsync()
+    {
+        if (_consoleModule is not null)
+            await _consoleModule.InvokeVoidAsync("scrollToTop", _consoleElement);
+    }
+
+    private async Task ScrollToEndAsync()
+    {
+        if (_consoleModule is not null)
+            await _consoleModule.InvokeVoidAsync("scrollToEnd", _consoleElement);
+    }
+
+    /// <summary>
+    /// Loads the execution, its metrics, and any log lines not already held. Log lines are fetched
+    /// incrementally — only those after the highest sequence already displayed — so polling a long,
+    /// chatty execution stays proportional to what is new rather than to the whole log.
+    /// </summary>
+    private async Task LoadAsync(CancellationToken cancellationToken)
+    {
+        _execution = await QueryService.GetExecutionAsync(Id, cancellationToken);
+        _loaded = true;
+
+        if (_execution is null)
+            return;
+
+        _metrics = await QueryService.GetMetricsAsync(Id, cancellationToken);
+
+        var lastSequence = _logEntries.Count > 0 ? _logEntries[^1].Sequence : 0;
+        var newEntries = await QueryService.GetLogEntriesAsync(Id, lastSequence, cancellationToken);
+        _logEntries.AddRange(newEntries);
+    }
+
+    private async Task PollUntilFinishedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(PollInterval);
+
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await LoadAsync(cancellationToken);
+
+                if (_execution?.Status != ExecutionStatus.Running)
+                {
+                    _isPolling = false;
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected: the component was disposed while the execution was still running.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _disposalCts.CancelAsync();
+
+        // Await the polling loop rather than abandoning it, so it cannot touch the renderer after
+        // disposal. PollUntilFinishedAsync swallows only cancellation, so a genuine fault still
+        // surfaces here instead of being lost in an unobserved task.
+        if (_pollingTask is not null)
+            await _pollingTask;
+
+        if (_consoleModule is not null)
+        {
+            try
+            {
+                await _consoleModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The circuit is already gone (browser tab closed); nothing to dispose on that side.
+            }
+        }
+
+        _disposalCts.Dispose();
+    }
+}

@@ -1,0 +1,198 @@
+@* Execution list. Hosted by ScheduledJobsInsightsCmsController's view inside the CMS shell — see
+   Views/ScheduledJobsInsightsCms/Index.cshtml — so this is not a routable page and owns no <html>.
+
+   Rendered with ServerPrerendered: the table is in the initial HTML, so it is readable before the
+   circuit connects and still readable if it never does. The trade-off is that OnInitializedAsync
+   runs twice, once while prerendering and again when the circuit starts, so the queries below run
+   twice per page view. They are two indexed read-only queries, which is a fair price for the faster
+   first paint; if that ever stops being true, the fix is PersistentComponentState rather than
+   dropping prerendering. *@
+@implements IDisposable
+@using OptiPowerTools.ScheduledJobsInsights.Cms
+@using OptiPowerTools.ScheduledJobsInsights.Components.Shared
+@using OptiPowerTools.ScheduledJobsInsights.Configuration
+@using OptiPowerTools.ScheduledJobsInsights.Repositories
+@inject IJobExecutionQueryService QueryService
+@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject NavigationManager Navigation
+
+<div class="page-header">
+    <h1>Scheduled Jobs Insights</h1>
+    @* Across to the CMS's own screen, where jobs are configured and started. *@
+    <a class="action-link" href="@CmsAdminUrls.ScheduledJobsList">Scheduled Jobs &rarr;</a>
+</div>
+
+<div class="filters">
+    <label>
+        <span class="visually-hidden">Filter by job</span>
+        <select @bind="_jobNameFilter" @bind:after="ResetAndReloadAsync" disabled="@_isLoading">
+            <option value="">All jobs</option>
+            @foreach (var jobName in _jobNames)
+            {
+                <option value="@jobName">@jobName</option>
+            }
+        </select>
+    </label>
+
+    <label>
+        <span class="visually-hidden">Filter by status</span>
+        <select @bind="_statusFilter" @bind:after="ResetAndReloadAsync" disabled="@_isLoading">
+            <option value="">All statuses</option>
+            <option value="@ExecutionStatus.Running">Running</option>
+            <option value="@ExecutionStatus.Succeeded">Succeeded</option>
+            <option value="@ExecutionStatus.Failed">Failed</option>
+        </select>
+    </label>
+</div>
+
+@if (_page is null)
+{
+    <p role="status">Loading…</p>
+}
+else if (_page.Items.Count == 0)
+{
+    <p role="status">@(HasFilter ? "No executions match this filter." : "No job executions recorded yet.")</p>
+}
+else
+{
+    <table class="executions-table">
+        <thead>
+            <tr>
+                <th scope="col">Job</th>
+                <th scope="col">Status</th>
+                <th scope="col">Started</th>
+                <th scope="col">Duration</th>
+                <th scope="col">Result</th>
+            </tr>
+        </thead>
+        <tbody>
+            @* @key keeps row identity stable across filter and page changes, so Blazor patches rows
+               rather than rebuilding the tbody. *@
+            @foreach (var execution in _page.Items)
+            {
+                <tr @key="execution.Id" class="execution-row" @onclick="() => GoToDetail(execution.Id)">
+                    <td>
+                        @* A real link, not just the row's @onclick: it works during prerender before
+                           the circuit exists, is reachable by keyboard and screen readers, and
+                           supports open-in-new-tab. The row handler is a mouse convenience on top,
+                           so the anchor must not let its click bubble into it as well. *@
+                        <a href="@DetailUrl(execution.Id)" @onclick:stopPropagation="true">@execution.JobName</a>
+                    </td>
+                    <td>
+                        <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(execution.Status)">
+                            @ExecutionStatusStyles.Label(execution.Status)
+                        </span>
+                    </td>
+                    <td>@execution.StartedAt.LocalDateTime.ToString("g")</td>
+                    <td>@FormatDuration(execution)</td>
+                    <td class="result-cell">@(execution.ResultMessage ?? execution.ExceptionMessage)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="pagination">
+        <button type="button" disabled="@(_isLoading || _history.Count == 0)" @onclick="GoToPreviousPageAsync">Previous</button>
+        <button type="button" disabled="@(_isLoading || !_page.HasMore)" @onclick="GoToNextPageAsync">Next</button>
+    </div>
+}
+
+@code {
+    private readonly Stack<ExecutionCursor?> _history = new();
+    private readonly CancellationTokenSource _disposalCts = new();
+
+    private ExecutionPage? _page;
+    private IReadOnlyList<string> _jobNames = [];
+    private string _jobNameFilter = string.Empty;
+    private string _statusFilter = string.Empty;
+    private ExecutionCursor? _cursor;
+    private bool _isLoading;
+
+    private bool HasFilter => !string.IsNullOrEmpty(_jobNameFilter) || !string.IsNullOrEmpty(_statusFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _jobNames = await QueryService.GetDistinctJobNamesAsync(_disposalCts.Token);
+        await LoadPageAsync();
+    }
+
+    private async Task ResetAndReloadAsync()
+    {
+        _cursor = null;
+        _history.Clear();
+        await LoadPageAsync();
+    }
+
+    private async Task GoToNextPageAsync()
+    {
+        if (_page is null || !_page.HasMore)
+            return;
+
+        _history.Push(_cursor);
+        _cursor = _page.NextCursor;
+        await LoadPageAsync();
+    }
+
+    private async Task GoToPreviousPageAsync()
+    {
+        if (_history.Count == 0)
+            return;
+
+        _cursor = _history.Pop();
+        await LoadPageAsync();
+    }
+
+    private async Task LoadPageAsync()
+    {
+        // The controls that reach here are disabled while a load is in flight, so this only guards
+        // against races the UI cannot produce — a queued event dispatched before the re-render lands.
+        if (_isLoading)
+            return;
+
+        _isLoading = true;
+        try
+        {
+            var filter = new ExecutionFilter(
+                JobName: string.IsNullOrEmpty(_jobNameFilter) ? null : _jobNameFilter,
+                Status: Enum.TryParse<ExecutionStatus>(_statusFilter, out var status) ? status : null);
+
+            _page = await QueryService.GetExecutionsAsync(filter, _cursor, Options.Value.PageSize, _disposalCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // The component was disposed mid-query; nothing left to render into.
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    // Query string rather than a path segment: the CMS navigation resolves the current product by
+    // matching the request path against registered menu items, and only the bare CmsShellPath
+    // matches. See ScheduledJobsInsightsCmsRouteConvention.
+    private string DetailUrl(long executionId) =>
+        $"{Options.Value.CmsShellPath}?id={executionId}";
+
+    // Full navigation rather than NavigationManager: the detail view is a separate MVC request, so
+    // the CMS chrome is rendered around it. Mirrors what the anchor in the first cell does.
+    private void GoToDetail(long executionId) =>
+        Navigation.NavigateTo(DetailUrl(executionId), forceLoad: true);
+
+    private static string FormatDuration(Data.Entities.JobExecution execution)
+    {
+        if (execution.CompletedAt is null)
+            return "—";
+
+        var duration = execution.CompletedAt.Value - execution.StartedAt;
+        return duration.TotalSeconds < 1
+            ? $"{duration.TotalMilliseconds:0} ms"
+            : $"{duration.TotalSeconds:0.0} s";
+    }
+
+    public void Dispose()
+    {
+        _disposalCts.Cancel();
+        _disposalCts.Dispose();
+    }
+}

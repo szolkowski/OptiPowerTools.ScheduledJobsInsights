@@ -1,0 +1,53 @@
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+@{
+    Layout = string.Empty;
+    var executionId = (long?)ViewBag.ExecutionId;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewBag.PageTitle</title>
+
+    @* Required by blazor.server.js: it resolves the /_blazor hub relative to this base. Without it
+       the hub is looked up under the current directory — /ScheduledJobsInsightsCms/_blazor — which
+       404s, so the circuit never starts. The page then stays as prerendered HTML: the list still
+       looks fine, but nothing is interactive and the Virtualize-backed log renders as an empty box.
+       Url.Content resolves the app's path base, so this also works under a virtual directory. *@
+    <base href="@Url.Content("~/")" />
+
+    @* Optimizely shell chrome + theme. The components render inside this document rather than in an
+       iframe, so they inherit these styles instead of needing a stand-in stylesheet of their own. *@
+    <episerver-resources area="ShellCore" />
+    <episerver-resources area="ShellCoreLightTheme" />
+
+    @* Razor scoped CSS (Index.razor.css / Detail.razor.css) is bundled into the *host* application's
+       stylesheet, whose name follows the entry assembly - hence resolving it at runtime rather than
+       hardcoding a name this package cannot know. *@
+    <link rel="stylesheet" href="@Url.Content($"~/{HostEnvironment.ApplicationName}.styles.css")" />
+    <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" />
+</head>
+<body>
+    @* platform-navigation advertises an antiforgery header name on this page for the shell's client
+       scripts to use, but the token itself has to come from the page. Native CMS pages emit one, so
+       this does too — otherwise any shell script that posts from here has no token to send. *@
+    @Html.AntiForgeryToken()
+
+    <platform-navigation />
+    <platform-navigation-wrapper>
+        <div class="sji-content">
+            @if (executionId is { } id)
+            {
+                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" />
+            }
+            else
+            {
+                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" />
+            }
+        </div>
+    </platform-navigation-wrapper>
+
+    <script src="~/_framework/blazor.server.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+
+    <!-- Pulls in Microsoft.AspNetCore.App.Internal.Assets, which supplies _framework/blazor.server.js.
+         The Web SDK only turns this on by itself when the project contains .razor Content items;
+         ours all live in the OptiPowerTools.ScheduledJobsInsights class library, so without this the
+         script 404s and the UI never becomes interactive. The package cannot set this on a consumer's
+         behalf: NuGet resolves the implicit assets pack during restore, before package build assets
+         are imported, so every consuming application has to set it in its own project file. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\sub\MyOptiAlloySite\MyOptiAlloySite\MyOptiAlloySite.csproj" />
+    <ProjectReference Include="..\OptiPowerTools.ScheduledJobsInsights\OptiPowerTools.ScheduledJobsInsights.csproj" />
+  </ItemGroup>
+
+</Project>

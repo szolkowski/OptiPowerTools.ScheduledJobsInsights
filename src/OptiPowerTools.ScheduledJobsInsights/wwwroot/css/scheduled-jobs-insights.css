@@ -1,0 +1,135 @@
+/*
+ * Layout for the Scheduled Jobs Insights UI.
+ *
+ * The components render inside the CMS shell document (Views/ScheduledJobsInsightsCms/Index.cshtml),
+ * not in an iframe, so the Optimizely theme already supplies the font, colours and base element
+ * styling. This file only adds what the shell has no opinion about: the content well's spacing and a
+ * few affordances for the console log viewer.
+ *
+ * Everything is scoped under .sji-content so nothing here can leak into the surrounding chrome.
+ * Per-component rules live in the Razor scoped CSS (Index.razor.css / Detail.razor.css).
+ *
+ * Served at /_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css
+ */
+
+.sji-content {
+    padding: 1.25rem 1.5rem 2rem;
+}
+
+.sji-content h1 {
+    font-size: 1.5rem;
+    font-weight: 300;
+    margin: 0 0 1rem;
+}
+
+.sji-content h2 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 1.5rem 0 0.5rem;
+}
+
+.sji-content p {
+    margin: 0 0 0.75rem;
+}
+
+/* Column headers, to sit closer to the CMS's own list styling. */
+.sji-content th {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    opacity: 0.7;
+}
+
+/* Collapsible panes for input data and stack traces. */
+.sji-content details {
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    border-radius: 3px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.sji-content details > summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.sji-content details > pre {
+    margin: 0.5rem 0 0;
+    overflow-x: auto;
+    font-size: 0.8rem;
+}
+
+.sji-content [role="status"] {
+    opacity: 0.7;
+}
+
+/* Label kept in the accessibility tree but out of the visual layout — the filter selects are
+   self-evident by sight, but a screen reader needs to know which is which. */
+.sji-content .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* Shown beside the Log heading only while the detail view is polling a running execution. */
+.sji-content .live-indicator {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    background-color: #4FC3F7;
+    color: #10151c;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+}
+
+/* The CMS shell renders <body> as a flex row: the left navigation, then a content container holding
+   this page. That container is not told to grow, so it collapses to its content width and the page
+   sits in a narrow column with the rest of a wide monitor left empty. The old iframe-based view
+   forced the same two elements to full size; this restores that now the content is rendered inline.
+   min-width: 0 lets the column shrink below its content when the window is narrow, instead of
+   pushing a horizontal scrollbar onto the whole shell. */
+#episerver-resources-container {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.epi-pn-navigation--fixed-adjust {
+    width: 100%;
+}
+
+/* Page title row: heading on the left, a cross-link to the CMS's own screens on the right. */
+.sji-content .page-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+/* A link that reads as a secondary button, matching the pagination and jump controls. */
+.sji-content .action-link {
+    flex-shrink: 0;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid rgba(128, 128, 128, 0.4);
+    border-radius: 3px;
+    font-size: 0.85rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.sji-content .action-link:hover {
+    border-color: currentColor;
+    text-decoration: none;
+}

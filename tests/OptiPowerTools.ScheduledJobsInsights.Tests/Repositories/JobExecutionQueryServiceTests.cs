@@ -1,0 +1,165 @@
+using OptiPowerTools.ScheduledJobsInsights.Configuration;
+using OptiPowerTools.ScheduledJobsInsights.Data.Entities;
+using OptiPowerTools.ScheduledJobsInsights.Repositories;
+using OptiPowerTools.ScheduledJobsInsights.Tests.Data;
+
+namespace OptiPowerTools.ScheduledJobsInsights.Tests.Repositories;
+
+public class JobExecutionQueryServiceTests
+{
+    [Fact]
+    public async Task GetExecutionsAsync_PagesByKeyset_NewestFirst()
+    {
+        using var factory = new SqliteDbContextFactory();
+        // Truncated to whole seconds: Sqlite storage (via ScheduledJobsInsightsDbContext's
+        // DateTimeOffsetToBinaryConverter workaround) round-trips DateTimeOffset with reduced
+        // sub-millisecond precision, which would otherwise make an exact-equality assertion flaky.
+        var baseline = new DateTimeOffset(DateTime.UtcNow.Date) + TimeSpan.FromHours(12);
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                dbContext.JobExecutions.Add(new JobExecution
+                {
+                    ScheduledJobId = Guid.NewGuid(),
+                    JobName = "Job A",
+                    JobTypeName = "Test.JobA",
+                    StartedAt = baseline.AddMinutes(i),
+                    Status = ExecutionStatus.Succeeded,
+                    MachineName = "test"
+                });
+            }
+            await dbContext.SaveChangesAsync();
+        }
+
+        var queryService = new JobExecutionQueryService(factory);
+
+        var firstPage = await queryService.GetExecutionsAsync(new ExecutionFilter(), after: null, pageSize: 2);
+        Assert.Equal(2, firstPage.Items.Count);
+        Assert.True(firstPage.HasMore);
+        Assert.Equal(baseline.AddMinutes(4), firstPage.Items[0].StartedAt);
+        Assert.Equal(baseline.AddMinutes(3), firstPage.Items[1].StartedAt);
+
+        var secondPage = await queryService.GetExecutionsAsync(new ExecutionFilter(), firstPage.NextCursor, pageSize: 2);
+        Assert.Equal(2, secondPage.Items.Count);
+        Assert.Equal(baseline.AddMinutes(2), secondPage.Items[0].StartedAt);
+        Assert.Equal(baseline.AddMinutes(1), secondPage.Items[1].StartedAt);
+
+        var thirdPage = await queryService.GetExecutionsAsync(new ExecutionFilter(), secondPage.NextCursor, pageSize: 2);
+        Assert.Single(thirdPage.Items);
+        Assert.False(thirdPage.HasMore);
+        Assert.Null(thirdPage.NextCursor);
+    }
+
+    [Fact]
+    public async Task GetExecutionsAsync_FiltersByJobNameAndStatus()
+    {
+        using var factory = new SqliteDbContextFactory();
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Job A", JobTypeName = "A", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Succeeded, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Job A", JobTypeName = "A", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Failed, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Job B", JobTypeName = "B", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Succeeded, MachineName = "m" });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var queryService = new JobExecutionQueryService(factory);
+
+        var filtered = await queryService.GetExecutionsAsync(
+            new ExecutionFilter(JobName: "Job A", Status: ExecutionStatus.Succeeded), after: null, pageSize: 10);
+
+        Assert.Single(filtered.Items);
+        Assert.Equal("Job A", filtered.Items[0].JobName);
+        Assert.Equal(ExecutionStatus.Succeeded, filtered.Items[0].Status);
+    }
+
+    [Fact]
+    public async Task GetLogEntriesAsync_ReturnsEntries_OrderedBySequence()
+    {
+        using var factory = new SqliteDbContextFactory();
+        long executionId;
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var execution = new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Job", JobTypeName = "Job", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Running, MachineName = "m" };
+            dbContext.JobExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            executionId = execution.Id;
+
+            dbContext.JobLogEntries.AddRange(
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 3, Timestamp = DateTimeOffset.UtcNow, Message = "third" },
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 1, Timestamp = DateTimeOffset.UtcNow, Message = "first" },
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 2, Timestamp = DateTimeOffset.UtcNow, Message = "second" });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var queryService = new JobExecutionQueryService(factory);
+        var entries = await queryService.GetLogEntriesAsync(executionId);
+
+        Assert.Equal(["first", "second", "third"], entries.Select(e => e.Message));
+    }
+
+    [Theory]
+    [InlineData(0, new[] { "first", "second", "third" })]
+    [InlineData(1, new[] { "second", "third" })]
+    [InlineData(2, new[] { "third" })]
+    [InlineData(3, new string[0])]
+    public async Task GetLogEntriesAsync_AfterSequence_ReturnsOnlyNewerEntries(int afterSequence, string[] expected)
+    {
+        // Backs the detail view's polling: each tick asks only for lines past the highest sequence
+        // it already holds, so a long-running chatty execution does not re-read its whole log.
+        using var factory = new SqliteDbContextFactory();
+        long executionId;
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var execution = new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Job", JobTypeName = "Job", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Running, MachineName = "m" };
+            dbContext.JobExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            executionId = execution.Id;
+
+            dbContext.JobLogEntries.AddRange(
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 1, Timestamp = DateTimeOffset.UtcNow, Message = "first" },
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 2, Timestamp = DateTimeOffset.UtcNow, Message = "second" },
+                new JobLogEntry { JobExecutionId = executionId, Sequence = 3, Timestamp = DateTimeOffset.UtcNow, Message = "third" });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var queryService = new JobExecutionQueryService(factory);
+        var entries = await queryService.GetLogEntriesAsync(executionId, afterSequence);
+
+        Assert.Equal(expected, entries.Select(e => e.Message));
+    }
+
+    [Fact]
+    public async Task GetLogEntriesAsync_AfterSequence_IsScopedToTheRequestedExecution()
+    {
+        using var factory = new SqliteDbContextFactory();
+        long firstId, secondId;
+
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var first = new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "A", JobTypeName = "A", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Running, MachineName = "m" };
+            var second = new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "B", JobTypeName = "B", StartedAt = DateTimeOffset.UtcNow, Status = ExecutionStatus.Running, MachineName = "m" };
+            dbContext.JobExecutions.AddRange(first, second);
+            await dbContext.SaveChangesAsync();
+            firstId = first.Id;
+            secondId = second.Id;
+
+            dbContext.JobLogEntries.AddRange(
+                new JobLogEntry { JobExecutionId = firstId, Sequence = 1, Timestamp = DateTimeOffset.UtcNow, Message = "a1" },
+                new JobLogEntry { JobExecutionId = firstId, Sequence = 2, Timestamp = DateTimeOffset.UtcNow, Message = "a2" },
+                new JobLogEntry { JobExecutionId = secondId, Sequence = 1, Timestamp = DateTimeOffset.UtcNow, Message = "b1" },
+                new JobLogEntry { JobExecutionId = secondId, Sequence = 2, Timestamp = DateTimeOffset.UtcNow, Message = "b2" });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var queryService = new JobExecutionQueryService(factory);
+        var entries = await queryService.GetLogEntriesAsync(secondId, afterSequence: 1);
+
+        Assert.Equal(["b2"], entries.Select(e => e.Message));
+    }
+}

@@ -1,0 +1,46 @@
+.filters {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.executions-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.executions-table th,
+.executions-table td {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.execution-row {
+    cursor: pointer;
+}
+
+.execution-row:hover {
+    background-color: rgba(79, 195, 247, 0.1);
+}
+
+.status-badge {
+    color: #10151c;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.result-cell {
+    max-width: 28rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pagination {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}

@@ -1,0 +1,30 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Only audit direct dependencies; transitive vulns from EPiServer are outside our control -->
+    <NuGetAuditMode>direct</NuGetAuditMode>
+    <!-- NU1608: Castle.Core version conflict between NSubstitute 5.x and EPiServer (known, harmless) -->
+    <NoWarn>NU1608</NoWarn>
+  </PropertyGroup>
+
+  <!-- docker-compose.yml bind-mounts the repo into sjinsights-web, so the host and
+       the container build the same tree. Keep their bin/obj apart, or the two
+       restores overwrite each other's project.assets.json (they resolve different
+       NuGet package roots). Mirrors what the Alloy submodule already does for
+       itself in sub/MyOptiAlloySite/MyOptiAlloySite/Directory.Build.props. -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/obj/**/*</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**/*</DefaultItemExcludes>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(DOTNET_RUNNING_IN_CONTAINER)' == 'true' ">
+    <BaseIntermediateOutputPath>$(MSBuildProjectDirectory)/obj/container/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildProjectDirectory)/bin/container/</BaseOutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(DOTNET_RUNNING_IN_CONTAINER)' != 'true' ">
+    <BaseIntermediateOutputPath>$(MSBuildProjectDirectory)/obj/host/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildProjectDirectory)/bin/host/</BaseOutputPath>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,3 @@
+[submodule "sub/MyOptiAlloySite"]
+	path = sub/MyOptiAlloySite
+	url = https://github.com/szolkowski/MyOptiAlloySite.git

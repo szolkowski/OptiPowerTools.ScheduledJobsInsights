@@ -1,0 +1,120 @@
+.summary {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.status-badge {
+    color: #10151c;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.error-text {
+    color: #EF5350;
+}
+
+.metrics-table {
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+}
+
+.metrics-table th,
+.metrics-table td {
+    text-align: left;
+    padding: 0.25rem 0.75rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.log-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.log-count {
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 400;
+    opacity: 0.65;
+}
+
+.log-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.console {
+    background-color: #10151c;
+    color: #d6dde5;
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.85rem;
+    padding: 0.75rem;
+    border-radius: 6px;
+    overflow-y: auto;
+
+    /* A definite height rather than max-height: Virtualize sizes its rendered slice from the scroll
+       viewport, and it scales with the window so a large screen shows proportionally more of the log.
+       clamp keeps it usable at both extremes — never shorter than ~24rem on a laptop, never so tall
+       on a big monitor that the surrounding page detail scrolls out of reach. */
+    height: clamp(24rem, 60vh, 60rem);
+}
+
+/* A long execution makes the scroll range enormous — 5,000 lines is over a hundred thousand pixels —
+   so the default thumb collapses to a sliver, and macOS hides overlay scrollbars entirely until you
+   start scrolling. These rules opt into an always-present classic scrollbar that occupies layout
+   width, and min-height keeps the thumb big enough to see and grab however long the log gets.
+
+   Note the standard scrollbar-width / scrollbar-color properties are deliberately NOT set here:
+   since Chrome 121 their presence makes it ignore ::-webkit-scrollbar altogether, which put the
+   overlay scrollbar right back. Firefox falls back to its own default scrollbar, which is visible
+   anyway. */
+.console::-webkit-scrollbar {
+    width: 14px;
+}
+
+.console::-webkit-scrollbar-track {
+    background: #0a0e14;
+    border-radius: 0 6px 6px 0;
+}
+
+.console::-webkit-scrollbar-thumb {
+    background: #3d4a5c;
+    border: 3px solid #10151c;
+    border-radius: 7px;
+    min-height: 2.5rem;
+}
+
+.console::-webkit-scrollbar-thumb:hover {
+    background: #56687f;
+}
+
+.console-line {
+    border-left: 3px solid transparent;
+    padding: 0.1rem 0.5rem;
+    word-break: break-word;
+    /* Deliberately NOT pre-wrap: the timestamp, severity and message spans are separated by newlines
+       and indentation in the Razor source, and pre-wrap renders that whitespace, breaking every entry
+       across three indented lines. Only the message itself needs to preserve its own formatting. */
+    white-space: normal;
+}
+
+.console-message {
+    /* Keeps newlines within a single logged message, e.g. a multi-line payload dump. */
+    white-space: pre-wrap;
+}
+
+.console-timestamp {
+    opacity: 0.6;
+    margin-right: 0.5rem;
+}
+
+.console-severity {
+    margin-right: 0.5rem;
+    font-weight: 600;
+}

@@ -1,0 +1,67 @@
+name: optipowertools-scheduledjobsinsights
+
+services:
+  db:
+    build:
+      dockerfile: Docker/db.dockerfile
+      context: ./sub/MyOptiAlloySite/MyOptiAlloySite
+    image: sjinsights-db:local
+    container_name: sjinsights-db
+    # SQL Server 2025 ships linux/amd64 only, so on Apple Silicon it runs emulated.
+    platform: linux/amd64
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    ports:
+      - ${DB_HOST_PORT}:1433
+    volumes:
+      # Named volume, so the database survives `docker compose down`.
+      # Only `docker compose down -v` (or removing the volume) discards it.
+      - sjinsights-sqldata:/var/opt/mssql
+    networks:
+      - sjinsights-net
+    healthcheck:
+      # Gates the web service: DB_NAME is created by Docker/create-db.sh, which
+      # the db.dockerfile entrypoint runs alongside sqlservr on first start.
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$SA_PASSWORD" -Q "SELECT 1 FROM sys.databases WHERE name = '$$DB_NAME'" -C -h -1 | grep -q 1
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    depends_on:
+      db:
+        condition: service_healthy
+    build:
+      dockerfile: Docker/web.dockerfile
+      context: .
+    image: sjinsights-web:local
+    container_name: sjinsights-web
+    environment:
+      ASPNETCORE_URLS: http://*:80
+      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      # These override appsettings.Development.json, which points at the host
+      # port so that `dotnet run` on the host reaches the same database.
+      CONNECTIONSTRINGS__EPISERVERDB: Server=db;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: Server=db;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
+    ports:
+      - ${WEB_HOST_PORT}:80
+    volumes:
+      # Source is bind-mounted rather than baked in, so edits + a restart pick up
+      # new code. Container build output is kept apart from the host's by the
+      # DOTNET_RUNNING_IN_CONTAINER switch in Directory.Build.props.
+      - .:/src:rw
+    networks:
+      - sjinsights-net
+    restart: unless-stopped
+
+volumes:
+  sjinsights-sqldata:
+    name: sjinsights-sqldata
+
+networks:
+  sjinsights-net:
+    name: sjinsights-net

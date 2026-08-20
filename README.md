@@ -454,7 +454,7 @@ cp .env.example .env   # or edit in place
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SA_PASSWORD` | `LocalDevOnly_Ch4ngeMe!` | `sa` password inside `sjinsights-db`. A local placeholder, not a secret. SQL Server bakes it into the data volume on first start, so change it before the first `docker compose up` or not at all. |
+| `SA_PASSWORD` | `Episerver123!` | `sa` password inside `sjinsights-db` |
 | `DB_NAME` | `ScheduledJobsInsights` | Created on first start by the container entrypoint |
 | `WEB_HOST_PORT` | `5103` | Host port for the site |
 | `DB_HOST_PORT` | `6003` | Host port for SQL Server |
@@ -560,7 +560,7 @@ Tests run against `net10.0`.
 | ------- | ------- |
 | `src/OptiPowerTools.ScheduledJobsInsights` | The NuGet library package. |
 | `src/OptiPowerTools.ScheduledJobsInsights.Web` | Dev site for manual testing (references the MyOptiAlloySite submodule). |
-| `tests/OptiPowerTools.ScheduledJobsInsights.Tests` | Unit tests — xUnit + NSubstitute, Sqlite in-memory for EF Core-dependent tests. |
+| `tests/OptiPowerTools.ScheduledJobsInsights.Tests` | Unit tests — xUnit + NSubstitute, Sqlite in-memory for EF Core-dependent tests, bUnit for the Blazor pages. |
 | `sub/MyOptiAlloySite` | Git submodule — [szolkowski/MyOptiAlloySite](https://github.com/szolkowski/MyOptiAlloySite) (Optimizely CMS 13 Alloy site). |
 
 ## Compatibility

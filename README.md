@@ -308,7 +308,7 @@ Code overrides configuration when both are used.
 | ------ | ---- | ------- | ----------- |
 | `ConnectionString` | `string` | `""` | **Required.** SQL Server connection string for job execution/log/metric storage. |
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
-| `RetentionDays` | `int` | `30` | How many days of execution history to keep. Enforced by the cleanup job. |
+| `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
 | `LogChannelCapacity` | `int` | `10000` | Capacity of the in-memory buffer for log/metric writes before falling back to a synchronous insert. |
 | `LogBatchSize` | `int` | `100` | Max buffered records flushed to the database per batch. |
@@ -450,13 +450,25 @@ Jobs on Optimizely's own `ScheduledJobBase` are deliberately absent: they never 
 history, so there is nothing to retain, and listing the CMS's two dozen built-ins would bury the
 handful that matter.
 
+Choosing a value saves it straight away — there is no Save button, so there is no half-applied state.
+*Inherit* clears the override, letting the attribute or the default apply again.
+
 Changes take effect on the next run of the cleanup job. Nothing is deleted at the moment you save.
 
 > **Shortening a retention deletes history.** That is why every change records who made it and when.
 
 ## Cleanup job
 
-`ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) older than `RetentionDays`, in batches of `CleanupBatchSize`. After installation, its run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install.
+`ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) in batches of `CleanupBatchSize`, and reports what it removed as its execution message.
+
+Each run does two passes:
+
+1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
+2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+
+An indefinite default is legitimate: the sweep is then skipped altogether and only the jobs that opted into a retention are trimmed.
+
+After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
 
 ## Removing this package
 

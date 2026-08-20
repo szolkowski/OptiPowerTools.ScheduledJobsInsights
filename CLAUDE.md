@@ -204,15 +204,21 @@ If you change the batching logic, the two tests that actually exercise this
 
 ### Data model and schema
 
-`Data/Entities/` has three tables: `JobExecution` (one row per run, including the optional
-`ResultSummary` — distinct from `ResultMessage`, which is the one-line value Optimizely renders in
-its admin grid), `JobLogEntry` (many rows per run,
+`Data/Entities/` has four tables. Three record executions: `JobExecution` (one row per run, including
+the optional `ResultSummary` — distinct from `ResultMessage`, which is the one-line value Optimizely
+renders in its admin grid), `JobLogEntry` (many rows per run,
 ordered by `(JobExecutionId, Sequence)` — **not** by `Timestamp` alone, since a tight logging loop can
 produce timestamp collisions), and `JobMetric` (many rows per run — both automatic metrics and
 `RecordMetric()`-recorded custom ones share this one table for a uniform query surface). Child rows
 cascade-delete with their parent `JobExecution` at the DB level.
 
-`JobExecution` carries four indexes and every one of them earns its place. Measured against 100,000
+The fourth, `JobRetentionPolicy`, is configuration rather than history: one row per job type that an
+administrator has given an explicit retention, unique on `JobTypeName`, with `RetentionDays` nullable
+(null = indefinite) and the `ModifiedBy`/`ModifiedAt` audit pair. It has no relationship to
+`JobExecution` — the key is a CLR type name, which deliberately outlives both the history it governs
+and the code that produced it.
+
+`JobExecution` carries five indexes and every one of them earns its place. Measured against 100,000
 executions / 2,000,000 log rows on real SQL Server (logical reads):
 
 | query | with index | without |
@@ -222,6 +228,7 @@ executions / 2,000,000 log rows on real SQL Server (logical reads):
 | filtered by job — `(JobName, StartedAt DESC, Id DESC)` | 171 | ~35,000 |
 | filtered by status — `(Status, StartedAt DESC, Id DESC)` | **3** | **35,208** (208ms CPU) |
 | detail: execution / metrics / log | 3 / 3 / 3 | — |
+| cleanup / retention, per job type — `(JobTypeName, StartedAt)` | 9,090 per 500-row batch | — |
 
 The status one is the least obvious and the most valuable. `Running` is a transient state, so that
 filter usually matches *nothing* — and without an index, matching nothing means scanning everything.
@@ -229,8 +236,23 @@ The descending flags on both composites are what let a keyset page come back alr
 sort. The `JobName` key is wide (`nvarchar(400)`); narrowing that column is the lever if insert cost
 ever outweighs list latency.
 
+The `JobTypeName` one serves the cleanup job's two shapes at once — the default sweep's `NOT IN`
+exclusion list and the per-job-type delete — and is what makes per-job retention free: measured at
+100,000 executions the exclusion form costs *less* than the unfiltered sweep (9,090 vs 10,584 reads),
+and the per-job form matches it. Cleanup cost is dominated by the cascade, not the lookup: ~63,000 of
+the ~92,000 reads per 500-execution batch are the `JobLogEntries` rows going with them, which no index
+can avoid. A batch of 500 plus cascades runs in ~75 ms either way.
+
 What is *not* indexed, deliberately: `ExecutionFilter` exposes `From`/`To`, but the UI never sets
 them, so there is nothing to tune yet.
+
+Everything above is flat in table size — re-measured at both 10,000 and 100,000 executions, no read
+path moved by more than 2 logical reads. Only two queries scale linearly, and both must: the
+`DISTINCT JobName` behind the filter dropdown (below), and the retention screen's `GROUP BY
+JobTypeName` execution count, which grows 104 → 980 reads across that same range. The dropdown is
+cached; **the retention count is not**, which makes it the most expensive query in the UI. Deliberate
+for now — that screen is opened rarely, unlike the list — but it is the first thing to cache if an
+installation ever passes a few hundred thousand executions.
 
 `GetDistinctJobNamesAsync` is **cached for 60 seconds** (`JobExecutionQueryService`, a singleton, so
 process-wide). No index can help it — producing a distinct list means looking at every row, 681 reads
@@ -285,7 +307,7 @@ Five things silently break this UI. Each was a real bug; none produce an obvious
    and must not call `MapControllers()` — mapping controllers from two `UseEndpoints` blocks registers
    every action twice and throws `AmbiguousMatchException` at request time.
 
-Two pages, both hosted by that view rather than routed:
+Three pages, all hosted by that view rather than routed:
 
 - `Components/Pages/Index.razor` — paginated/filterable execution list. Uses **keyset (seek) pagination**
   (`StartedAt DESC, Id DESC` with a cursor), not offset/`Skip(n)` — this is a large, append-heavy,
@@ -316,6 +338,15 @@ Two pages, both hosted by that view rather than routed:
   time a summary appears, above `SummaryAutoCollapseLines`). A job checkpointing with `FlushSummary`
   grows its summary across polls, and an unlatched threshold would snap the section shut under the
   reader. The size badge, being informational, does keep updating.
+- `Components/Pages/Retention.razor` — per-job retention settings, reached at `?view=retention`. One
+  row per job, each with a `<select>` of the day presets plus *Inherit* and *Keep forever*; choosing
+  saves immediately (there is no Save button, so there is no half-applied state to reason about).
+  `DayChoicesFor` folds a non-preset override — someone may have set 42 days directly in the database
+  — into that row's options rather than silently resetting it on the next save. A failed save is
+  surfaced in a `[role=alert]` rather than swallowed: retention that quietly failed to change would
+  leave an administrator believing history was being kept, or removed, when it is not. `CurrentUser`
+  arrives as a parameter alongside `Id` and `ViewerTimeZone`, for the same reason — the audit trail
+  needs it and a component has no `HttpContext` once the circuit takes over.
 
 Styling and scripts:
 
@@ -373,16 +404,21 @@ concept, by design. Note these cannot be extracted into shared Razor components:
 error.
 
 `Cms/CmsAdminUrls.cs` holds the hard-coded URLs of the CMS's own scheduled job screens, used by the
-cross-links on both pages. Optimizely exposes no resolver for them, so this is the single place to
+cross-links on the execution pages. Optimizely exposes no resolver for them, so this is the single place to
 change if a future CMS release moves the Settings SPA.
 
 ### CMS menu
 
-`Cms/ScheduledJobsInsightsMenuProvider` contributes up to two entries. `MenuPlacement` positions the
+`Cms/ScheduledJobsInsightsMenuProvider` contributes up to three entries. `MenuPlacement` positions the
 primary one (`CmsSection`/`TopLevel`/`CustomSection`); `ShowInDataSyncManagement` (default `true`)
 independently adds a second under the CMS's own **Settings > Data & Sync Management**, as a sibling of
 the native Scheduled Jobs page at `/global/cms/admin/scheduledjobs/scheduledjobsinsights`. The parent
-group is Optimizely's, so only the leaf is contributed.
+group is Optimizely's, so only the leaf is contributed. `ShowRetentionMenuItem` (default `true`) adds
+a third leaf beside it for the retention screen, pointing at `CmsShellPath?view=retention` — the menu
+*path* has its own segment (`.../scheduledjobsinsightsretention`) so the shell can highlight it, while
+the *URL* stays on the one mapped route, since an extra path segment there would break the shell's
+navigation resolution (see above). All three entries are gated on `EnableCmsMenu` and on
+`AuthorizedRoles`.
 
 ### Retention
 
@@ -414,7 +450,10 @@ indefinite. The order is expressed in exactly one place — `JobRetention.Resolv
   history whose code has been deleted.
 - **The type scan is lazy and cached for the process.** Attributes are compiled in, so nothing can
   change them without a restart; `ReflectionTypeLoadException` is caught per assembly, since plugins
-  failing to load types is routine in a CMS and must not cost the whole index.
+  failing to load types is routine in a CMS and must not cost the whole index. Because it scans loaded
+  assemblies rather than taking an injected list, `JobRetentionServiceTests` needs *real*
+  `LoggedScheduledJobBase` subclasses to assert against — `tests/.../Retention/RetentionTestJobs.cs`
+  exists for that and nothing else; a substituted type list would not exercise the index at all.
 - **The cleanup job excludes governed job types from the default sweep** whether their rule is shorter
   or longer. Otherwise the default would delete history a job explicitly asked to keep.
 - The screen is a third component on the same route, `?view=retention` — a query string for the same
@@ -435,7 +474,8 @@ deliberately without an `OrderBy` — the loop's correctness doesn't depend on w
 
 xUnit + NSubstitute + bUnit, mirroring the `src/` folder structure. Pure logic (options binding, DI
 registration, the menu provider, `LoggedScheduledJobBase`'s success/failure/status-changed paths, the
-cleanup job's batch loop) is tested with NSubstitute alone — no database involved. Anything that needs
+cleanup job's batch loop, the retention precedence order) is tested with NSubstitute alone — no
+database involved. Anything that needs
 real EF Core query translation (`JobExecutionQueryService`, cascade deletes, the background writer) uses
 a **Sqlite in-memory** provider (`Tests/Data/SqliteDbContextFactory.cs`), not the EF Core `InMemory`
 provider — `InMemory` doesn't support `ExecuteDelete` (used by the cleanup repository) and doesn't
@@ -444,10 +484,10 @@ Sqlite-specific `DateTimeOffsetToBinaryConverter` workaround for a real Sqlite p
 (no native `ORDER BY` translation over `DateTimeOffset`) — this only applies when `Database.ProviderName`
 is Sqlite, so it has zero effect on the production SQL Server schema/migrations.
 
-The two Blazor pages are tested with **bUnit** (`tests/.../Components/`), rendering them in-process
+The three Blazor pages are tested with **bUnit** (`tests/.../Components/`), rendering them in-process
 with substituted services. Three things about that setup:
 
-- Substituting `IJobExecutionQueryService` needs `InternalsVisibleTo("DynamicProxyGenAssembly2")` on
+- Substituting `IJobExecutionQueryService` (and `IJobRetentionService`) needs `InternalsVisibleTo("DynamicProxyGenAssembly2")` on
   the library, which is why that second entry exists in the csproj. The test project's own access is
   not enough: the interface is internal and NSubstitute emits its proxy into Castle's dynamic
   assembly, not into the test assembly. (Only works because this assembly is not strong-named.)

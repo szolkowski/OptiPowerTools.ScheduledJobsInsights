@@ -29,6 +29,14 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
 
     private static readonly TimeSpan RetryBackoff = TimeSpan.FromMilliseconds(200);
 
+    /// <summary>
+    /// Records taken out of the channel but not yet written. A field rather than a local because
+    /// both <see cref="ExecuteAsync"/> and <see cref="StopAsync"/> have to be able to flush it, and
+    /// only one of them is guaranteed to run. Never touched concurrently: <see cref="StopAsync"/>
+    /// only reaches it after <c>base.StopAsync</c> has awaited <see cref="ExecuteAsync"/> to a stop.
+    /// </summary>
+    private readonly List<JobRecord> _pending = [];
+
     private readonly Channel<JobRecord> _channel;
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
@@ -54,9 +62,14 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
         {
             while (await reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
             {
-                var batch = await CollectBatchAsync(reader, stoppingToken).ConfigureAwait(false);
-                if (batch.Count > 0)
-                    await FlushAsync(batch, stoppingToken).ConfigureAwait(false);
+                // _pending rather than a local: collecting takes records *out* of the channel, so a
+                // batch abandoned mid-collect is gone — a drain that only reads the channel finds
+                // nothing. Shutdown cancels while the collector is typically parked waiting for more.
+                await CollectBatchAsync(reader, _pending, stoppingToken).ConfigureAwait(false);
+                if (_pending.Count > 0)
+                    await FlushAsync(_pending, stoppingToken).ConfigureAwait(false);
+
+                _pending.Clear();
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -74,9 +87,30 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
         await DrainRemainingAsync().ConfigureAwait(false);
     }
 
-    private async Task<List<JobRecord>> CollectBatchAsync(ChannelReader<JobRecord> reader, CancellationToken stoppingToken)
+    /// <summary>
+    /// Flushes whatever is still buffered as the application stops.
+    /// </summary>
+    /// <remarks>
+    /// The drain has to live here as well as at the end of <see cref="ExecuteAsync"/>, because
+    /// <see cref="ExecuteAsync"/> is not guaranteed to run at all. <see cref="BackgroundService"/>
+    /// starts it on the thread pool, so a host that stops promptly — or a pool busy at startup — can
+    /// cancel the task before its body is ever entered, leaving it <c>Canceled</c> with no trace. A
+    /// drain that only existed inside it would be skipped exactly then, silently dropping everything
+    /// a job logged. Draining twice is harmless: the second pass finds nothing.
+    /// </remarks>
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        var batch = new List<JobRecord>(_options.LogBatchSize);
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        await DrainRemainingAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fills <paramref name="batch"/> from the channel until it is full or the flush interval
+    /// elapses. The caller supplies the list so that a cancellation part-way through does not strand
+    /// the records already taken out of the channel.
+    /// </summary>
+    private async Task CollectBatchAsync(ChannelReader<JobRecord> reader, List<JobRecord> batch, CancellationToken stoppingToken)
+    {
         var deadline = DateTime.UtcNow + _options.LogFlushInterval;
 
         while (batch.Count < _options.LogBatchSize)
@@ -99,19 +133,28 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             if (!await readTask.ConfigureAwait(false))
                 break; // channel completed
         }
-
-        return batch;
     }
 
-    /// <summary>Reads whatever is currently buffered (without waiting) and flushes it — used on shutdown.</summary>
+    /// <summary>
+    /// Final flush on shutdown: anything already taken from the channel but not yet written, plus
+    /// whatever is still queued behind it.
+    /// </summary>
+
+    /// <remarks>
+    /// Uses <see cref="CancellationToken.None"/> deliberately — the whole purpose of this call is to
+    /// run after cancellation, so passing the stopping token would cancel the write it exists to
+    /// perform. <c>StopAsync</c>'s own shutdown timeout still bounds it.
+    /// </remarks>
     private async Task DrainRemainingAsync()
     {
-        var remaining = new List<JobRecord>();
         while (_channel.Reader.TryRead(out var item))
-            remaining.Add(item);
+            _pending.Add(item);
 
-        if (remaining.Count > 0)
-            await FlushAsync(remaining, CancellationToken.None).ConfigureAwait(false);
+        if (_pending.Count == 0)
+            return;
+
+        await FlushAsync(_pending, CancellationToken.None).ConfigureAwait(false);
+        _pending.Clear();
     }
 
     /// <summary>

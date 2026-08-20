@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
 
     <!-- NuGet Package Metadata -->
-    <Version>0.9.0</Version>
+    <Version>0.9.5</Version>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>
@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OptiPowerTools.ScheduledJobsInsights.Tests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 
   <ItemGroup>

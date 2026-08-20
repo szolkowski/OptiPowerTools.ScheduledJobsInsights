@@ -454,7 +454,7 @@ cp .env.example .env   # or edit in place
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SA_PASSWORD` | `Episerver123!` | `sa` password inside `sjinsights-db` |
+| `SA_PASSWORD` | `LocalDevOnly_Ch4ngeMe!` | `sa` password inside `sjinsights-db`. A local placeholder, not a secret. SQL Server bakes it into the data volume on first start, so change it before the first `docker compose up` or not at all. |
 | `DB_NAME` | `ScheduledJobsInsights` | Created on first start by the container entrypoint |
 | `WEB_HOST_PORT` | `5103` | Host port for the site |
 | `DB_HOST_PORT` | `6003` | Host port for SQL Server |

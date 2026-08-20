@@ -2,6 +2,7 @@
 @{
     Layout = string.Empty;
     var executionId = (long?)ViewBag.ExecutionId;
+    var viewerTimeZone = (string?)ViewBag.ViewerTimeZone;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -27,6 +28,28 @@
        hardcoding a name this package cannot know. *@
     <link rel="stylesheet" href="@Url.Content($"~/{HostEnvironment.ApplicationName}.styles.css")" />
     <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" />
+
+    @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in
+       <head>, before the components below are rendered on any subsequent request, and the controller
+       reads it back out of the cookie — which is why it is a cookie rather than JS interop: the value
+       has to be available during prerendering, not just once the circuit connects.
+
+       Consequence worth knowing: on the very first page view the cookie does not exist yet, so times
+       render in UTC (labelled as such, never silently wrong) and every view after that is in the
+       reader's own zone. Nothing here reloads the page to avoid that one occurrence. *@
+    <script>
+        (function () {
+            try {
+                var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                if (zone) {
+                    document.cookie = 'sji-timezone=' + encodeURIComponent(zone) +
+                        '; path=/; max-age=31536000; SameSite=Lax';
+                }
+            } catch (e) {
+                // No Intl support, or cookies blocked. The server keeps rendering UTC.
+            }
+        })();
+    </script>
 </head>
 <body>
     @* platform-navigation advertises an antiforgery header name on this page for the shell's client
@@ -39,11 +62,11 @@
         <div class="sji-content">
             @if (executionId is { } id)
             {
-                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" />
+                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" param-ViewerTimeZone="viewerTimeZone" />
             }
             else
             {
-                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" />
+                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" />
             }
         </div>
     </platform-navigation-wrapper>

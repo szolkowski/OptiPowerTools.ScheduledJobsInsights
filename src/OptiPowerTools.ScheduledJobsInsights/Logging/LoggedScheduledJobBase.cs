@@ -9,7 +9,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// <summary>
 /// Base class for Optimizely scheduled jobs that persists execution history: every
 /// <c>OnStatusChanged</c> message, the job's final return value, unhandled exceptions,
-/// automatic execution metrics, and anything logged via <see cref="Log"/>/<see cref="LogInputData"/>/<see cref="RecordMetric"/>.
+/// automatic execution metrics, and anything recorded via <see cref="Log"/>/<see cref="LogInputData"/>/
+/// <see cref="RecordMetric"/>/<see cref="Summary"/>.
 /// </summary>
 /// <remarks>
 /// Derive from this instead of <see cref="ScheduledJobBase"/> directly and implement
@@ -23,8 +24,9 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
 {
     private readonly IJobExecutionWriter _writer;
     private readonly IScheduledJobRepository _scheduledJobRepository;
-    private long _executionId;
+    private long? _executionId;
     private int _logSequence;
+    private JobResultSummary? _summary;
 
     /// <summary>
     /// Initializes the base class. Derived jobs must forward both parameters to this constructor —
@@ -48,11 +50,20 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// Wraps the run with automatic metrics and execution persistence, and always rethrows on
     /// failure so Optimizely's own success/failure tracking is unaffected.
     /// </summary>
+    /// <remarks>
+    /// If the execution cannot be recorded at all — an unreachable insights database, most likely —
+    /// the job still runs, unrecorded. Recording is dropped rather than the run: a package whose
+    /// purpose is to observe jobs must not be able to stop them, and an installation whose reporting
+    /// database goes down should lose its history, not its nightly imports.
+    /// </remarks>
     public sealed override string Execute()
     {
         var jobName = TryResolveJobName(ScheduledJobId);
+
+        // Null means this run goes unrecorded; every write below is a no-op from here on.
         _executionId = _writer.BeginExecution(ScheduledJobId, jobName, GetType().FullName ?? GetType().Name);
         _logSequence = 0;
+        _summary = null;
 
         var stopwatch = Stopwatch.StartNew();
         var allocatedStart = GC.GetAllocatedBytesForCurrentThread();
@@ -63,38 +74,127 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         {
             var result = ExecuteJob();
             RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
-            _writer.Complete(_executionId, succeeded: true, resultMessage: result, exception: null);
+            CompleteExecution(succeeded: true, resultMessage: result, exception: null);
             return result;
         }
         catch (Exception ex)
         {
             RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
-            _writer.Complete(_executionId, succeeded: false, resultMessage: null, exception: ex);
+            CompleteExecution(succeeded: false, resultMessage: null, exception: ex);
             throw; // Never swallow — Optimizely's own executor sets HasLastExecutionFailed/LastExecutionMessage from this.
         }
     }
 
-    /// <summary>Sealed so every <c>OnStatusChanged</c> call is captured; also raises the native <c>StatusChanged</c> event as usual.</summary>
+    /// <summary>
+    /// Sealed so every <c>OnStatusChanged</c> call is captured; also raises the native
+    /// <c>StatusChanged</c> event as usual.
+    /// </summary>
+    /// <remarks>
+    /// The base call happens unconditionally, before and regardless of any recording. The CMS admin's
+    /// live status column depends on it, and that must keep working even when this package cannot
+    /// persist a thing.
+    /// </remarks>
     protected sealed override void OnStatusChanged(string statusMessage)
     {
         base.OnStatusChanged(statusMessage); // preserves the native StatusChanged event / live CMS admin status
-        _writer.Log(_executionId, NextSequence(), LogSeverity.Info, statusMessage, LogEntrySource.StatusChanged);
+
+        if (_executionId is { } executionId)
+            _writer.Log(executionId, NextSequence(), LogSeverity.Info, statusMessage, LogEntrySource.StatusChanged);
     }
 
-    /// <summary>Records an explicit log line for the current execution.</summary>
-    protected void Log(string message, LogSeverity severity = LogSeverity.Default) =>
-        _writer.Log(_executionId, NextSequence(), severity, message, LogEntrySource.DevLog);
+    /// <summary>Records an explicit log line for the current execution. A no-op if the run is unrecorded.</summary>
+    protected void Log(string message, LogSeverity severity = LogSeverity.Default)
+    {
+        if (_executionId is { } executionId)
+            _writer.Log(executionId, NextSequence(), severity, message, LogEntrySource.DevLog);
+    }
 
     /// <summary>
     /// Captures the input/parameters this run started with, serialized as JSON. Call once near the
-    /// start of <see cref="ExecuteJob"/>.
+    /// start of <see cref="ExecuteJob"/>. A no-op if the run is unrecorded.
     /// </summary>
-    protected void LogInputData(object inputData) =>
-        _writer.SetInputData(_executionId, JsonSerializer.Serialize(inputData));
+    protected void LogInputData(object inputData)
+    {
+        // Serialized only when there is somewhere to put it — the payload can be large, and an
+        // unrecorded run should not pay to build a string nobody will read.
+        if (_executionId is { } executionId)
+            _writer.SetInputData(executionId, JsonSerializer.Serialize(inputData));
+    }
 
-    /// <summary>Records a custom numeric metric for the current execution.</summary>
-    protected void RecordMetric(string name, double value, string? unit = null) =>
-        _writer.RecordMetric(_executionId, name, value, unit);
+    /// <summary>Records a custom numeric metric for the current execution. A no-op if the run is unrecorded.</summary>
+    protected void RecordMetric(string name, double value, string? unit = null)
+    {
+        if (_executionId is { } executionId)
+            _writer.RecordMetric(executionId, name, value, unit);
+    }
+
+    /// <summary>
+    /// Optional multi-line report for this run, rendered as the <em>Result summary</em> section of
+    /// the execution detail view. Append to it as the job works; nothing is written unless something
+    /// was appended.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this for the readable account of what the run did — counts, skipped items, per-step
+    /// outcomes — and keep the string returned from <see cref="ExecuteJob"/> to one line, since that
+    /// value is Optimizely's "last execution message" and shows in a single admin grid cell.
+    /// </para>
+    /// <para>
+    /// Persisted once, just before the execution is completed, on both the success and failure
+    /// paths. A job that runs for a long time and wants the summary visible while it is still
+    /// running can checkpoint it with <see cref="FlushSummary"/>.
+    /// </para>
+    /// </remarks>
+    protected JobResultSummary Summary => _summary ??= CreateSummary();
+
+    /// <summary>
+    /// Replaces the whole summary with <paramref name="summary"/>, for jobs that already hold the
+    /// finished text rather than building it up.
+    /// </summary>
+    /// <param name="summary">The summary text. Newlines are preserved.</param>
+    protected void SetSummary(string summary)
+    {
+        Summary.Clear();
+        Summary.Append(summary);
+    }
+
+    /// <summary>
+    /// Persists the summary as it currently stands. Called automatically when the job finishes;
+    /// call it directly only to make a partial summary visible part-way through a long run.
+    /// </summary>
+    protected void FlushSummary()
+    {
+        if (_executionId is not { } executionId || _summary is null || _summary.IsEmpty)
+            return;
+
+        _writer.SetResultSummary(executionId, _summary.ToString());
+    }
+
+    /// <summary>
+    /// Persists the summary and marks the execution finished. Skipped entirely when the run is
+    /// unrecorded.
+    /// </summary>
+    private void CompleteExecution(bool succeeded, string? resultMessage, Exception? exception)
+    {
+        if (_executionId is not { } executionId)
+            return;
+
+        // Flushed on the failure path too: whatever the job managed to summarise before throwing is
+        // usually the most useful thing on the page when diagnosing that failure.
+        FlushSummary();
+        _writer.Complete(executionId, succeeded, resultMessage, exception);
+    }
+
+    /// <summary>
+    /// Builds the summary bounded by the configured limit. A writer that reports a non-positive
+    /// limit — a test double left at its default, typically — falls back to
+    /// <see cref="JobResultSummary.DefaultMaxLength"/> rather than throwing.
+    /// </summary>
+    private JobResultSummary CreateSummary()
+    {
+        var maxLength = _writer.MaxResultSummaryLength;
+        return new JobResultSummary(maxLength > 0 ? maxLength : JobResultSummary.DefaultMaxLength);
+    }
 
     private void RecordAutomaticMetrics(
         Stopwatch stopwatch,

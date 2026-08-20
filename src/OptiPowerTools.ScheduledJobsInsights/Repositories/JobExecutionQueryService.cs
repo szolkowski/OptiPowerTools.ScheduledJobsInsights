@@ -40,6 +40,17 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
             .OrderByDescending(e => e.StartedAt)
             .ThenByDescending(e => e.Id)
             .Take(pageSize + 1)
+            // Projected rather than materialising entities: JobExecution holds three unbounded
+            // columns the list never shows, and a page is 50 rows of them.
+            .Select(e => new ExecutionListItem(
+                e.Id,
+                e.JobName,
+                e.Status,
+                e.StartedAt,
+                e.CompletedAt,
+                e.ResultMessage,
+                e.ExceptionMessage,
+                e.ResultSummary != null))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 

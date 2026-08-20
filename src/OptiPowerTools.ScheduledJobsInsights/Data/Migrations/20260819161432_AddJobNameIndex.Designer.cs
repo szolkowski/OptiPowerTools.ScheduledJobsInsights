@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using OptiPowerTools.ScheduledJobsInsights.Data;
 
@@ -11,9 +12,11 @@ using OptiPowerTools.ScheduledJobsInsights.Data;
 namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
 {
     [DbContext(typeof(ScheduledJobsInsightsDbContext))]
-    partial class ScheduledJobsInsightsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260819161432_AddJobNameIndex")]
+    partial class AddJobNameIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

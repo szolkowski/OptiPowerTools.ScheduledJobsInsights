@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data;
@@ -52,15 +53,42 @@ public static class ApplicationBuilderExtensions
             .GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
 
         if (options.AutoMigrateDatabase)
-        {
-            using var scope = app.ApplicationServices.CreateScope();
-            var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ScheduledJobsInsightsDbContext>>();
-            using var dbContext = dbContextFactory.CreateDbContext();
-            dbContext.Database.Migrate();
-        }
+            TryMigrate(app.ApplicationServices);
 
         app.UseEndpoints(endpoints => endpoints.MapOptiPowerToolScheduledJobsInsights());
 
         return app;
+    }
+
+    /// <summary>
+    /// Applies pending migrations, logging and continuing if the insights database cannot be reached.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not fail-fast. An exception here happens inside <c>Configure</c>, so it aborts
+    /// application startup — meaning an unreachable *reporting* database stops the entire CMS from
+    /// booting. That is the same inversion this package refuses everywhere else in the write path: a
+    /// tool that observes scheduled jobs must never be able to prevent them, and a site must not go
+    /// down because its execution history is unavailable. Logged at Critical, because the UI and all
+    /// recording will be broken until it is resolved and somebody needs to see that.
+    /// </remarks>
+    private static void TryMigrate(IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+
+        try
+        {
+            var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ScheduledJobsInsightsDbContext>>();
+            using var dbContext = dbContextFactory.CreateDbContext();
+            dbContext.Database.Migrate();
+        }
+        catch (Exception ex)
+        {
+            scope.ServiceProvider
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
+                .LogCritical(
+                    ex,
+                    "ScheduledJobsInsights could not apply database migrations at startup. The application will continue and scheduled jobs will run normally, but execution history will not be recorded and the insights UI will not work until the database is reachable.");
+        }
     }
 }

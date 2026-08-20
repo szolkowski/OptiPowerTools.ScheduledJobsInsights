@@ -52,8 +52,17 @@ internal class ScheduledJobsInsightsDbContext : DbContext
             entity.Property(e => e.JobName).HasMaxLength(400).IsRequired();
             entity.Property(e => e.JobTypeName).HasMaxLength(400).IsRequired();
             entity.Property(e => e.MachineName).HasMaxLength(200).IsRequired();
+            // Serves the unfiltered list's keyset pagination.
             entity.HasIndex(e => new { e.StartedAt, e.Id }).IsDescending(true, true);
             entity.HasIndex(e => e.ScheduledJobId);
+
+            // Serves both jobs the list page does with JobName, which without it were table scans on
+            // the biggest table this package owns: the DISTINCT that fills the filter dropdown (run on
+            // every page view, twice under prerendering), and the keyset page for a selected job —
+            // leading with JobName turns that into a seek followed by an already-ordered range, so no
+            // sort either. The key is wide because JobName is nvarchar(400); if insert cost ever
+            // matters more than list latency, narrowing that column is the lever.
+            entity.HasIndex(e => new { e.JobName, e.StartedAt, e.Id }).IsDescending(false, true, true);
         });
 
         modelBuilder.Entity<JobLogEntry>(entity =>

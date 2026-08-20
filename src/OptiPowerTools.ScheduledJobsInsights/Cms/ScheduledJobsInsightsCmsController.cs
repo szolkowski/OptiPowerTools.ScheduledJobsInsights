@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Cms;
@@ -38,6 +39,13 @@ public class ScheduledJobsInsightsCmsController : Controller
 
         ViewBag.ExecutionId = id;
         ViewBag.PageTitle = _options.PageTitle;
+
+        // The reader's time zone, stashed in a cookie by the view's own inline script. Read here and
+        // handed to the components as a parameter rather than looked up inside them: IHttpContextAccessor
+        // is only meaningful during prerendering, and a component that consulted it would see the right
+        // zone on the prerender pass and null once the circuit takes over, flipping the page back to UTC.
+        ViewBag.ViewerTimeZone = Request.Cookies[ViewerClock.CookieName];
+
         return View();
     }
 }

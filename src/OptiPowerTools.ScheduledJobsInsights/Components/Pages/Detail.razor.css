@@ -1,8 +1,86 @@
-.summary {
+/* Named for the execution's own metadata strip, not the result summary below it — the two were
+   easy to confuse once the summary section arrived. */
+.execution-meta {
     display: flex;
     gap: 1rem;
     align-items: center;
+    flex-wrap: wrap;
     margin-bottom: 1rem;
+}
+
+.sections {
+    margin: 1rem 0;
+}
+
+.section-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+
+/* Both panes wrap rather than scroll sideways: pre-wrap alone still lets a long path or URL push the
+   whole page wider, which on the CMS shell means the chrome scrolls too. */
+.summary-text,
+.payload-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 0;
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+/* A summary is meant to be read here, so it is bounded rather than pushing the log off the screen —
+   generous on a large monitor, still usable on a laptop. */
+.summary-text {
+    max-height: clamp(12rem, 40vh, 40rem);
+    overflow-y: auto;
+}
+
+.payload-text {
+    max-height: 24rem;
+    overflow: auto;
+}
+
+/* Same reasoning as the console's scrollbar rules below: several hundred summary lines inside a
+   bounded pane, and macOS hides its overlay scrollbar until you already know to scroll — so the one
+   affordance saying "there is more here" is missing exactly when it matters. min-height keeps the
+   thumb grabbable however long the summary gets.
+
+   As on the console, the standard scrollbar-width / scrollbar-color properties are deliberately NOT
+   set: since Chrome 121 their presence makes it ignore ::-webkit-scrollbar altogether. */
+.summary-text::-webkit-scrollbar,
+.payload-text::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+.summary-text::-webkit-scrollbar-track,
+.payload-text::-webkit-scrollbar-track {
+    background: rgba(128, 128, 128, 0.12);
+    border-radius: 6px;
+}
+
+.summary-text::-webkit-scrollbar-thumb,
+.summary-text::-webkit-scrollbar-thumb:hover,
+.payload-text::-webkit-scrollbar-thumb,
+.payload-text::-webkit-scrollbar-thumb:hover {
+    /* padding-box clipping is what turns the transparent border into breathing room around the
+       thumb; without it the border paints in the thumb colour and the gap disappears. */
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 6px;
+    min-height: 2.5rem;
+}
+
+.summary-text::-webkit-scrollbar-thumb,
+.payload-text::-webkit-scrollbar-thumb {
+    background-color: rgba(128, 128, 128, 0.5);
+}
+
+.summary-text::-webkit-scrollbar-thumb:hover,
+.payload-text::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(128, 128, 128, 0.75);
 }
 
 .status-badge {
@@ -19,7 +97,6 @@
 
 .metrics-table {
     border-collapse: collapse;
-    margin-bottom: 1rem;
 }
 
 .metrics-table th,

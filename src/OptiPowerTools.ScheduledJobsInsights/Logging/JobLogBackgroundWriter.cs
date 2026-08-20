@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data;
@@ -14,20 +15,35 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// records have accumulated or <see cref="OptiPowerToolScheduledJobsInsightsOptions.LogFlushInterval"/> has elapsed,
 /// whichever comes first. On shutdown, remaining buffered records are drained and flushed one final time.
 /// </summary>
+/// <remarks>
+/// Nothing in here may throw out of <see cref="ExecuteAsync"/>. Since .NET 6 the default
+/// <c>BackgroundServiceExceptionBehavior</c> is <c>StopHost</c>, so an unhandled exception from a
+/// hosted service shuts the whole application down — which for this package would mean a transient
+/// SQL error while writing *log lines* taking the CMS offline. Diagnostics are worth strictly less
+/// than the thing they are diagnosing, so every failure here is caught, logged and survived.
+/// </remarks>
 internal sealed class JobLogBackgroundWriter : BackgroundService
 {
+    /// <summary>Attempts per batch. Covers a transient blip without holding the drain loop for long.</summary>
+    private const int MaxFlushAttempts = 3;
+
+    private static readonly TimeSpan RetryBackoff = TimeSpan.FromMilliseconds(200);
+
     private readonly Channel<JobRecord> _channel;
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly ILogger<JobLogBackgroundWriter> _logger;
 
     public JobLogBackgroundWriter(
         Channel<JobRecord> channel,
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options)
+        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        ILogger<JobLogBackgroundWriter> logger)
     {
         _channel = channel;
         _dbContextFactory = dbContextFactory;
         _options = options.Value;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -46,6 +62,13 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // Expected on shutdown — fall through to the final drain below.
+        }
+        catch (Exception ex)
+        {
+            // FlushAsync already handles its own failures, so reaching here means the channel or the
+            // loop itself broke. Stop draining, but do not take the host down over it.
+            _logger.LogError(ex, "ScheduledJobsInsights log writer stopped unexpectedly. Job logs and metrics will no longer be persisted until the application restarts.");
+            return;
         }
 
         await DrainRemainingAsync().ConfigureAwait(false);
@@ -91,7 +114,49 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             await FlushAsync(remaining, CancellationToken.None).ConfigureAwait(false);
     }
 
-    private async Task FlushAsync(List<JobRecord> batch, CancellationToken cancellationToken)
+    /// <summary>
+    /// Writes a batch, retrying a transient failure a couple of times and giving up rather than
+    /// throwing. A dropped batch costs some log lines; an escaping exception costs the application.
+    /// </summary>
+    private async Task FlushAsync(List<JobRecord> batch, CancellationToken stoppingToken)
+    {
+        for (var attempt = 1; attempt <= MaxFlushAttempts; attempt++)
+        {
+            try
+            {
+                await WriteBatchAsync(batch, stoppingToken).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw; // Shutdown, not a failure — ExecuteAsync's handler drains what is left.
+            }
+            catch (Exception ex)
+            {
+                if (attempt == MaxFlushAttempts)
+                {
+                    _logger.LogError(
+                        ex,
+                        "ScheduledJobsInsights dropped {RecordCount} buffered log/metric record(s) after {AttemptCount} failed write attempts. Job execution history is incomplete for this period; the writer is still running.",
+                        batch.Count,
+                        MaxFlushAttempts);
+                    return;
+                }
+
+                _logger.LogWarning(
+                    ex,
+                    "ScheduledJobsInsights failed to write {RecordCount} buffered log/metric record(s) on attempt {Attempt} of {AttemptCount}. Retrying.",
+                    batch.Count,
+                    attempt,
+                    MaxFlushAttempts);
+
+                // Each attempt builds a fresh DbContext, so there is no failed change tracker to reset.
+                await Task.Delay(RetryBackoff * attempt, stoppingToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task WriteBatchAsync(List<JobRecord> batch, CancellationToken cancellationToken)
     {
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 

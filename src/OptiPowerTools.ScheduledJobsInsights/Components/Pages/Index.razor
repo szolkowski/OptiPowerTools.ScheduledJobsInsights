@@ -45,6 +45,10 @@
     </label>
 </div>
 
+@* Stated once here rather than suffixed onto fifty rows. Worth stating at all: before the browser's
+   zone is known these are UTC, and a reader must never have to guess which they are looking at. *@
+<p class="timezone-note">Times shown in @_clock.Label</p>
+
 @if (_page is null)
 {
     <p role="status">Loading…</p>
@@ -83,9 +87,17 @@ else
                             @ExecutionStatusStyles.Label(execution.Status)
                         </span>
                     </td>
-                    <td>@execution.StartedAt.LocalDateTime.ToString("g")</td>
-                    <td>@FormatDuration(execution)</td>
-                    <td class="result-cell">@(execution.ResultMessage ?? execution.ExceptionMessage)</td>
+                    <td>@_clock.CompactTimestamp(execution.StartedAt)</td>
+                    <td>@DisplayFormat.Duration(execution.StartedAt, execution.CompletedAt)</td>
+                    <td class="result-cell">
+                        @* Marks rows worth opening for their summary. The flag is computed in SQL,
+                           so the summary text itself never enters the list query. *@
+                        @if (execution.HasResultSummary)
+                        {
+                            <span class="summary-marker" title="This execution recorded a result summary">summary</span>
+                        }
+                        @(execution.ResultMessage ?? execution.ExceptionMessage)
+                    </td>
                 </tr>
             }
         </tbody>
@@ -98,9 +110,17 @@ else
 }
 
 @code {
+    /// <summary>
+    /// The reader's IANA time zone, supplied by the hosting view from a cookie. Null or unrecognised
+    /// falls back to UTC — see <see cref="ViewerClock"/>.
+    /// </summary>
+    [Parameter]
+    public string? ViewerTimeZone { get; set; }
+
     private readonly Stack<ExecutionCursor?> _history = new();
     private readonly CancellationTokenSource _disposalCts = new();
 
+    private ViewerClock _clock = ViewerClock.Utc;
     private ExecutionPage? _page;
     private IReadOnlyList<string> _jobNames = [];
     private string _jobNameFilter = string.Empty;
@@ -112,6 +132,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _clock = ViewerClock.ForZone(ViewerTimeZone);
         _jobNames = await QueryService.GetDistinctJobNamesAsync(_disposalCts.Token);
         await LoadPageAsync();
     }
@@ -178,17 +199,6 @@ else
     // the CMS chrome is rendered around it. Mirrors what the anchor in the first cell does.
     private void GoToDetail(long executionId) =>
         Navigation.NavigateTo(DetailUrl(executionId), forceLoad: true);
-
-    private static string FormatDuration(Data.Entities.JobExecution execution)
-    {
-        if (execution.CompletedAt is null)
-            return "—";
-
-        var duration = execution.CompletedAt.Value - execution.StartedAt;
-        return duration.TotalSeconds < 1
-            ? $"{duration.TotalMilliseconds:0} ms"
-            : $"{duration.TotalSeconds:0.0} s";
-    }
 
     public void Dispose()
     {

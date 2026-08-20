@@ -112,4 +112,217 @@ public class LoggedScheduledJobBaseTests
 
         writer.Received(1).BeginExecution(Arg.Any<Guid>(), nameof(TestLoggedJob), Arg.Any<string>());
     }
+
+    [Fact]
+    public void Execute_WithNoSummaryRecorded_NeverWritesOne()
+    {
+        // The summary is opt-in: a job that never touches it must not cost an extra round trip.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(11L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>());
+
+        job.Execute();
+
+        writer.DidNotReceive().SetResultSummary(Arg.Any<long>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Execute_WithSummaryRecorded_PersistsItBeforeCompleting()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(12L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "12 rows exported"
+        };
+
+        job.Execute();
+
+        // Ordering matters: the detail view reads both from the same row, and a summary landing after
+        // the execution is marked finished would briefly show a completed run with no summary.
+        Received.InOrder(() =>
+        {
+            writer.SetResultSummary(12L, Arg.Is<string>(text => text.StartsWith("12 rows exported")));
+            writer.Complete(12L, true, Arg.Any<string>(), null);
+        });
+    }
+
+    [Fact]
+    public void Execute_PreservesNewlinesInTheSummary()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(13L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "first line"
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(13L, $"first line{Environment.NewLine}");
+    }
+
+    [Fact]
+    public void Execute_OnFailure_StillPersistsTheSummary()
+    {
+        // Whatever the job managed to summarise before throwing is usually the most useful thing on
+        // the page when diagnosing that failure.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(14L);
+        var thrown = new InvalidOperationException("boom");
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "aborted at row 42",
+            ExceptionToThrow = thrown
+        };
+
+        Assert.Throws<InvalidOperationException>(() => job.Execute());
+
+        writer.Received(1).SetResultSummary(14L, Arg.Is<string>(text => text.Contains("aborted at row 42")));
+        writer.Received(1).Complete(14L, false, null, thrown);
+    }
+
+    [Fact]
+    public void SetSummary_ReplacesTheSummaryContent()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(15L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "the whole summary",
+            UseSetSummary = true
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(15L, "the whole summary");
+    }
+
+    [Fact]
+    public void FlushSummary_WritesACheckpoint_AndTheFinalFlushStillFollows()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(16L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "batch 1 committed",
+            CheckpointSummary = true
+        };
+
+        job.Execute();
+
+        // Once mid-run, once on the way out — each overwriting the last.
+        writer.Received(2).SetResultSummary(16L, Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Summary_HonoursTheWriterConfiguredLimit()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(17L);
+        writer.MaxResultSummaryLength.Returns(24);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = new string('x', 500)
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(17L, Arg.Is<string>(text => text.Length <= 24));
+    }
+
+    [Fact]
+    public void Summary_FallsBackToTheDefaultLimit_WhenTheWriterReportsNone()
+    {
+        // A substituted writer reports 0 for an int property, and a job must not blow up on that.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(18L);
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            SummaryToAppend = "still recorded"
+        };
+
+        job.Execute();
+
+        writer.Received(1).SetResultSummary(18L, Arg.Is<string>(text => text.Contains("still recorded")));
+    }
+
+    /// <summary>
+    /// A writer that cannot record anything — what every method sees when the insights database is
+    /// unreachable. NSubstitute returns null for the nullable BeginExecution by default, so this is
+    /// really just naming the condition.
+    /// </summary>
+    private static IJobExecutionWriter UnavailableWriter()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns((long?)null);
+        return writer;
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRunsTheJob()
+    {
+        // The whole point: an unreachable reporting database costs the history of a run, never the
+        // run. A package that observes jobs must not be able to stop them.
+        var writer = UnavailableWriter();
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>()) { ResultToReturn = "did the work" };
+
+        var result = job.Execute();
+
+        Assert.Equal("did the work", result);
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_WritesNothingElse()
+    {
+        // Every later write is keyed on an execution id that does not exist. Attempting them would
+        // produce a foreign-key violation per log line and bury the one warning that matters.
+        var writer = UnavailableWriter();
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            RaiseStatusChanged = true,
+            SummaryToAppend = "not recorded"
+        };
+
+        job.Execute();
+
+        writer.DidNotReceive().Complete(Arg.Any<long>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<Exception>());
+        writer.DidNotReceive().Log(Arg.Any<long>(), Arg.Any<int>(), Arg.Any<LogSeverity>(), Arg.Any<string>(), Arg.Any<LogEntrySource>());
+        writer.DidNotReceive().RecordMetric(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<double>(), Arg.Any<string>());
+        writer.DidNotReceive().SetInputData(Arg.Any<long>(), Arg.Any<string>());
+        writer.DidNotReceive().SetResultSummary(Arg.Any<long>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRaisesTheNativeStatusChangedEvent()
+    {
+        // The CMS admin's live status column is driven by this event, and it belongs to Optimizely,
+        // not to us. It has to keep firing even when nothing can be persisted.
+        var job = new TestLoggedJob(UnavailableWriter(), Substitute.For<IScheduledJobRepository>())
+        {
+            RaiseStatusChanged = true,
+            StatusChangedMessage = "halfway"
+        };
+
+        var observed = new List<string>();
+        job.StatusChanged += (_, args) => observed.Add(args.Message);
+
+        job.Execute();
+
+        Assert.Contains("halfway", observed);
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRethrowsAJobFailure()
+    {
+        // Optimizely sets HasLastExecutionFailed from what Execute() throws. Losing our recording
+        // must not quietly turn a failed job into a successful one.
+        var thrown = new InvalidOperationException("boom");
+        var job = new TestLoggedJob(UnavailableWriter(), Substitute.For<IScheduledJobRepository>())
+        {
+            ExceptionToThrow = thrown
+        };
+
+        Assert.Same(thrown, Assert.Throws<InvalidOperationException>(() => job.Execute()));
+    }
 }

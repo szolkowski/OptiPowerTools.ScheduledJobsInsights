@@ -4,6 +4,12 @@
     margin-bottom: 1rem;
 }
 
+.timezone-note {
+    margin: 0 0 0.5rem;
+    font-size: 0.8rem;
+    opacity: 0.65;
+}
+
 .executions-table {
     width: 100%;
     border-collapse: collapse;

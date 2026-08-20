@@ -45,6 +45,10 @@
     </label>
 </div>
 
+@* Stated once here rather than suffixed onto fifty rows. Worth stating at all: before the browser's
+   zone is known these are UTC, and a reader must never have to guess which they are looking at. *@
+<p class="timezone-note">Times shown in @_clock.Label</p>
+
 @if (_page is null)
 {
     <p role="status">Loading…</p>
@@ -60,7 +64,7 @@ else
             <tr>
                 <th scope="col">Job</th>
                 <th scope="col">Status</th>
-                <th scope="col">Started (UTC)</th>
+                <th scope="col">Started</th>
                 <th scope="col">Duration</th>
                 <th scope="col">Result</th>
             </tr>
@@ -83,7 +87,7 @@ else
                             @ExecutionStatusStyles.Label(execution.Status)
                         </span>
                     </td>
-                    <td>@DisplayFormat.CompactTimestamp(execution.StartedAt)</td>
+                    <td>@_clock.CompactTimestamp(execution.StartedAt)</td>
                     <td>@DisplayFormat.Duration(execution.StartedAt, execution.CompletedAt)</td>
                     <td class="result-cell">
                         @* Marks rows worth opening for their summary. The flag is computed in SQL,
@@ -106,9 +110,17 @@ else
 }
 
 @code {
+    /// <summary>
+    /// The reader's IANA time zone, supplied by the hosting view from a cookie. Null or unrecognised
+    /// falls back to UTC — see <see cref="ViewerClock"/>.
+    /// </summary>
+    [Parameter]
+    public string? ViewerTimeZone { get; set; }
+
     private readonly Stack<ExecutionCursor?> _history = new();
     private readonly CancellationTokenSource _disposalCts = new();
 
+    private ViewerClock _clock = ViewerClock.Utc;
     private ExecutionPage? _page;
     private IReadOnlyList<string> _jobNames = [];
     private string _jobNameFilter = string.Empty;
@@ -120,6 +132,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _clock = ViewerClock.ForZone(ViewerTimeZone);
         _jobNames = await QueryService.GetDistinctJobNamesAsync(_disposalCts.Token);
         await LoadPageAsync();
     }

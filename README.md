@@ -170,11 +170,19 @@ Code that records an execution without being a scheduled job at all can call
 The CMS menu item opens a paginated execution list — job name, status, start time, duration, result —
 with filters for job and status, and a link across to the CMS's own **Scheduled Jobs** page.
 
-**All timestamps are UTC** and labelled as such. They are not converted to the viewer's time zone:
-this is a server-rendered UI, so the only zone it could reach for without asking the browser is the
-*server's*, which is rarely the reader's and was previously shown with nothing to say so. Numbers are
-formatted invariantly for the same reason — a duration must read the same on your machine, on CI and
-in production, because that is where it gets compared.
+**Timestamps are shown in your own time zone**, stated above the table and suffixed with the offset
+on the detail page (`2026-08-19 17:37:16 UTC+02:00`). The browser's IANA zone is recorded in a
+`sji-timezone` cookie by the page itself and applied server-side, so it survives prerendering rather
+than flickering into place after the circuit connects. Two consequences worth knowing:
+
+- **The very first page view renders in UTC**, because the cookie does not exist yet. It is labelled
+  "Times shown in UTC", never silently wrong, and every view after that is in your zone.
+- **If the zone can't be established** — cookies blocked, no `Intl` support, or a host without time
+  zone data — the UI stays in UTC rather than guessing.
+
+Dates keep ISO ordering (`yyyy-MM-dd`) and numbers are formatted invariantly regardless of locale. A
+duration must read the same on your machine, on CI and in production, because that is where it gets
+compared; and a locale-ordered date reintroduces exactly the day/month ambiguity ISO ordering avoids.
 
 Rows whose run recorded a result summary are marked **summary** in the Result column.
 

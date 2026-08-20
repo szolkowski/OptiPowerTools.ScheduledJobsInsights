@@ -26,27 +26,6 @@ public class DisplayFormatTests
         }
     }
 
-    [Fact]
-    public void Timestamp_RendersUtcWithAnExplicitZone()
-    {
-        // Deliberately a non-UTC offset: the value must be converted, not just printed.
-        var value = new DateTimeOffset(2026, 8, 19, 17, 37, 16, TimeSpan.FromHours(2));
-
-        Assert.Equal("2026-08-19 15:37:16 UTC", DisplayFormat.Timestamp(value));
-    }
-
-    [Fact]
-    public void CompactTimestamp_DropsSecondsAndTheZoneSuffix() =>
-        Assert.Equal(
-            "2026-08-19 15:37",
-            DisplayFormat.CompactTimestamp(new DateTimeOffset(2026, 8, 19, 15, 37, 16, TimeSpan.Zero)));
-
-    [Fact]
-    public void TimeOfDay_ConvertsToUtcAndKeepsMilliseconds() =>
-        Assert.Equal(
-            "15:37:16.123",
-            DisplayFormat.TimeOfDay(new DateTimeOffset(2026, 8, 19, 17, 37, 16, 123, TimeSpan.FromHours(2))));
-
     [Theory]
     [InlineData(0, "0")]
     [InlineData(310.994, "310.99")]
@@ -87,24 +66,12 @@ public class DisplayFormatTests
 
         var rendered = InCulture(Mismatched, () => new[]
         {
-            DisplayFormat.Timestamp(start),
-            DisplayFormat.CompactTimestamp(start),
-            DisplayFormat.TimeOfDay(start),
             DisplayFormat.MetricValue(310.994),
             DisplayFormat.LineCount(2019),
             DisplayFormat.Duration(start, start.AddMilliseconds(60_400))
         });
 
-        Assert.Equal(
-            [
-                "2026-08-19 15:00:00 UTC",
-                "2026-08-19 15:00",
-                "15:00:00.000",
-                "310.99",
-                "2,019 lines",
-                "60.4 s"
-            ],
-            rendered);
+        Assert.Equal(["310.99", "2,019 lines", "60.4 s"], rendered);
     }
 
     [Fact]

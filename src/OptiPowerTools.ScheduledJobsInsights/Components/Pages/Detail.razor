@@ -34,10 +34,10 @@ else
         <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(_execution.Status)">
             @ExecutionStatusStyles.Label(_execution.Status)
         </span>
-        <span>Started: @DisplayFormat.Timestamp(_execution.StartedAt)</span>
+        <span>Started: @_clock.Timestamp(_execution.StartedAt)</span>
         @if (_execution.CompletedAt is not null)
         {
-            <span>Completed: @DisplayFormat.Timestamp(_execution.CompletedAt.Value)</span>
+            <span>Completed: @_clock.Timestamp(_execution.CompletedAt.Value)</span>
         }
         <span>Machine: @_execution.MachineName</span>
     </div>
@@ -133,7 +133,7 @@ else
             @* Virtualize renders only the visible slice — a chatty job can log thousands of lines. *@
             <Virtualize TItem="JobLogEntry" Items="_logEntries" Context="entry">
                 <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
-                    <span class="console-timestamp">@DisplayFormat.TimeOfDay(entry.Timestamp)</span>
+                    <span class="console-timestamp">@_clock.TimeOfDay(entry.Timestamp)</span>
                     <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
                     <span class="console-message">@entry.Message</span>
                 </div>
@@ -159,6 +159,7 @@ else
     private readonly List<JobLogEntry> _logEntries = [];
     private readonly CancellationTokenSource _disposalCts = new();
 
+    private ViewerClock _clock = ViewerClock.Utc;
     private ElementReference _consoleElement;
     private IJSObjectReference? _interop;
     private JobExecution? _execution;
@@ -175,11 +176,23 @@ else
     [Parameter, EditorRequired]
     public long Id { get; set; }
 
+    /// <summary>
+    /// The reader's IANA time zone, supplied by the hosting view from a cookie. Null or unrecognised
+    /// falls back to UTC — see <see cref="ViewerClock"/>.
+    /// </summary>
+    [Parameter]
+    public string? ViewerTimeZone { get; set; }
+
     /// <summary>Line count beside the Log heading.</summary>
     private string LogCountLabel => DisplayFormat.LineCount(_logEntries.Count);
 
-    protected override async Task OnInitializedAsync() =>
+    protected override async Task OnInitializedAsync()
+    {
+        // Resolved once from a parameter rather than looked up per render: the zone cannot change
+        // without a new request, and TimeZoneInfo lookups are not free.
+        _clock = ViewerClock.ForZone(ViewerTimeZone);
         await LoadAsync(_disposalCts.Token);
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

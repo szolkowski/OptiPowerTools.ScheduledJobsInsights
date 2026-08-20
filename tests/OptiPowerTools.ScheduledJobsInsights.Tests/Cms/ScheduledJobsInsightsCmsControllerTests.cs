@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
+using OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
@@ -10,14 +11,15 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
 public class ScheduledJobsInsightsCmsControllerTests
 {
     private static ScheduledJobsInsightsCmsController CreateController(
-        OptiPowerToolScheduledJobsInsightsOptions options, ClaimsPrincipal user)
+        OptiPowerToolScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
     {
+        var httpContext = new DefaultHttpContext { User = user };
+        if (timeZoneCookie is not null)
+            httpContext.Request.Headers.Cookie = $"{ViewerClock.CookieName}={timeZoneCookie}";
+
         return new ScheduledJobsInsightsCmsController(Options.Create(options))
         {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext { User = user }
-            }
+            ControllerContext = new ControllerContext { HttpContext = httpContext }
         };
     }
 
@@ -95,5 +97,32 @@ public class ScheduledJobsInsightsCmsControllerTests
         var result = controller.Index(id: null);
 
         Assert.IsType<ViewResult>(result);
+    }
+
+    [Fact]
+    public void Index_PassesTheViewerTimeZoneCookieToView()
+    {
+        // Read here rather than inside the components: IHttpContextAccessor only has a context during
+        // prerendering, so a component that looked it up itself would resolve the zone on the
+        // prerender pass and lose it the moment the circuit took over.
+        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
+        var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()), "Europe/Warsaw");
+
+        var result = controller.Index(id: null);
+
+        Assert.Equal("Europe/Warsaw", Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
+    }
+
+    [Fact]
+    public void Index_WithNoTimeZoneCookie_PassesNull()
+    {
+        // The first ever page view, before the view's inline script has set the cookie. The
+        // components fall back to UTC rather than guessing.
+        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
+        var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
+
+        var result = controller.Index(id: null);
+
+        Assert.Null(Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
     }
 }

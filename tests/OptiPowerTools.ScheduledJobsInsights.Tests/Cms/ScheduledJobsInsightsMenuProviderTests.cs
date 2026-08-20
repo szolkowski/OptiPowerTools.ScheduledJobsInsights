@@ -1,3 +1,4 @@
+using EPiServer.Shell.Navigation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -29,7 +30,8 @@ public class ScheduledJobsInsightsMenuProviderTests
         {
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CmsSection,
-            ShowInDataSyncManagement = false
+            ShowInDataSyncManagement = false,
+            ShowRetentionMenuItem = false
         });
 
         var item = Assert.Single(provider.GetMenuItems());
@@ -41,7 +43,11 @@ public class ScheduledJobsInsightsMenuProviderTests
     {
         // Defaults deliberately surface the UI in two places: its own entry, plus one beside the
         // native Scheduled Jobs page where an administrator would look for a job's history.
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions { EnableCmsMenu = true });
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            ShowRetentionMenuItem = false
+        });
 
         var items = provider.GetMenuItems().ToList();
 
@@ -104,7 +110,8 @@ public class ScheduledJobsInsightsMenuProviderTests
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.TopLevel,
             CustomSectionName = "OptiPowerTools",
-            ShowInDataSyncManagement = false
+            ShowInDataSyncManagement = false,
+            ShowRetentionMenuItem = false
         });
 
         var items = provider.GetMenuItems().ToList();
@@ -122,7 +129,8 @@ public class ScheduledJobsInsightsMenuProviderTests
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CustomSection,
             CustomSectionName = "My Tools",
-            ShowInDataSyncManagement = false
+            ShowInDataSyncManagement = false,
+            ShowRetentionMenuItem = false
         });
 
         var items = provider.GetMenuItems().ToList();
@@ -141,9 +149,49 @@ public class ScheduledJobsInsightsMenuProviderTests
         {
             EnableCmsMenu = true,
             MenuPath = configured,
-            ShowInDataSyncManagement = false
+            ShowInDataSyncManagement = false,
+            ShowRetentionMenuItem = false
         });
 
         Assert.Equal(expected, Assert.Single(provider.GetMenuItems()).Path);
+    }
+
+    [Fact]
+    public void GetMenuItems_AddsTheRetentionEntry_ByDefault()
+    {
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions { EnableCmsMenu = true });
+
+        Assert.Contains(
+            provider.GetMenuItems(),
+            i => i.Path == "/global/cms/admin/scheduledjobs/scheduledjobsinsightsretention");
+    }
+
+    [Fact]
+    public void GetMenuItems_OmitsTheRetentionEntry_WhenDisabled()
+    {
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            ShowRetentionMenuItem = false
+        });
+
+        Assert.DoesNotContain(provider.GetMenuItems(), i => i.Path.Contains("retention", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GetMenuItems_RetentionEntry_PointsAtTheRetentionView()
+    {
+        // A query string, not a path segment: an extra segment would stop the CMS shell resolving
+        // which product's navigation to render, and the left-hand menu would spin forever.
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            CmsShellPath = "/ScheduledJobsInsightsCms/Index"
+        });
+
+        var item = Assert.IsType<UrlMenuItem>(
+            Assert.Single(provider.GetMenuItems(), i => i.Path.EndsWith("scheduledjobsinsightsretention", StringComparison.Ordinal)));
+
+        Assert.Equal("/ScheduledJobsInsightsCms/Index?view=retention", item.Url);
     }
 }

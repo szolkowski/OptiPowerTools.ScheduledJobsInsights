@@ -4,24 +4,33 @@ using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
+using OptiPowerTools.ScheduledJobsInsights.Retention;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Jobs;
 
 /// <summary>
-/// Removes job executions (and their cascade-deleted log/metric rows) older than
-/// <see cref="OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/>. Auto-discovered by Optimizely
-/// into the CMS's own Scheduled Jobs admin list, like any other <c>[ScheduledJob]</c> — the actual run
-/// interval and enabled state are managed there after installation, not via options.
+/// Removes job executions (and their cascade-deleted log/metric rows) once they pass the retention
+/// that applies to their job. Auto-discovered by Optimizely into the CMS's own Scheduled Jobs admin
+/// list, like any other <c>[ScheduledJob]</c> — the run interval and enabled state are managed there
+/// after installation, not via options.
 /// </summary>
+/// <remarks>
+/// Retention is resolved per job type, in the order override, then
+/// <see cref="JobRetentionAttribute"/>, then
+/// <see cref="OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/>. Jobs resolving to
+/// indefinite are skipped entirely. Everything else is deleted in batches so no single transaction
+/// holds locks for long.
+/// </remarks>
 [ScheduledJob(
     DisplayName = "Scheduled Jobs Insights - Log Cleanup",
-    Description = "Removes job execution logs older than the configured retention period.",
+    Description = "Removes job execution logs once they pass the retention configured for their job.",
     IntervalType = ScheduledIntervalType.Days,
     IntervalLength = 1,
     DefaultEnabled = true)]
 public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 {
     private readonly ICleanupRepository _cleanupRepository;
+    private readonly IJobRetentionPolicySource _retentionService;
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
@@ -29,31 +38,92 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         IJobExecutionWriter writer,
         IScheduledJobRepository scheduledJobRepository,
         ICleanupRepository cleanupRepository,
+        IJobRetentionPolicySource retentionService,
         IOptions<OptiPowerToolScheduledJobsInsightsOptions> options)
         : base(writer, scheduledJobRepository)
     {
         _cleanupRepository = cleanupRepository;
+        _retentionService = retentionService;
         _options = options.Value;
     }
 
-    /// <summary>Deletes executions older than <see cref="OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/> in batches.</summary>
+    /// <summary>Deletes executions that have outlived the retention applying to their job.</summary>
     protected override string ExecuteJob()
     {
-        LogInputData(new { _options.RetentionDays, _options.CleanupBatchSize });
+        var now = DateTimeOffset.UtcNow;
+        var perJob = _retentionService.GetEffectiveOverridesAsync().GetAwaiter().GetResult();
+        var defaultPeriod = _retentionService.DefaultPeriod;
 
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-_options.RetentionDays);
+        LogInputData(new
+        {
+            DefaultRetention = Describe(defaultPeriod),
+            _options.CleanupBatchSize,
+            JobsWithOwnRetention = perJob.ToDictionary(x => x.Key, x => Describe(x.Value))
+        });
+
         var totalDeleted = 0;
+
+        // Jobs with their own rule are excluded from the default sweep whether or not that rule is
+        // shorter — otherwise the default would delete history a job explicitly asked to keep.
+        var governedJobTypes = perJob.Keys.ToArray();
+
+        if (defaultPeriod.CutoffFrom(now) is { } defaultCutoff)
+        {
+            totalDeleted += DeleteInBatches(
+                $"default ({Describe(defaultPeriod)})",
+                batch => _cleanupRepository.DeleteExecutionsOlderThan(defaultCutoff, batch, governedJobTypes));
+        }
+        else
+        {
+            Log("Default retention is indefinite; only jobs with their own retention will be trimmed.", LogSeverity.Info);
+        }
+
+        foreach (var (jobTypeName, period) in perJob.OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            if (period.CutoffFrom(now) is not { } cutoff)
+            {
+                Log($"{jobTypeName}: retention is indefinite, skipping.", LogSeverity.Debug);
+                continue;
+            }
+
+            totalDeleted += DeleteInBatches(
+                $"{jobTypeName} ({Describe(period)})",
+                batch => _cleanupRepository.DeleteExecutionsOlderThan(jobTypeName, cutoff, batch));
+        }
+
+        RecordMetric("ExecutionsDeleted", totalDeleted);
+
+        Summary.AppendLine($"Default retention: {Describe(defaultPeriod)}");
+        Summary.AppendLine($"Jobs with their own retention: {perJob.Count}");
+        Summary.AppendLine($"Executions deleted: {totalDeleted:N0}");
+
+        return $"Deleted {totalDeleted} job execution(s).";
+    }
+
+    /// <summary>
+    /// Runs one delete repeatedly until it stops finding anything. Each call is its own transaction,
+    /// so a large backlog is cleared without holding locks across the whole of it.
+    /// </summary>
+    private int DeleteInBatches(string what, Func<int, int> deleteBatch)
+    {
+        var deletedForThisRule = 0;
         int deletedThisBatch;
 
         do
         {
-            deletedThisBatch = _cleanupRepository.DeleteExecutionsOlderThan(cutoff, _options.CleanupBatchSize);
-            totalDeleted += deletedThisBatch;
+            deletedThisBatch = deleteBatch(_options.CleanupBatchSize);
+            deletedForThisRule += deletedThisBatch;
+
             if (deletedThisBatch > 0)
-                Log($"Deleted batch of {deletedThisBatch} execution(s) older than {cutoff:u}. Running total: {totalDeleted}.");
+                Log($"Deleted {deletedThisBatch} execution(s) under {what}. Running total: {deletedForThisRule}.");
         } while (deletedThisBatch > 0);
 
-        RecordMetric("ExecutionsDeleted", totalDeleted);
-        return $"Deleted {totalDeleted} job execution(s) older than {_options.RetentionDays} day(s).";
+        if (deletedForThisRule > 0)
+            Summary.AppendLine($"  {what}: {deletedForThisRule:N0} deleted");
+
+        return deletedForThisRule;
     }
+
+    private static string Describe(RetentionPeriod period) =>
+        period.IsIndefinite ? "indefinite" : $"{period.Days} day(s)";
 }

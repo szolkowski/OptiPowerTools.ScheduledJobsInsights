@@ -19,6 +19,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
 - Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list.
+- Per-job retention, including indefinite: declare it on the job with `[JobRetention]`, or set it per job in a CMS screen that shows what each job declared and why.
 - Unhandled exceptions are never swallowed — native CMS admin's `HasLastExecutionFailed`/`LastExecutionMessage` tracking is completely unaffected.
 - Cannot take your site down: if the insights database is unreachable, the application still starts, jobs still run, and `OnStatusChanged` still drives the CMS status column — only the history is lost, and it says so in the log.
 - Configurable via `IOptions<T>` or `appsettings.json`.
@@ -307,7 +308,7 @@ Code overrides configuration when both are used.
 | ------ | ---- | ------- | ----------- |
 | `ConnectionString` | `string` | `""` | **Required.** SQL Server connection string for job execution/log/metric storage. |
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
-| `RetentionDays` | `int` | `30` | How many days of execution history to keep. Enforced by the cleanup job. |
+| `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
 | `LogChannelCapacity` | `int` | `10000` | Capacity of the in-memory buffer for log/metric writes before falling back to a synchronous insert. |
 | `LogBatchSize` | `int` | `100` | Max buffered records flushed to the database per batch. |
@@ -324,6 +325,7 @@ Code overrides configuration when both are used.
 | `CustomSectionName` | `string` | `"OptiPowerTools"` | Section name for `TopLevel`/`CustomSection` placement. |
 | `CustomMenuItemName` | `string` | *(empty)* | Overrides the menu item label; falls back to `PageTitle`. |
 | `ShowInDataSyncManagement` | `bool` | `true` | Also adds an entry under **Settings › Data & Sync Management**, directly below the CMS's own **Scheduled Jobs** page. Independent of `MenuPlacement` — see below. |
+| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen beside the insights one. The screen stays reachable at `?view=retention` either way. |
 | `CmsShellPath` | `string` | `"/ScheduledJobsInsightsCms/Index"` | URL path where the UI is served. A single execution is addressed with an `id` query string, e.g. `/ScheduledJobsInsightsCms/Index?id=42`. |
 
 ### Data & Sync Management entry
@@ -406,9 +408,67 @@ No `--startup-project` is needed — `Data/ScheduledJobsInsightsDbContextFactory
 host instead fails: `Microsoft.EntityFrameworkCore.Design` is a `PrivateAssets="All"` reference of the
 library and does not flow to it.)
 
+## Retention
+
+How long each job's execution history is kept, resolved in this order:
+
+| | set by | wins over |
+|---|---|---|
+| **1. Override** | an administrator, in the **Job Retention** screen | everything |
+| **2. `[JobRetention]`** | the job's own code | the default |
+| **3. `RetentionDays`** | configuration (default 30) | — |
+
+Any of the three can be **indefinite**, meaning the cleanup job skips that history entirely.
+
+### Declaring retention on a job
+
+```csharp
+[ScheduledJob(DisplayName = "Nightly Catalog Sync", IntervalType = ScheduledIntervalType.Days)]
+[JobRetention(7, Description = "Logs one line per SKU; a week is enough to diagnose a bad run.")]
+public class CatalogSyncJob : LoggedScheduledJobBase { }
+```
+
+Use `JobRetentionAttribute.Indefinite` to keep a job's history forever. The attribute travels with the
+code, so a fresh deployment gets it right without anyone remembering to configure anything — but it is
+a *default*, not a mandate: an administrator can still override it.
+
+The `Description` is shown beside the value in the retention screen, so whoever is deciding whether to
+override it can see what the job's author intended and why.
+
+### The Job Retention screen
+
+Reached from the **Retention** link on the execution list, or from its own entry under **Settings ›
+Data & Sync Management**. For every job it shows the declared value and its rationale, what is
+actually in force and where that came from, how many executions are currently stored, and who last
+changed the setting.
+
+The list covers every job deriving from `LoggedScheduledJobBase` — so a job can be configured before
+its first run — plus every job type that only exists in history, so records left behind by deleted
+code can still be trimmed. Those rows are marked **history only**.
+
+Jobs on Optimizely's own `ScheduledJobBase` are deliberately absent: they never write execution
+history, so there is nothing to retain, and listing the CMS's two dozen built-ins would bury the
+handful that matter.
+
+Choosing a value saves it straight away — there is no Save button, so there is no half-applied state.
+*Inherit* clears the override, letting the attribute or the default apply again.
+
+Changes take effect on the next run of the cleanup job. Nothing is deleted at the moment you save.
+
+> **Shortening a retention deletes history.** That is why every change records who made it and when.
+
 ## Cleanup job
 
-`ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) older than `RetentionDays`, in batches of `CleanupBatchSize`. After installation, its run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install.
+`ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) in batches of `CleanupBatchSize`, and reports what it removed as its execution message.
+
+Each run does two passes:
+
+1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
+2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+
+An indefinite default is legitimate: the sweep is then skipped altogether and only the jobs that opted into a retention are trimmed.
+
+After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
 
 ## Removing this package
 
@@ -535,7 +595,7 @@ and every state the two UI pages can render.
 | `InventorySyncJob` | Multi-phase logging at `Info`/`Success`/`Warning` severities. |
 | `ReportBuilderJob` | Building a `Summary` up as the work happens — sections, a per-region breakdown and totals — alongside `LogInputData` and custom `RecordMetric` calls. |
 | `FlakyImportJob` | Throws on alternating runs — proves a failure still surfaces correctly in both native CMS admin and this package's UI, and that the summary recorded before the throw is still persisted. |
-| `ChattyBatchJob` | Emits ~5,000 log lines in a tight loop — exercises the buffered writer and the virtualized log viewer under load. |
+| `ChattyBatchJob` | Emits ~5,000 log lines in a tight loop — exercises the buffered writer and the virtualized log viewer under load. Also the worked example for `[JobRetention]`, since it is exactly the kind of job that warrants a shorter one. |
 | `StatusReportingJob` | `OnStatusChanged` — drives the CMS's live status column and is captured as `LogEntrySource.StatusChanged` lines, interleaved with ordinary `Log` calls. |
 | `SlowMigrationJob` | Runs for ~60s so an execution can be watched mid-flight: the `Running` badge, the detail page's 2s polling, the `—` duration, and the seconds duration format. Builds a summary but never flushes it, so the whole **Result summary** section appears on the tick after the job completes. Supports the CMS Stop button. |
 | `SeverityShowcaseJob` | One line at every `LogSeverity`, so the console renders the complete colour and label set. |

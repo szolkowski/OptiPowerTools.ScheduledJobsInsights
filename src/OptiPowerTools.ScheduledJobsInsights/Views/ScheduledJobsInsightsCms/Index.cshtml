@@ -3,6 +3,8 @@
     Layout = string.Empty;
     var executionId = (long?)ViewBag.ExecutionId;
     var viewerTimeZone = (string?)ViewBag.ViewerTimeZone;
+    var showRetention = (bool)(ViewBag.ShowRetention ?? false);
+    var currentUser = (string?)ViewBag.CurrentUser;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -64,7 +66,11 @@
     <platform-navigation />
     <platform-navigation-wrapper>
         <div class="sji-content">
-            @if (executionId is { } id)
+            @if (showRetention)
+            {
+                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Retention)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" param-CurrentUser="currentUser" />
+            }
+            else if (executionId is { } id)
             {
                 <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" param-ViewerTimeZone="viewerTimeZone" />
             }

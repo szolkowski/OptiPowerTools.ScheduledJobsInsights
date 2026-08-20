@@ -134,6 +134,17 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     public bool ShowInDataSyncManagement { get; set; } = true;
 
     /// <summary>
+    /// Whether to add a menu item for the <em>Job Retention</em> screen, beside the insights entry
+    /// under <em>Settings &gt; Data &amp; Sync Management</em>. Defaults to <c>true</c>.
+    /// </summary>
+    /// <remarks>
+    /// Set to <c>false</c> to keep retention governed purely by configuration and
+    /// <see cref="Retention.JobRetentionAttribute"/>. The screen itself remains reachable at
+    /// <c>?view=retention</c>; this only controls its discoverability in the CMS navigation.
+    /// </remarks>
+    public bool ShowRetentionMenuItem { get; set; } = true;
+
+    /// <summary>
     /// The URL path where the UI is served. The CMS menu item links here, and a single execution is
     /// addressed with an "id" query string (for example "/ScheduledJobsInsightsCms/Index?id=42").
     /// The id stays out of the path deliberately — the CMS shell resolves which navigation to render

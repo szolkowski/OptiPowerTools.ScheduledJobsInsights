@@ -33,7 +33,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var queryService = new JobExecutionQueryService(factory);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
 
         var firstPage = await queryService.GetExecutionsAsync(new ExecutionFilter(), after: null, pageSize: 2);
         Assert.Equal(2, firstPage.Items.Count);
@@ -66,7 +66,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var queryService = new JobExecutionQueryService(factory);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
 
         var filtered = await queryService.GetExecutionsAsync(
             new ExecutionFilter(JobName: "Job A", Status: ExecutionStatus.Succeeded), after: null, pageSize: 10);
@@ -96,7 +96,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var queryService = new JobExecutionQueryService(factory);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
         var entries = await queryService.GetLogEntriesAsync(executionId);
 
         Assert.Equal(["first", "second", "third"], entries.Select(e => e.Message));
@@ -128,7 +128,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var queryService = new JobExecutionQueryService(factory);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
         var entries = await queryService.GetLogEntriesAsync(executionId, afterSequence);
 
         Assert.Equal(expected, entries.Select(e => e.Message));
@@ -157,7 +157,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var queryService = new JobExecutionQueryService(factory);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
         var entries = await queryService.GetLogEntriesAsync(secondId, afterSequence: 1);
 
         Assert.Equal(["b2"], entries.Select(e => e.Message));
@@ -195,7 +195,7 @@ public class JobExecutionQueryServiceTests
             await dbContext.SaveChangesAsync();
         }
 
-        var page = await new JobExecutionQueryService(factory)
+        var page = await new JobExecutionQueryService(factory, TimeProvider.System)
             .GetExecutionsAsync(new ExecutionFilter(), after: null, pageSize: 10);
 
         Assert.True(Assert.Single(page.Items, i => i.JobName == "With summary").HasResultSummary);
@@ -226,8 +226,80 @@ public class JobExecutionQueryServiceTests
             executionId = execution.Id;
         }
 
-        var loaded = await new JobExecutionQueryService(factory).GetExecutionAsync(executionId);
+        var loaded = await new JobExecutionQueryService(factory, TimeProvider.System).GetExecutionAsync(executionId);
 
         Assert.Equal(summary, loaded!.ResultSummary);
+    }
+
+    [Fact]
+    public async Task GetDistinctJobNamesAsync_DoesNotRequeryWithinTheCacheWindow()
+    {
+        // The dropdown query has to look at every row to produce a distinct list, and prerendering
+        // means the list page asks for it twice per view. Caching turns that into one query a minute.
+        using var sqlite = new SqliteDbContextFactory();
+        var factory = new CountingDbContextFactory(sqlite);
+        await SeedJobNamesAsync(sqlite, "Catalog Reindex", "Nightly Import");
+        var queryService = new JobExecutionQueryService(factory, new AdjustableTimeProvider());
+
+        var first = await queryService.GetDistinctJobNamesAsync();
+        var second = await queryService.GetDistinctJobNamesAsync();
+
+        Assert.Equal(["Catalog Reindex", "Nightly Import"], first);
+        Assert.Equal(first, second);
+        Assert.Equal(1, factory.Count);
+    }
+
+    [Fact]
+    public async Task GetDistinctJobNamesAsync_RefreshesOnceTheCacheWindowHasPassed()
+    {
+        using var sqlite = new SqliteDbContextFactory();
+        var factory = new CountingDbContextFactory(sqlite);
+        var clock = new AdjustableTimeProvider();
+        await SeedJobNamesAsync(sqlite, "Nightly Import");
+        var queryService = new JobExecutionQueryService(factory, clock);
+
+        Assert.Equal(["Nightly Import"], await queryService.GetDistinctJobNamesAsync());
+
+        // A job runs for the first time — the only thing that changes this list.
+        await SeedJobNamesAsync(sqlite, "Brand New Job");
+        Assert.Equal(["Nightly Import"], await queryService.GetDistinctJobNamesAsync());  // still cached
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+
+        Assert.Equal(["Brand New Job", "Nightly Import"], await queryService.GetDistinctJobNamesAsync());
+        Assert.Equal(2, factory.Count);
+    }
+
+    [Fact]
+    public async Task GetDistinctJobNamesAsync_ConcurrentCallers_ShareASingleQuery()
+    {
+        // Prerender and the circuit start within milliseconds of each other, so without the gate the
+        // saved query would simply happen twice on every cold cache.
+        using var sqlite = new SqliteDbContextFactory();
+        var factory = new CountingDbContextFactory(sqlite);
+        await SeedJobNamesAsync(sqlite, "Nightly Import");
+        var queryService = new JobExecutionQueryService(factory, new AdjustableTimeProvider());
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => queryService.GetDistinctJobNamesAsync()));
+
+        Assert.Equal(1, factory.Count);
+    }
+
+    private static async Task SeedJobNamesAsync(SqliteDbContextFactory factory, params string[] jobNames)
+    {
+        await using var dbContext = factory.CreateDbContext();
+        foreach (var jobName in jobNames)
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = jobName,
+                JobTypeName = jobName,
+                StartedAt = DateTimeOffset.UtcNow,
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test"
+            });
+        }
+        await dbContext.SaveChangesAsync();
     }
 }

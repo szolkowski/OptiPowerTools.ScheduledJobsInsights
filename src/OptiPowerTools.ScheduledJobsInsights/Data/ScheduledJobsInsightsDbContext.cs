@@ -25,6 +25,8 @@ internal class ScheduledJobsInsightsDbContext : DbContext
 
     public DbSet<JobMetric> JobMetrics => Set<JobMetric>();
 
+    public DbSet<JobRetentionPolicy> JobRetentionPolicies => Set<JobRetentionPolicy>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(SchemaName);
@@ -63,6 +65,30 @@ internal class ScheduledJobsInsightsDbContext : DbContext
             // sort either. The key is wide because JobName is nvarchar(400); if insert cost ever
             // matters more than list latency, narrowing that column is the lever.
             entity.HasIndex(e => new { e.JobName, e.StartedAt, e.Id }).IsDescending(false, true, true);
+
+            // Same shape for the status filter, and it matters more than it looks. Without it,
+            // filtering the list by status scans the whole table: measured at 100,000 executions,
+            // "Running" with nothing currently running cost 35,208 logical reads and 208ms of CPU
+            // against 171 reads for every other list query. That is the worst case *and* the common
+            // one — Running is a transient state, so the filter usually matches nothing and therefore
+            // scans everything looking for it.
+            entity.HasIndex(e => new { e.Status, e.StartedAt, e.Id }).IsDescending(false, true, true);
+
+            // Per-job retention deletes rows by type within an age range, and the retention screen
+            // counts executions per type. Both are scans without this. Leading with JobTypeName also
+            // lets the count come from an ordered index scan rather than a hash aggregate.
+            entity.HasIndex(e => new { e.JobTypeName, e.StartedAt });
+        });
+
+        modelBuilder.Entity<JobRetentionPolicy>(entity =>
+        {
+            entity.ToTable("JobRetentionPolicies");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.JobTypeName).HasMaxLength(400).IsRequired();
+            entity.Property(e => e.ModifiedBy).HasMaxLength(200).IsRequired();
+
+            // One policy per job type; the resolver relies on this to avoid ambiguity.
+            entity.HasIndex(e => e.JobTypeName).IsUnique();
         });
 
         modelBuilder.Entity<JobLogEntry>(entity =>

@@ -11,11 +11,33 @@ namespace OptiPowerTools.ScheduledJobsInsights.Repositories;
 /// </summary>
 internal sealed class JobExecutionQueryService : IJobExecutionQueryService
 {
-    private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
+    /// <summary>
+    /// How long the job-name list backing the filter dropdown is reused before being re-read.
+    /// </summary>
+    /// <remarks>
+    /// Short enough that a newly introduced job appears in the filter within a minute — nobody
+    /// notices — and long enough to collapse what was a per-page-view table scan into at most one
+    /// query a minute. That query is <c>SELECT DISTINCT JobName</c>, which cost 681 logical reads at
+    /// 100,000 executions and grows linearly, and prerendering meant it ran <em>twice</em> for every
+    /// single page view.
+    /// </remarks>
+    private static readonly TimeSpan JobNameCacheDuration = TimeSpan.FromSeconds(60);
 
-    public JobExecutionQueryService(IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory)
+    private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>Serialises refreshes so a cache miss produces one query, not one per caller.</summary>
+    private readonly SemaphoreSlim _jobNameRefreshGate = new(1, 1);
+
+    private IReadOnlyList<string> _cachedJobNames = [];
+    private DateTimeOffset _jobNamesExpireAt = DateTimeOffset.MinValue;
+
+    public JobExecutionQueryService(
+        IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
+        TimeProvider timeProvider)
     {
         _dbContextFactory = dbContextFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<ExecutionPage> GetExecutionsAsync(ExecutionFilter filter, ExecutionCursor? after, int pageSize, CancellationToken cancellationToken = default)
@@ -63,16 +85,46 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
         return new ExecutionPage(items, hasMore ? nextCursor : null, hasMore);
     }
 
+    /// <summary>
+    /// Distinct job names for the filter dropdown, cached for <see cref="JobNameCacheDuration"/>.
+    /// </summary>
+    /// <remarks>
+    /// Cached because the underlying query has to look at every row — there is no way to produce a
+    /// distinct list without doing so — while the answer changes only when a job runs for the very
+    /// first time. This service is registered as a singleton, so the cache is process-wide.
+    /// </remarks>
     public async Task<IReadOnlyList<string>> GetDistinctJobNamesAsync(CancellationToken cancellationToken = default)
     {
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await dbContext.JobExecutions
-            .AsNoTracking()
-            .Select(e => e.JobName)
-            .Distinct()
-            .OrderBy(name => name)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        if (_timeProvider.GetUtcNow() < _jobNamesExpireAt)
+            return _cachedJobNames;
+
+        await _jobNameRefreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Re-checked inside the gate: prerendering and the circuit start this within milliseconds
+            // of each other, so without this the "saved" query would simply happen twice anyway.
+            if (_timeProvider.GetUtcNow() < _jobNamesExpireAt)
+                return _cachedJobNames;
+
+            await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            _cachedJobNames = await dbContext.JobExecutions
+                .AsNoTracking()
+                .Select(e => e.JobName)
+                .Distinct()
+                .OrderBy(name => name)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            // Stamped only after a successful read, so a failed query is retried rather than caching
+            // an empty dropdown for a minute.
+            _jobNamesExpireAt = _timeProvider.GetUtcNow() + JobNameCacheDuration;
+
+            return _cachedJobNames;
+        }
+        finally
+        {
+            _jobNameRefreshGate.Release();
+        }
     }
 
     public async Task<JobExecution?> GetExecutionAsync(long executionId, CancellationToken cancellationToken = default)

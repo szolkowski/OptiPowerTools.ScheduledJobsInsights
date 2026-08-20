@@ -1,0 +1,264 @@
+@* Per-job retention. Hosted by ScheduledJobsInsightsCmsController's view inside the CMS shell, like
+   the other two pages, so it is not routable and owns no document of its own.
+
+   Reached at CmsShellPath?view=retention. A query string rather than a path segment for the same
+   reason the execution id is one: the CMS shell resolves which product's navigation to render by
+   matching the request path against registered menu items, and any extra segment matches nothing. *@
+@implements IDisposable
+@using System.Globalization
+@using OptiPowerTools.ScheduledJobsInsights.Cms
+@using OptiPowerTools.ScheduledJobsInsights.Components.Shared
+@using OptiPowerTools.ScheduledJobsInsights.Configuration
+@using OptiPowerTools.ScheduledJobsInsights.Retention
+@inject IJobRetentionService RetentionService
+@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+
+<div class="page-header">
+    <h1>Job retention</h1>
+    <a class="action-link" href="@Options.Value.CmsShellPath">&larr; Executions</a>
+</div>
+
+<p class="intro">
+    How long each job's execution history is kept before the cleanup job removes it. A job with no
+    setting of its own inherits the installation default.
+    <strong>Shortening a retention deletes history on the next cleanup run.</strong>
+</p>
+
+<p class="default-note">
+    Installation default: <strong>@Describe(RetentionService.DefaultPeriod)</strong>
+    <span class="hint">— set in configuration (<code>RetentionDays</code>), not here.</span>
+</p>
+
+@if (_jobs is null)
+{
+    <p role="status">Loading…</p>
+}
+else if (_jobs.Count == 0)
+{
+    <p role="status">No scheduled jobs found.</p>
+}
+else
+{
+    <table class="retention-table">
+        <thead>
+            <tr>
+                <th scope="col">Job</th>
+                <th scope="col">Executions</th>
+                <th scope="col">Declared by the job</th>
+                <th scope="col">In force</th>
+                <th scope="col">Override</th>
+                <th scope="col">Last changed</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var job in _jobs)
+            {
+                var (period, source) = job.Resolve(RetentionService.DefaultPeriod);
+                <tr @key="job.JobTypeName">
+                    <td>
+                        <div class="job-name">@job.DisplayName</div>
+                        <div class="job-type" title="@job.JobTypeName">@job.JobTypeName</div>
+                        @if (!job.ExistsInCode)
+                        {
+                            @* History outliving its code is normal after a job is removed, and its
+                               retention is still worth managing — so it is flagged, not hidden. Keyed
+                               on the code being gone rather than on CMS registration: those are
+                               different questions, and a job can exist without being registered yet. *@
+                            <span class="tag tag-orphan" title="No job of this type exists in the application any more; only its history remains.">history only</span>
+                        }
+                    </td>
+                    <td class="numeric">@DisplayFormat.Number(job.ExecutionCount)</td>
+                    <td>
+                        @if (job.HasInvalidAttribute)
+                        {
+                            <span class="tag tag-invalid" title="The job declares a [JobRetention] value that is neither positive nor JobRetentionAttribute.Indefinite, so it is ignored.">invalid</span>
+                        }
+                        else if (job.Attribute is { } declared)
+                        {
+                            <span class="declared">@Describe(declared)</span>
+                            @if (!string.IsNullOrWhiteSpace(job.AttributeDescription))
+                            {
+                                @* The author's reasoning, so whoever overrides it can see what they
+                                   are overriding and why it was set that way. *@
+                                <div class="hint">@job.AttributeDescription</div>
+                            }
+                        }
+                        else
+                        {
+                            <span class="hint">—</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="effective">@Describe(period)</span>
+                        <span class="tag tag-source" title="@SourceExplanation(source)">@SourceLabel(source)</span>
+                    </td>
+                    <td>
+                        <select value="@ChoiceFor(job)"
+                                @onchange="args => OnOverrideChangedAsync(job, args)"
+                                disabled="@(_savingJobTypeName is not null)">
+                            <option value="@InheritChoice">Inherit</option>
+                            @foreach (var days in DayChoicesFor(job))
+                            {
+                                <option value="@days">@days days</option>
+                            }
+                            <option value="@IndefiniteChoice">Keep forever</option>
+                        </select>
+                        @if (_savedJobTypeName == job.JobTypeName)
+                        {
+                            <span class="saved" role="status">Saved</span>
+                        }
+                    </td>
+                    <td class="audit">
+                        @if (job.ModifiedAt is { } modifiedAt)
+                        {
+                            <div>@_clock.CompactTimestamp(modifiedAt)</div>
+                            <div class="hint">@job.ModifiedBy</div>
+                        }
+                        else
+                        {
+                            <span class="hint">—</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <p class="footnote">
+        Times shown in @_clock.Label. Changes take effect on the next run of
+        <em>Scheduled Jobs Insights - Log Cleanup</em>, which runs daily — trigger it from
+        <a href="@CmsAdminUrls.ScheduledJobsList">Scheduled Jobs</a> to apply them now.
+    </p>
+}
+
+@if (_error is not null)
+{
+    <p class="error-text" role="alert">@_error</p>
+}
+
+@code {
+    private const string InheritChoice = "inherit";
+    private const string IndefiniteChoice = "indefinite";
+
+    /// <summary>Offered periods. A job already overridden to something else keeps its value as well.</summary>
+    private static readonly int[] PresetDays = [1, 7, 14, 30, 60, 90, 180, 365];
+
+    private readonly CancellationTokenSource _disposalCts = new();
+
+    private ViewerClock _clock = ViewerClock.Utc;
+    private IReadOnlyList<JobRetention>? _jobs;
+    private string? _savingJobTypeName;
+    private string? _savedJobTypeName;
+    private string? _error;
+
+    /// <summary>The reader's IANA time zone, supplied by the hosting view from a cookie.</summary>
+    [Parameter]
+    public string? ViewerTimeZone { get; set; }
+
+    /// <summary>
+    /// Who is making changes, for the audit trail. Supplied by the hosting view, which has the
+    /// HttpContext — a component cannot rely on one once the circuit has taken over.
+    /// </summary>
+    [Parameter]
+    public string? CurrentUser { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _clock = ViewerClock.ForZone(ViewerTimeZone);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _jobs = await RetentionService.GetAllAsync(_disposalCts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException)
+        {
+            // Disposed mid-query; nothing left to render into.
+        }
+    }
+
+    private async Task OnOverrideChangedAsync(JobRetention job, ChangeEventArgs args)
+    {
+        var choice = args.Value?.ToString() ?? InheritChoice;
+
+        _savingJobTypeName = job.JobTypeName;
+        _savedJobTypeName = null;
+        _error = null;
+
+        try
+        {
+            await RetentionService.SetOverrideAsync(
+                job.JobTypeName,
+                ParseChoice(choice),
+                string.IsNullOrWhiteSpace(CurrentUser) ? "unknown" : CurrentUser,
+                _disposalCts.Token);
+
+            await LoadAsync();
+            _savedJobTypeName = job.JobTypeName;
+        }
+        catch (OperationCanceledException)
+        {
+            // Disposed mid-save.
+        }
+        catch (Exception ex)
+        {
+            // Surfaced rather than swallowed: a retention change that silently failed would leave the
+            // administrator believing history was being kept, or removed, when it is not.
+            _error = $"Could not save retention for {job.DisplayName}: {ex.Message}";
+        }
+        finally
+        {
+            _savingJobTypeName = null;
+        }
+    }
+
+    private static RetentionPeriod? ParseChoice(string choice) => choice switch
+    {
+        InheritChoice => null,
+        IndefiniteChoice => RetentionPeriod.Indefinite,
+        _ => RetentionPeriod.OfDays(int.Parse(choice, CultureInfo.InvariantCulture))
+    };
+
+    private static string ChoiceFor(JobRetention job) => job.Override switch
+    {
+        null => InheritChoice,
+        { Days: { } days } => days.ToString(CultureInfo.InvariantCulture),
+        _ => IndefiniteChoice
+    };
+
+    /// <summary>
+    /// The presets, plus this job's own value when it was set to something not on the list — so an
+    /// override made directly in the database is shown rather than silently reset by the dropdown.
+    /// </summary>
+    private static IEnumerable<int> DayChoicesFor(JobRetention job) =>
+        job.Override?.Days is { } days && !PresetDays.Contains(days)
+            ? PresetDays.Append(days).Order()
+            : PresetDays;
+
+    private static string Describe(RetentionPeriod period) =>
+        period.Days is { } days ? $"{DisplayFormat.Number(days)} days" : "Keep forever";
+
+    private static string SourceLabel(RetentionSource source) => source switch
+    {
+        RetentionSource.Override => "override",
+        RetentionSource.Attribute => "from job",
+        _ => "default"
+    };
+
+    private static string SourceExplanation(RetentionSource source) => source switch
+    {
+        RetentionSource.Override => "Set here by an administrator. Wins over the job's own declaration.",
+        RetentionSource.Attribute => "Declared by the job's [JobRetention] attribute.",
+        _ => "No override and no attribute, so the installation default applies."
+    };
+
+    public void Dispose()
+    {
+        _disposalCts.Cancel();
+        _disposalCts.Dispose();
+    }
+}

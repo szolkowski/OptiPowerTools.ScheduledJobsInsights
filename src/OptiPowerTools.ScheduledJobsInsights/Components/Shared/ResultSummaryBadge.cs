@@ -30,21 +30,17 @@ internal static class ResultSummaryBadge
     /// an empty summary counts as zero lines; a lone newline is one (empty) line.
     /// </summary>
     /// <remarks>
-    /// Iterates rather than splitting: this runs on every two-second poll tick over a string that can
-    /// be 100 KB, and <c>Split</c> would allocate an array of thousands of substrings each time.
-    /// Counting only <c>\n</c> handles CRLF as well, since every CRLF contains exactly one.
+    /// Counts over a span rather than splitting: this runs on every two-second poll tick over a string
+    /// that can be 100 KB, and <c>Split</c> would allocate an array of thousands of substrings each
+    /// time. <see cref="MemoryExtensions.Count{T}(ReadOnlySpan{T}, T)"/> allocates nothing and is
+    /// vectorised. Counting only <c>\n</c> handles CRLF as well, since every CRLF contains exactly one.
     /// </remarks>
     public static int CountLines(string summary)
     {
         if (string.IsNullOrEmpty(summary))
             return 0;
 
-        var lines = 1;
-        foreach (var character in summary)
-        {
-            if (character == '\n')
-                lines++;
-        }
+        var lines = summary.AsSpan().Count('\n') + 1;
 
         return summary[^1] == '\n' ? lines - 1 : lines;
     }

@@ -174,7 +174,9 @@
 .console-line {
     border-left: 3px solid transparent;
     padding: 0.1rem 0.5rem;
-    word-break: break-word;
+    /* overflow-wrap, not the deprecated word-break: break-word. Matches the summary and payload panes
+       above, and keeps a long unbroken path in a log line from widening the console. */
+    overflow-wrap: anywhere;
     /* Deliberately NOT pre-wrap: the timestamp, severity and message spans are separated by newlines
        and indentation in the Razor source, and pre-wrap renders that whitespace, breaking every entry
        across three indented lines. Only the message itself needs to preserve its own formatting. */

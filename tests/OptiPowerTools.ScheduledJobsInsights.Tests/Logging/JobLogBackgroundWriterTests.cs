@@ -119,4 +119,98 @@ public class JobLogBackgroundWriterTests
         await using var verifyContext = workingFactory.CreateDbContext();
         Assert.Single(verifyContext.JobLogEntries.Where(e => e.Message == "written after recovery"));
     }
+
+    [Fact]
+    public async Task StopAsync_FlushesRecordsAlreadyTakenFromTheChannel()
+    {
+        // The same guarantee as above, but pinned to the ordering that actually loses data: here the
+        // collector is given time to pull the records out of the channel and park waiting for more,
+        // so at shutdown they exist only in the in-flight batch. The sibling test above happens to
+        // stop before the collector runs at all, which is why it passed locally for months and only
+        // failed once a slower CI runner scheduled things the other way round.
+        using var factory = new SqliteDbContextFactory();
+        long executionId;
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var execution = new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Job",
+                JobTypeName = "Job",
+                StartedAt = DateTimeOffset.UtcNow,
+                Status = ExecutionStatus.Running,
+                MachineName = "test"
+            };
+            dbContext.JobExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            executionId = execution.Id;
+        }
+
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        // Batch size well above what we write, and a long interval, so the collector cannot decide to
+        // flush on its own — it holds the records and waits.
+        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            LogBatchSize = 100,
+            LogFlushInterval = TimeSpan.FromSeconds(30)
+        });
+
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "collected then abandoned", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+
+        var backgroundWriter = new JobLogBackgroundWriter(channel, factory, options, NullLogger<JobLogBackgroundWriter>.Instance);
+        await backgroundWriter.StartAsync(CancellationToken.None);
+
+        // Let the collector drain the channel into its batch and settle into the wait.
+        await WaitUntil(() => !channel.Reader.TryPeek(out _), TimeSpan.FromSeconds(5));
+
+        await backgroundWriter.StopAsync(CancellationToken.None);
+
+        await using var verifyContext = factory.CreateDbContext();
+        Assert.Single(verifyContext.JobLogEntries.Where(e => e.Message == "collected then abandoned"));
+    }
+
+    /// <summary>Polls rather than sleeping a fixed amount, so the test is not tuned to one machine.</summary>
+    private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline && !condition())
+            await Task.Delay(10);
+    }
+
+    [Fact]
+    public async Task StopAsync_FlushesBufferedRecords_EvenIfExecuteAsyncNeverRan()
+    {
+        // BackgroundService starts ExecuteAsync on the thread pool, and a host that stops promptly
+        // can cancel that task before its body is ever entered — it ends up Canceled having executed
+        // nothing. A drain that lived only inside ExecuteAsync was skipped exactly then, silently
+        // dropping everything buffered. Never calling StartAsync reproduces that state exactly.
+        using var factory = new SqliteDbContextFactory();
+        long executionId;
+        await using (var dbContext = factory.CreateDbContext())
+        {
+            var execution = new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Job",
+                JobTypeName = "Job",
+                StartedAt = DateTimeOffset.UtcNow,
+                Status = ExecutionStatus.Running,
+                MachineName = "test"
+            };
+            dbContext.JobExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            executionId = execution.Id;
+        }
+
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions());
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "never collected", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+
+        var backgroundWriter = new JobLogBackgroundWriter(channel, factory, options, NullLogger<JobLogBackgroundWriter>.Instance);
+
+        await backgroundWriter.StopAsync(CancellationToken.None);
+
+        await using var verifyContext = factory.CreateDbContext();
+        Assert.Single(verifyContext.JobLogEntries.Where(e => e.Message == "never collected"));
+    }
 }

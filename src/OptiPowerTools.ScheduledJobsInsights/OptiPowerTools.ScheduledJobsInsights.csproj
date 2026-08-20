@@ -4,11 +4,11 @@
     <TargetFramework>net10.0</TargetFramework>
 
     <!-- NuGet Package Metadata -->
-    <Version>0.9.0</Version>
+    <Version>0.9.5</Version>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>
-    <Description>Structured logging, metrics, and a Blazor CMS UI for Optimizely CMS 13 native scheduled jobs. Extends ScheduledJobBase to persist OnStatusChanged messages, return values, custom log lines with severity, and execution metrics (duration, allocations, CPU time, GC counts) to EF Core-backed SQL tables, with a paginated/console-style Blazor viewer and an automatic retention cleanup job.</Description>
+    <Description>Execution history for native Optimizely CMS 13 scheduled jobs. Swap ScheduledJobBase for LoggedScheduledJobBase and every run is recorded: OnStatusChanged messages, the return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts). Stored in EF Core-backed SQL tables and browsable in a Blazor UI embedded in the CMS admin, with an automatic retention cleanup job. Never alters your jobs' success/failure semantics, and an unreachable insights database costs you the history of a run rather than the run itself.</Description>
 
     <PackageId>OptiPowerTools.ScheduledJobsInsights</PackageId>
     <PackageTags>Optimizely;CMS;Blazor;EPiServer;Admin;UI;ScheduledJobs;Logging;Metrics;EntityFrameworkCore</PackageTags>
@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="OptiPowerTools.ScheduledJobsInsights.Tests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 
   <ItemGroup>

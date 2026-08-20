@@ -66,3 +66,13 @@ jobs:
 
       - name: Pack
         run: dotnet pack src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj --no-build -c Release
+
+      # The dev host and its sample jobs are not packaged, but they are the only thing that compiles
+      # the package the way a consumer does — against a real Optimizely CMS host. Without this a break
+      # in the samples, or in the public surface they exercise, ships unnoticed.
+      #
+      # Deliberately after the SonarCloud analysis rather than inside it: this project is dev-only and
+      # intentionally untested, so folding it into the scan would drag coverage down for code nothing
+      # is meant to cover. Needs the Alloy submodule, which the checkout above already fetches.
+      - name: Build dev host and sample jobs
+        run: dotnet build src/OptiPowerTools.ScheduledJobsInsights.Web/OptiPowerTools.ScheduledJobsInsights.Web.csproj -c Release

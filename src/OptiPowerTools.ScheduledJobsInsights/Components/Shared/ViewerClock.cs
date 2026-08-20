@@ -109,10 +109,17 @@ internal sealed class ViewerClock
     /// Renders the offset that actually applied at that instant, so a timestamp from the other side
     /// of a daylight-saving change is labelled with the offset it was recorded under.
     /// </summary>
-    private static string OffsetSuffix(DateTimeOffset local) =>
-        local.Offset == TimeSpan.Zero
-            ? "UTC"
-            : "UTC" + local.Offset.ToString(local.Offset < TimeSpan.Zero ? @"\-hh\:mm" : @"\+hh\:mm", CultureInfo.InvariantCulture);
+    private static string OffsetSuffix(DateTimeOffset local)
+    {
+        if (local.Offset == TimeSpan.Zero)
+            return "UTC";
+
+        // TimeSpan has no sign specifier in its format strings — a negative offset formats as though
+        // it were positive — so the sign has to be baked into the chosen format instead.
+        var format = local.Offset < TimeSpan.Zero ? @"\-hh\:mm" : @"\+hh\:mm";
+
+        return "UTC" + local.Offset.ToString(format, CultureInfo.InvariantCulture);
+    }
 
     /// <summary>
     /// Cheap shape check before hitting the zone database, since this value arrives from a cookie.

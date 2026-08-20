@@ -29,10 +29,14 @@
     <link rel="stylesheet" href="@Url.Content($"~/{HostEnvironment.ApplicationName}.styles.css")" />
     <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" />
 
-    @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in
-       <head>, before the components below are rendered on any subsequent request, and the controller
-       reads it back out of the cookie — which is why it is a cookie rather than JS interop: the value
-       has to be available during prerendering, not just once the circuit connects.
+    @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in the
+       document head, before the components below are rendered on any subsequent request, and the
+       controller reads it back out of the cookie — which is why it is a cookie rather than JS interop:
+       the value has to be available during prerendering, not just once the circuit connects.
+
+       Avoid writing literal HTML tags in these comments: SonarCloud's HTML analyser parses Razor
+       comments as markup, so a tag name in here is read as a real element (an extra head element with
+       no title, in this case) and reported as a defect in the page.
 
        Consequence worth knowing: on the very first page view the cookie does not exist yet, so times
        render in UTC (labelled as such, never silently wrong) and every view after that is in the

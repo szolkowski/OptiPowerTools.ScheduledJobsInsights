@@ -32,6 +32,14 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// </summary>
     private const string DataSyncManagementPath = MenuPaths.Global + "/cms/admin/scheduledjobs";
 
+    /// <summary>
+    /// Separator between segments of an Optimizely menu path.
+    /// </summary>
+    private const char MenuPathSeparator = '/';
+
+    /// <summary>Final segment of this package's menu path, whatever the placement resolves to.</summary>
+    private const string LeafSegment = "/scheduledjobsinsights";
+
     /// <inheritdoc />
     public IEnumerable<MenuItem> GetMenuItems()
     {
@@ -60,7 +68,7 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
     {
         var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
 
-        return new UrlMenuItem(menuItemName, DataSyncManagementPath + "/scheduledjobsinsights", _options.CmsShellPath)
+        return new UrlMenuItem(menuItemName, DataSyncManagementPath + LeafSegment, _options.CmsShellPath)
         {
             IsAvailable = _ => IsCurrentUserAuthorized(),
             // Sorts after the native Scheduled Jobs entry, so this reads as a companion to it rather
@@ -71,8 +79,8 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
 
     private List<MenuItem> BuildCmsSection()
     {
-        var defaultPathSuffix = string.IsNullOrEmpty(_options.MenuPath) ? "/cms/scheduledjobsinsights" : NormalizePath(_options.MenuPath);
-        return BuildUrlMenuItem(defaultPathSuffix);
+        var defaultPathSuffix = string.IsNullOrEmpty(_options.MenuPath) ? "/cms" + LeafSegment : NormalizePath(_options.MenuPath);
+        return [BuildUrlMenuItem(defaultPathSuffix)];
     }
 
     private List<MenuItem> BuildTopLevel()
@@ -80,8 +88,8 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
         var sectionName = string.IsNullOrEmpty(_options.CustomSectionName) ? _options.PageTitle : _options.CustomSectionName;
         var sectionSlug = ToSlug(sectionName);
         var sectionSortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
-        var sectionPath = string.IsNullOrEmpty(_options.MenuPath) ? "/" + sectionSlug : NormalizePath(_options.MenuPath);
-        var itemPath = sectionPath + "/scheduledjobsinsights";
+        var sectionPath = string.IsNullOrEmpty(_options.MenuPath) ? MenuPathSeparator + sectionSlug : NormalizePath(_options.MenuPath);
+        var itemPath = sectionPath + LeafSegment;
 
         var section = new SectionMenuItem(sectionName, MenuPaths.Global + sectionPath)
         {
@@ -89,32 +97,28 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
             SortIndex = sectionSortIndex
         };
 
-        var item = BuildUrlMenuItem(itemPath).First();
-
-        return [section, item];
+        return [section, BuildUrlMenuItem(itemPath)];
     }
 
-    private List<MenuItem> BuildUrlMenuItem(string defaultPathSuffix)
+    private UrlMenuItem BuildUrlMenuItem(string defaultPathSuffix)
     {
         var path = MenuPaths.Global + defaultPathSuffix;
         var sortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
         var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
 
-        var item = new UrlMenuItem(menuItemName, path, _options.CmsShellPath)
+        return new UrlMenuItem(menuItemName, path, _options.CmsShellPath)
         {
             IsAvailable = _ => IsCurrentUserAuthorized(),
             SortIndex = sortIndex
         };
-
-        return [item];
     }
 
     private List<MenuItem> BuildCustomSection()
     {
         var sectionName = string.IsNullOrEmpty(_options.CustomSectionName) ? _options.PageTitle : _options.CustomSectionName;
         var sectionSlug = ToSlug(sectionName);
-        var sectionPath = MenuPaths.Global + (string.IsNullOrEmpty(_options.MenuPath) ? "/" + sectionSlug : NormalizePath(_options.MenuPath));
-        var itemPath = sectionPath + "/scheduledjobsinsights";
+        var sectionPath = MenuPaths.Global + (string.IsNullOrEmpty(_options.MenuPath) ? MenuPathSeparator + sectionSlug : NormalizePath(_options.MenuPath));
+        var itemPath = sectionPath + LeafSegment;
         var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
         var sectionSortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
 
@@ -142,7 +146,7 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
     }
 
     private static string NormalizePath(string path) =>
-        path.StartsWith('/') ? path : "/" + path;
+        path.StartsWith(MenuPathSeparator) ? path : MenuPathSeparator + path;
 
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 

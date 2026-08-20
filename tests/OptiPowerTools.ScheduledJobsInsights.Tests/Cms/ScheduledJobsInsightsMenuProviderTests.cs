@@ -92,4 +92,58 @@ public class ScheduledJobsInsightsMenuProviderTests
         var item = Assert.Single(provider.GetMenuItems(), i => i.Path == DataSyncManagementItemPath);
         Assert.Equal("Job History", item.Text);
     }
+
+    [Fact]
+    public void GetMenuItems_TopLevel_NestsTheItemUnderItsOwnSection()
+    {
+        // Pins the literal paths. They are assembled by string concatenation from a separator, a slug
+        // and a leaf, so a refactor of that assembly can quietly change them — and a menu path that
+        // does not match what the shell expects simply fails to appear, with no error anywhere.
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            MenuPlacement = CmsMenuPlacement.TopLevel,
+            CustomSectionName = "OptiPowerTools",
+            ShowInDataSyncManagement = false
+        });
+
+        var items = provider.GetMenuItems().ToList();
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("/global/optipowertools", items[0].Path);
+        Assert.Equal("/global/optipowertools/scheduledjobsinsights", items[1].Path);
+    }
+
+    [Fact]
+    public void GetMenuItems_CustomSection_NestsTheItemUnderItsOwnSection()
+    {
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            MenuPlacement = CmsMenuPlacement.CustomSection,
+            CustomSectionName = "My Tools",
+            ShowInDataSyncManagement = false
+        });
+
+        var items = provider.GetMenuItems().ToList();
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("/global/my-tools", items[0].Path);
+        Assert.Equal("/global/my-tools/scheduledjobsinsights", items[1].Path);
+    }
+
+    [Theory]
+    [InlineData("custom/place", "/global/custom/place")]   // MenuPath is normalised to a leading slash
+    [InlineData("/custom/place", "/global/custom/place")]
+    public void GetMenuItems_AnExplicitMenuPath_IsNormalised(string configured, string expected)
+    {
+        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            MenuPath = configured,
+            ShowInDataSyncManagement = false
+        });
+
+        Assert.Equal(expected, Assert.Single(provider.GetMenuItems()).Path);
+    }
 }

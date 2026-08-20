@@ -130,12 +130,7 @@ internal sealed class ViewerClock
         if (string.IsNullOrWhiteSpace(value) || value.Length > MaxZoneIdLength)
             return false;
 
-        foreach (var character in value)
-        {
-            if (!char.IsAsciiLetterOrDigit(character) && character is not ('/' or '_' or '-' or '+'))
-                return false;
-        }
-
-        return true;
+        return value.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '/' or '_' or '-' or '+');
     }
 }

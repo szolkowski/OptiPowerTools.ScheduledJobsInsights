@@ -27,10 +27,13 @@ public readonly record struct RetentionPeriod(int? Days)
         Days is { } days ? now.AddDays(-days) : null;
 
     /// <summary>Reads an attribute's declared period, or <c>null</c> if it declares nothing usable.</summary>
-    public static RetentionPeriod? FromAttribute(JobRetentionAttribute attribute) =>
-        !attribute.IsValid ? null
-            : attribute.IsIndefinite ? Indefinite
-            : OfDays(attribute.Days);
+    public static RetentionPeriod? FromAttribute(JobRetentionAttribute attribute)
+    {
+        if (!attribute.IsValid)
+            return null;
+
+        return attribute.IsIndefinite ? Indefinite : OfDays(attribute.Days);
+    }
 }
 
 /// <summary>Where a job's effective retention came from — the precedence chain, highest first.</summary>

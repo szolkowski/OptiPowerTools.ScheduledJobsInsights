@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Reflection;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 
@@ -24,16 +23,16 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// </remarks>
 internal sealed class LoggedJobTypeIndex
 {
-    private readonly Lazy<IReadOnlyDictionary<string, JobRetentionAttribute?>> _loggedJobs;
+    private readonly Lazy<Dictionary<string, JobRetentionAttribute?>> _loggedJobs;
 
     public LoggedJobTypeIndex()
     {
-        _loggedJobs = new Lazy<IReadOnlyDictionary<string, JobRetentionAttribute?>>(
+        _loggedJobs = new Lazy<Dictionary<string, JobRetentionAttribute?>>(
             Scan, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     /// <summary>CLR full names of every concrete logged job in the application.</summary>
-    public IReadOnlyCollection<string> LoggedJobTypeNames => (IReadOnlyCollection<string>)_loggedJobs.Value.Keys;
+    public IReadOnlyCollection<string> LoggedJobTypeNames => _loggedJobs.Value.Keys;
 
     /// <summary>Whether a job type still exists in the running application.</summary>
     public bool Exists(string jobTypeName) => _loggedJobs.Value.ContainsKey(jobTypeName);
@@ -42,9 +41,11 @@ internal sealed class LoggedJobTypeIndex
     public JobRetentionAttribute? FindAttribute(string jobTypeName) =>
         _loggedJobs.Value.GetValueOrDefault(jobTypeName);
 
-    private static IReadOnlyDictionary<string, JobRetentionAttribute?> Scan()
+    private static Dictionary<string, JobRetentionAttribute?> Scan()
     {
-        var found = new ConcurrentDictionary<string, JobRetentionAttribute?>(StringComparer.Ordinal);
+        // A plain dictionary is enough: Lazy(ExecutionAndPublication) guarantees exactly one thread
+        // ever runs this, and the result is never mutated afterwards.
+        var found = new Dictionary<string, JobRetentionAttribute?>(StringComparer.Ordinal);
 
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {

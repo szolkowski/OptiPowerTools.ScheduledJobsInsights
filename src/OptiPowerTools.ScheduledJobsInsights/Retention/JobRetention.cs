@@ -42,8 +42,14 @@ internal sealed record JobRetention(
     /// The period actually in force, and where it came from. Precedence is override, then attribute,
     /// then the installation default — the single place that order is expressed.
     /// </summary>
-    public (RetentionPeriod Period, RetentionSource Source) Resolve(RetentionPeriod fallback) =>
-        Override is { } chosen ? (chosen, RetentionSource.Override)
-            : Attribute is { } declared ? (declared, RetentionSource.Attribute)
-            : (fallback, RetentionSource.Default);
+    public (RetentionPeriod Period, RetentionSource Source) Resolve(RetentionPeriod fallback)
+    {
+        if (Override is { } chosen)
+            return (chosen, RetentionSource.Override);
+
+        if (Attribute is { } declared)
+            return (declared, RetentionSource.Attribute);
+
+        return (fallback, RetentionSource.Default);
+    }
 }

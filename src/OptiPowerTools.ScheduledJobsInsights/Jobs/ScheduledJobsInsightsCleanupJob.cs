@@ -53,7 +53,6 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         var now = DateTimeOffset.UtcNow;
         var perJob = _retentionService.GetEffectiveOverridesAsync().GetAwaiter().GetResult();
         var defaultPeriod = _retentionService.DefaultPeriod;
-        var batchSize = _options.CleanupBatchSize;
 
         LogInputData(new
         {

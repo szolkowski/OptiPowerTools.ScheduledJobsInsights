@@ -107,11 +107,14 @@ internal sealed class JobRetentionService : IJobRetentionService
 
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        _logger.LogInformation(
-            "ScheduledJobsInsights retention for {JobTypeName} set to {Retention} by {ModifiedBy}.",
-            jobTypeName,
-            period is null ? "the inherited default" : period.Value.IsIndefinite ? "indefinite" : $"{period.Value.Days} day(s)",
-            modifiedBy);
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "ScheduledJobsInsights retention for {JobTypeName} set to {Retention} by {ModifiedBy}.",
+                jobTypeName,
+                Describe(period),
+                modifiedBy);
+        }
     }
 
     public async Task<IReadOnlyDictionary<string, RetentionPeriod>> GetEffectiveOverridesAsync(
@@ -141,9 +144,9 @@ internal sealed class JobRetentionService : IJobRetentionService
 
     private JobRetention Build(
         string jobTypeName,
-        IReadOnlyDictionary<string, string> registered,
-        IReadOnlyDictionary<string, int> history,
-        IReadOnlyDictionary<string, JobRetentionPolicy> overrides)
+        Dictionary<string, string> registered,
+        Dictionary<string, int> history,
+        Dictionary<string, JobRetentionPolicy> overrides)
     {
         var attribute = _jobTypes.FindAttribute(jobTypeName);
         var isRegistered = registered.TryGetValue(jobTypeName, out var registeredName);
@@ -171,11 +174,8 @@ internal sealed class JobRetentionService : IJobRetentionService
             // Duplicate type names are possible in a misconfigured installation; the first wins rather
             // than throwing, since a duplicate must not take the whole screen down.
             var registered = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var job in _scheduledJobRepository.List())
-            {
-                if (!string.IsNullOrEmpty(job.TypeName))
-                    registered.TryAdd(job.TypeName, string.IsNullOrEmpty(job.Name) ? ShortNameOf(job.TypeName) : job.Name);
-            }
+            foreach (var job in _scheduledJobRepository.List().Where(job => !string.IsNullOrEmpty(job.TypeName)))
+                registered.TryAdd(job.TypeName, string.IsNullOrEmpty(job.Name) ? ShortNameOf(job.TypeName) : job.Name);
 
             return registered;
         }
@@ -186,6 +186,15 @@ internal sealed class JobRetentionService : IJobRetentionService
             _logger.LogWarning(ex, "ScheduledJobsInsights could not list registered scheduled jobs; the retention screen will show job type names instead of display names.");
             return [];
         }
+    }
+
+    /// <summary>How a retention change reads in the audit log line.</summary>
+    private static string Describe(RetentionPeriod? period)
+    {
+        if (period is not { } set)
+            return "the inherited default";
+
+        return set.IsIndefinite ? "indefinite" : $"{set.Days} day(s)";
     }
 
     private static string ShortNameOf(string jobTypeName)

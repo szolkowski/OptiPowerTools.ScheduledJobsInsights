@@ -16,6 +16,7 @@
 SET NOCOUNT ON;
 DECLARE @failures int = 0;
 DECLARE @tbl nvarchar(200) = 'scheduled_jobs_insights.JobExecutions';
+DECLARE @policies nvarchar(200) = 'scheduled_jobs_insights.JobRetentionPolicies';
 
 IF SCHEMA_ID('scheduled_jobs_insights') IS NULL
 BEGIN PRINT 'FAIL: schema scheduled_jobs_insights missing'; SET @failures += 1; END
@@ -71,19 +72,19 @@ BEGIN PRINT 'FAIL: JobLogEntries/JobMetrics are not both ON DELETE CASCADE'; SET
 
 -- Per-job retention, added by AddJobRetentionPolicies. The unique index is what the resolver relies
 -- on to guarantee one policy per job type.
-IF OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies') IS NULL
+IF OBJECT_ID(@policies) IS NULL
 BEGIN PRINT 'FAIL: JobRetentionPolicies table missing'; SET @failures += 1; END
 ELSE
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM sys.columns
-                   WHERE object_id = OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies')
+                   WHERE object_id = OBJECT_ID(@policies)
                      AND name = 'RetentionDays' AND is_nullable = 1)
     BEGIN PRINT 'FAIL: JobRetentionPolicies.RetentionDays must be nullable (null means indefinite)'; SET @failures += 1; END
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes i
                    JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
                    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
-                   WHERE i.object_id = OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies')
+                   WHERE i.object_id = OBJECT_ID(@policies)
                      AND i.is_unique = 1 AND c.name = 'JobTypeName')
     BEGIN PRINT 'FAIL: JobRetentionPolicies.JobTypeName is not uniquely indexed'; SET @failures += 1; END
 END

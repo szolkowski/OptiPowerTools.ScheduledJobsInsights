@@ -216,15 +216,19 @@ else
         }
     }
 
-    private static RetentionPeriod? ParseChoice(string choice) =>
-        choice == InheritChoice ? null
-            : choice == IndefiniteChoice ? RetentionPeriod.Indefinite
-            : RetentionPeriod.OfDays(int.Parse(choice, CultureInfo.InvariantCulture));
+    private static RetentionPeriod? ParseChoice(string choice) => choice switch
+    {
+        InheritChoice => null,
+        IndefiniteChoice => RetentionPeriod.Indefinite,
+        _ => RetentionPeriod.OfDays(int.Parse(choice, CultureInfo.InvariantCulture))
+    };
 
-    private static string ChoiceFor(JobRetention job) =>
-        job.Override is not { } chosen ? InheritChoice
-            : chosen.IsIndefinite ? IndefiniteChoice
-            : chosen.Days!.Value.ToString(CultureInfo.InvariantCulture);
+    private static string ChoiceFor(JobRetention job) => job.Override switch
+    {
+        null => InheritChoice,
+        { Days: { } days } => days.ToString(CultureInfo.InvariantCulture),
+        _ => IndefiniteChoice
+    };
 
     /// <summary>
     /// The presets, plus this job's own value when it was set to something not on the list — so an
@@ -236,9 +240,7 @@ else
             : PresetDays;
 
     private static string Describe(RetentionPeriod period) =>
-        period.IsIndefinite
-            ? "Keep forever"
-            : $"{DisplayFormat.Number(period.Days!.Value)} days";
+        period.Days is { } days ? $"{DisplayFormat.Number(days)} days" : "Keep forever";
 
     private static string SourceLabel(RetentionSource source) => source switch
     {

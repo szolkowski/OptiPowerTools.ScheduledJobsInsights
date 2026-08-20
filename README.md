@@ -15,6 +15,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
 - Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list.
 - Unhandled exceptions are never swallowed — native CMS admin's `HasLastExecutionFailed`/`LastExecutionMessage` tracking is completely unaffected.
+- Cannot take your site down: if the insights database is unreachable, the application still starts, jobs still run, and `OnStatusChanged` still drives the CMS status column — only the history is lost, and it says so in the log.
 - Configurable via `IOptions<T>` or `appsettings.json`.
 
 ## Screenshots
@@ -367,6 +368,23 @@ Places the menu item directly in the global navigation bar.
 ```
 
 Creates a new collapsible section and nests the item underneath it.
+
+## When the insights database is unavailable
+
+This package observes scheduled jobs; it is never allowed to prevent them. If its database cannot be
+reached:
+
+- **The application still starts.** Startup migrations log a critical error and continue rather than
+  aborting `Configure`, which would otherwise stop the whole CMS from booting.
+- **Jobs still run, and still report correctly.** `BeginExecution` returns null, recording is skipped
+  for that run, and everything else behaves normally — including rethrowing a job's own exception, so
+  Optimizely's success/failure tracking is unchanged.
+- **The CMS status column still updates**, because `OnStatusChanged` raises the native event before
+  any recording is attempted.
+- **Nothing throws into job code.** No member of `IJobExecutionWriter` throws; failures are logged.
+
+What you lose is the execution history for the affected period, and the insights UI itself, which
+needs the database to show anything.
 
 ## Database & migrations
 

@@ -17,7 +17,7 @@ public class JobExecutionWriterTests
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
         var scheduledJobId = Guid.NewGuid();
 
-        var executionId = writer.BeginExecution(scheduledJobId, "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(scheduledJobId, "My Job", "My.Job.Type")!.Value;
 
         using var dbContext = factory.CreateDbContext();
         var execution = dbContext.JobExecutions.Single(e => e.Id == executionId);
@@ -33,7 +33,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         writer.Complete(executionId, succeeded: true, resultMessage: "all good", exception: null);
 
@@ -50,7 +50,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
         var exception = new InvalidOperationException("kaboom");
 
         writer.Complete(executionId, succeeded: false, resultMessage: null, exception: exception);
@@ -67,7 +67,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         writer.SetInputData(executionId, "{\"foo\":\"bar\"}");
 
@@ -81,7 +81,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         writer.Log(executionId, 1, LogSeverity.Info, "buffered", LogEntrySource.DevLog);
 
@@ -99,7 +99,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateBounded<JobRecord>(1);
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         // Fill the only slot so the next write can't be buffered.
         channel.Writer.TryWrite(new LogRecordItem(executionId, 0, LogSeverity.Info, "filler", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
@@ -116,7 +116,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
         var summary = "Totals\n------\n  Rows: 12\n  Skipped: 3";
 
         writer.SetResultSummary(executionId, summary);
@@ -133,7 +133,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         writer.SetResultSummary(executionId, "first");
         writer.SetResultSummary(executionId, "second");
@@ -150,7 +150,7 @@ public class JobExecutionWriterTests
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.WithSummaryLimit(32), NullLogger<JobExecutionWriter>.Instance);
-        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type");
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
         writer.SetResultSummary(executionId, new string('x', 500));
 
@@ -201,14 +201,31 @@ public class JobExecutionWriterTests
     }
 
     [Fact]
-    public void BeginExecution_StillThrows_WhenTheDatabaseIsUnavailable()
+    public void BeginExecution_ReturnsNull_WhenTheDatabaseIsUnavailable()
     {
-        // The deliberate exception to the rule above: everything else is keyed on the id this
-        // returns, so there is nothing sensible to carry on with.
+        // Signalled, not thrown. A job is about to run; an unreachable reporting database must cost
+        // the history of that run, never the run itself.
         var factory = new FailingDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
 
-        Assert.Throws<InvalidOperationException>(() => writer.BeginExecution(Guid.NewGuid(), "Job", "Job.Type"));
+        Assert.Null(writer.BeginExecution(Guid.NewGuid(), "Job", "Job.Type"));
+    }
+
+    [Fact]
+    public void TheImmediateWrites_DoNotThrow_WhenTheDatabaseIsUnavailable()
+    {
+        // Complete/SetInputData/SetResultSummary all run while a job is executing, so none of them
+        // may escape into it either.
+        var factory = new FailingDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+
+        writer.SetInputData(1, "{}");
+        writer.SetResultSummary(1, "summary");
+        writer.Complete(1, succeeded: true, resultMessage: "done", exception: null);
+
+        // Reaching here at all is the assertion; the count just confirms each one genuinely tried.
+        Assert.Equal(3, factory.Attempts);
     }
 }

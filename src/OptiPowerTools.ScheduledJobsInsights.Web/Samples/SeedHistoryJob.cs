@@ -90,7 +90,11 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
 
     private bool SeedExecution((string Name, string TypeName) fake, bool shouldFail, bool withSummary)
     {
-        var executionId = _writer.BeginExecution(Guid.NewGuid(), fake.Name, fake.TypeName);
+        // BeginExecution returns null when the insights store is unreachable. Nothing to seed onto,
+        // so this row is simply skipped — the same shape any direct writer caller should have.
+        if (_writer.BeginExecution(Guid.NewGuid(), fake.Name, fake.TypeName) is not { } executionId)
+            return false;
+
         var sequence = 0;
 
         _writer.SetInputData(executionId, $"{{\"source\":\"{fake.Name}\",\"dryRun\":false}}");
@@ -137,7 +141,9 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
 
     private void SeedStuckExecution()
     {
-        var executionId = _writer.BeginExecution(Guid.NewGuid(), "Stalled Feed Import", "Contoso.Jobs.StalledFeedImportJob");
+        if (_writer.BeginExecution(Guid.NewGuid(), "Stalled Feed Import", "Contoso.Jobs.StalledFeedImportJob") is not { } executionId)
+            return;
+
         _writer.Log(executionId, 1, LogSeverity.Info, "Connecting to feed…", LogEntrySource.StatusChanged);
         _writer.Log(executionId, 2, LogSeverity.Warning, "Left intentionally incomplete by SeedHistoryJob.", LogEntrySource.DevLog);
         // No Complete() — this row stays Running so the badge and filter always have a subject.

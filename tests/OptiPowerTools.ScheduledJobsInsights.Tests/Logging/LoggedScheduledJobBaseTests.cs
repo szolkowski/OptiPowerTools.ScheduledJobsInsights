@@ -246,4 +246,83 @@ public class LoggedScheduledJobBaseTests
 
         writer.Received(1).SetResultSummary(18L, Arg.Is<string>(text => text.Contains("still recorded")));
     }
+
+    /// <summary>
+    /// A writer that cannot record anything — what every method sees when the insights database is
+    /// unreachable. NSubstitute returns null for the nullable BeginExecution by default, so this is
+    /// really just naming the condition.
+    /// </summary>
+    private static IJobExecutionWriter UnavailableWriter()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns((long?)null);
+        return writer;
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRunsTheJob()
+    {
+        // The whole point: an unreachable reporting database costs the history of a run, never the
+        // run. A package that observes jobs must not be able to stop them.
+        var writer = UnavailableWriter();
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>()) { ResultToReturn = "did the work" };
+
+        var result = job.Execute();
+
+        Assert.Equal("did the work", result);
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_WritesNothingElse()
+    {
+        // Every later write is keyed on an execution id that does not exist. Attempting them would
+        // produce a foreign-key violation per log line and bury the one warning that matters.
+        var writer = UnavailableWriter();
+        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        {
+            RaiseStatusChanged = true,
+            SummaryToAppend = "not recorded"
+        };
+
+        job.Execute();
+
+        writer.DidNotReceive().Complete(Arg.Any<long>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<Exception>());
+        writer.DidNotReceive().Log(Arg.Any<long>(), Arg.Any<int>(), Arg.Any<LogSeverity>(), Arg.Any<string>(), Arg.Any<LogEntrySource>());
+        writer.DidNotReceive().RecordMetric(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<double>(), Arg.Any<string>());
+        writer.DidNotReceive().SetInputData(Arg.Any<long>(), Arg.Any<string>());
+        writer.DidNotReceive().SetResultSummary(Arg.Any<long>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRaisesTheNativeStatusChangedEvent()
+    {
+        // The CMS admin's live status column is driven by this event, and it belongs to Optimizely,
+        // not to us. It has to keep firing even when nothing can be persisted.
+        var job = new TestLoggedJob(UnavailableWriter(), Substitute.For<IScheduledJobRepository>())
+        {
+            RaiseStatusChanged = true,
+            StatusChangedMessage = "halfway"
+        };
+
+        var observed = new List<string>();
+        job.StatusChanged += (_, args) => observed.Add(args.Message);
+
+        job.Execute();
+
+        Assert.Contains("halfway", observed);
+    }
+
+    [Fact]
+    public void Execute_WhenTheExecutionCannotBeRecorded_StillRethrowsAJobFailure()
+    {
+        // Optimizely sets HasLastExecutionFailed from what Execute() throws. Losing our recording
+        // must not quietly turn a failed job into a successful one.
+        var thrown = new InvalidOperationException("boom");
+        var job = new TestLoggedJob(UnavailableWriter(), Substitute.For<IScheduledJobRepository>())
+        {
+            ExceptionToThrow = thrown
+        };
+
+        Assert.Same(thrown, Assert.Throws<InvalidOperationException>(() => job.Execute()));
+    }
 }

@@ -49,43 +49,51 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
 
     public int MaxResultSummaryLength { get; }
 
-    public long BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)
+    public long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)
     {
-        using var dbContext = _dbContextFactory.CreateDbContext();
-        var execution = new JobExecution
+        try
         {
-            ScheduledJobId = scheduledJobId,
-            JobName = jobName,
-            JobTypeName = jobTypeName,
-            StartedAt = DateTimeOffset.UtcNow,
-            Status = ExecutionStatus.Running,
-            MachineName = Environment.MachineName
-        };
-        dbContext.JobExecutions.Add(execution);
-        dbContext.SaveChanges();
-        return execution.Id;
+            using var dbContext = _dbContextFactory.CreateDbContext();
+            var execution = new JobExecution
+            {
+                ScheduledJobId = scheduledJobId,
+                JobName = jobName,
+                JobTypeName = jobTypeName,
+                StartedAt = DateTimeOffset.UtcNow,
+                Status = ExecutionStatus.Running,
+                MachineName = Environment.MachineName
+            };
+            dbContext.JobExecutions.Add(execution);
+            dbContext.SaveChanges();
+            return execution.Id;
+        }
+        catch (Exception ex)
+        {
+            // Warning, not error: the job is about to run perfectly well, it just will not appear in
+            // the history. Escalating this to an exception would take a working job down with an
+            // unavailable reporting database, which is precisely backwards.
+            _logger.LogWarning(
+                ex,
+                "ScheduledJobsInsights could not begin recording an execution of '{JobName}'. The job will run, but this run will not appear in the execution history.",
+                jobName);
+            return null;
+        }
     }
 
-    public void Complete(long executionId, bool succeeded, string? resultMessage, Exception? exception)
-    {
-        using var dbContext = _dbContextFactory.CreateDbContext();
-        dbContext.JobExecutions
+    public void Complete(long executionId, bool succeeded, string? resultMessage, Exception? exception) =>
+        Write(executionId, nameof(Complete), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
             .ExecuteUpdate(setters => setters
                 .SetProperty(e => e.Status, succeeded ? ExecutionStatus.Succeeded : ExecutionStatus.Failed)
                 .SetProperty(e => e.CompletedAt, DateTimeOffset.UtcNow)
                 .SetProperty(e => e.ResultMessage, resultMessage)
                 .SetProperty(e => e.ExceptionMessage, exception != null ? exception.Message : null)
-                .SetProperty(e => e.ExceptionStackTrace, exception != null ? exception.StackTrace : null));
-    }
+                .SetProperty(e => e.ExceptionStackTrace, exception != null ? exception.StackTrace : null)));
 
-    public void SetInputData(long executionId, string inputDataJson)
-    {
-        using var dbContext = _dbContextFactory.CreateDbContext();
-        dbContext.JobExecutions
+    public void SetInputData(long executionId, string inputDataJson) =>
+        Write(executionId, nameof(SetInputData), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
-            .ExecuteUpdate(setters => setters.SetProperty(e => e.InputDataJson, inputDataJson));
-    }
+            .ExecuteUpdate(setters => setters.SetProperty(e => e.InputDataJson, inputDataJson)));
 
     public void SetResultSummary(long executionId, string summary)
     {
@@ -95,10 +103,30 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
             ? summary[..MaxResultSummaryLength]
             : summary;
 
-        using var dbContext = _dbContextFactory.CreateDbContext();
-        dbContext.JobExecutions
+        Write(executionId, nameof(SetResultSummary), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
-            .ExecuteUpdate(setters => setters.SetProperty(e => e.ResultSummary, bounded));
+            .ExecuteUpdate(setters => setters.SetProperty(e => e.ResultSummary, bounded)));
+    }
+
+    /// <summary>
+    /// Runs an immediate write, swallowing and logging any failure. Every one of these happens while
+    /// a job is executing, so none of them may throw into it.
+    /// </summary>
+    private void Write(long executionId, string operation, Action<ScheduledJobsInsightsDbContext> write)
+    {
+        try
+        {
+            using var dbContext = _dbContextFactory.CreateDbContext();
+            write(dbContext);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "ScheduledJobsInsights failed to record {Operation} for execution {ExecutionId}. The execution history for this run is incomplete; the job itself is unaffected.",
+                operation,
+                executionId);
+        }
     }
 
     public void Log(long executionId, int sequence, LogSeverity severity, string message, LogEntrySource source)

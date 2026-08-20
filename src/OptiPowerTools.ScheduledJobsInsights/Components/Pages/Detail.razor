@@ -2,7 +2,6 @@
    the CMS shell — see Views/ScheduledJobsInsightsCms/Index.cshtml — so this is not a routable page;
    Id arrives as a component parameter from the MVC route rather than from Blazor routing. *@
 @implements IAsyncDisposable
-@using System.Globalization
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
@@ -35,10 +34,10 @@ else
         <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(_execution.Status)">
             @ExecutionStatusStyles.Label(_execution.Status)
         </span>
-        <span>Started: @_execution.StartedAt.LocalDateTime.ToString("G")</span>
+        <span>Started: @DisplayFormat.Timestamp(_execution.StartedAt)</span>
         @if (_execution.CompletedAt is not null)
         {
-            <span>Completed: @_execution.CompletedAt.Value.LocalDateTime.ToString("G")</span>
+            <span>Completed: @DisplayFormat.Timestamp(_execution.CompletedAt.Value)</span>
         }
         <span>Machine: @_execution.MachineName</span>
     </div>
@@ -79,7 +78,7 @@ else
                         {
                             <tr @key="metric.Id">
                                 <td>@metric.Name</td>
-                                <td>@metric.Value.ToString("0.##")</td>
+                                <td>@DisplayFormat.MetricValue(metric.Value)</td>
                                 <td>@metric.Unit</td>
                             </tr>
                         }
@@ -134,7 +133,7 @@ else
             @* Virtualize renders only the visible slice — a chatty job can log thousands of lines. *@
             <Virtualize TItem="JobLogEntry" Items="_logEntries" Context="entry">
                 <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
-                    <span class="console-timestamp">@entry.Timestamp.LocalDateTime.ToString("HH:mm:ss.fff")</span>
+                    <span class="console-timestamp">@DisplayFormat.TimeOfDay(entry.Timestamp)</span>
                     <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
                     <span class="console-message">@entry.Message</span>
                 </div>
@@ -176,11 +175,8 @@ else
     [Parameter, EditorRequired]
     public long Id { get; set; }
 
-    /// <summary>Line count beside the Log heading. Invariant for the same reason as the summary badge.</summary>
-    private string LogCountLabel =>
-        _logEntries.Count == 1
-            ? "1 line"
-            : string.Create(CultureInfo.InvariantCulture, $"{_logEntries.Count:N0} lines");
+    /// <summary>Line count beside the Log heading.</summary>
+    private string LogCountLabel => DisplayFormat.LineCount(_logEntries.Count);
 
     protected override async Task OnInitializedAsync() =>
         await LoadAsync(_disposalCts.Token);

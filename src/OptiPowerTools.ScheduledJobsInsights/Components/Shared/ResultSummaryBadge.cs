@@ -17,20 +17,12 @@ internal static class ResultSummaryBadge
 {
     /// <summary>Formats a summary's size as "1,240 lines · 38.4 KB".</summary>
     /// <remarks>
-    /// Formatted with the invariant culture on purpose. This runs on the server, so the ambient
-    /// culture is the host's, not the reader's — on a machine set to pl-PL the same badge renders
-    /// "2.000 lines · 3,9 KB", mixing Polish separators into a label that is hard-coded English. The
-    /// UI has no localization, so invariant is the only combination that is internally consistent.
+    /// Invariant, via <see cref="DisplayFormat"/> — see the reasoning there. In short: this runs on
+    /// the server, so the ambient culture is the host's rather than the reader's, and on a machine
+    /// set to pl-PL the badge rendered "2.000 lines · 3,9 KB" beside hard-coded English labels.
     /// </remarks>
-    public static string Format(string summary)
-    {
-        var lines = CountLines(summary);
-        var size = FormatSize(Encoding.UTF8.GetByteCount(summary));
-
-        return lines == 1
-            ? $"1 line · {size}"
-            : string.Create(CultureInfo.InvariantCulture, $"{lines:N0} lines · {size}");
-    }
+    public static string Format(string summary) =>
+        $"{DisplayFormat.LineCount(CountLines(summary))} · {FormatSize(Encoding.UTF8.GetByteCount(summary))}";
 
     /// <summary>
     /// Counts the lines in a summary, treating a trailing newline as ending the last line rather

@@ -44,3 +44,10 @@ csharp_style_namespace_declarations = file_scoped:suggestion
 
 # New line preferences
 csharp_new_line_before_open_brace = all
+
+# Globalization. Not on by default, and deliberately errors rather than warns: every number and
+# timestamp this package renders is a diagnostic read across environments, so formatting must never
+# fall back to whatever culture the server happens to be configured with. Components/Shared/
+# DisplayFormat.cs is where the UI's formatting decisions live.
+[*.cs]
+dotnet_diagnostic.CA1305.severity = error

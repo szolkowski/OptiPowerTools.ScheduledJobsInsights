@@ -170,6 +170,12 @@ Code that records an execution without being a scheduled job at all can call
 The CMS menu item opens a paginated execution list — job name, status, start time, duration, result —
 with filters for job and status, and a link across to the CMS's own **Scheduled Jobs** page.
 
+**All timestamps are UTC** and labelled as such. They are not converted to the viewer's time zone:
+this is a server-rendered UI, so the only zone it could reach for without asking the browser is the
+*server's*, which is rarely the reader's and was previously shown with nothing to say so. Numbers are
+formatted invariantly for the same reason — a duration must read the same on your machine, on CI and
+in production, because that is where it gets compared.
+
 Rows whose run recorded a result summary are marked **summary** in the Result column.
 
 Clicking a row opens the detail view for that run: a monospace, colour-coded, virtualised log stream,

@@ -60,7 +60,7 @@ else
             <tr>
                 <th scope="col">Job</th>
                 <th scope="col">Status</th>
-                <th scope="col">Started</th>
+                <th scope="col">Started (UTC)</th>
                 <th scope="col">Duration</th>
                 <th scope="col">Result</th>
             </tr>
@@ -83,8 +83,8 @@ else
                             @ExecutionStatusStyles.Label(execution.Status)
                         </span>
                     </td>
-                    <td>@execution.StartedAt.LocalDateTime.ToString("g")</td>
-                    <td>@FormatDuration(execution)</td>
+                    <td>@DisplayFormat.CompactTimestamp(execution.StartedAt)</td>
+                    <td>@DisplayFormat.Duration(execution.StartedAt, execution.CompletedAt)</td>
                     <td class="result-cell">
                         @* Marks rows worth opening for their summary. The flag is computed in SQL,
                            so the summary text itself never enters the list query. *@
@@ -186,17 +186,6 @@ else
     // the CMS chrome is rendered around it. Mirrors what the anchor in the first cell does.
     private void GoToDetail(long executionId) =>
         Navigation.NavigateTo(DetailUrl(executionId), forceLoad: true);
-
-    private static string FormatDuration(ExecutionListItem execution)
-    {
-        if (execution.CompletedAt is null)
-            return "—";
-
-        var duration = execution.CompletedAt.Value - execution.StartedAt;
-        return duration.TotalSeconds < 1
-            ? $"{duration.TotalMilliseconds:0} ms"
-            : $"{duration.TotalSeconds:0.0} s";
-    }
 
     public void Dispose()
     {

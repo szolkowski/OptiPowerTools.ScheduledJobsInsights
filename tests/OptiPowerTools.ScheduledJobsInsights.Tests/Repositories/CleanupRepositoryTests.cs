@@ -23,7 +23,7 @@ public class CleanupRepositoryTests
         }
 
         var repository = new CleanupRepository(factory);
-        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
 
         Assert.Equal(2, deleted);
         using var verifyContext = factory.CreateDbContext();
@@ -55,7 +55,7 @@ public class CleanupRepositoryTests
         }
 
         var repository = new CleanupRepository(factory);
-        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 2);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 2, excludedJobTypeNames: []);
 
         Assert.Equal(2, deleted);
         using var verifyContext = factory.CreateDbContext();
@@ -82,7 +82,7 @@ public class CleanupRepositoryTests
         }
 
         var repository = new CleanupRepository(factory);
-        repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100);
+        repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
 
         using var verifyContext = factory.CreateDbContext();
         Assert.Empty(verifyContext.JobExecutions);
@@ -103,8 +103,61 @@ public class CleanupRepositoryTests
         }
 
         var repository = new CleanupRepository(factory);
-        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
 
         Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_SkipsExcludedJobTypes()
+    {
+        // The mechanism behind per-job retention: a job with its own rule must survive the default
+        // sweep even when it is older than the default cutoff.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
+        Seed(factory,
+            ("Contoso.Jobs.Ordinary", cutoff.AddDays(-1)),
+            ("Contoso.Jobs.Governed", cutoff.AddDays(-1)));
+
+        var deleted = new CleanupRepository(factory).DeleteExecutionsOlderThan(cutoff, 100, ["Contoso.Jobs.Governed"]);
+
+        Assert.Equal(1, deleted);
+        using var dbContext = factory.CreateDbContext();
+        Assert.Equal(["Contoso.Jobs.Governed"], dbContext.JobExecutions.Select(e => e.JobTypeName).ToList());
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_ForOneJobType_LeavesOtherJobsAlone()
+    {
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-7);
+        Seed(factory,
+            ("Contoso.Jobs.Chatty", cutoff.AddDays(-1)),   // old enough, and the target
+            ("Contoso.Jobs.Chatty", cutoff.AddDays(1)),    // too recent
+            ("Contoso.Jobs.Other", cutoff.AddDays(-1)));   // old enough, but a different job
+
+        var deleted = new CleanupRepository(factory).DeleteExecutionsOlderThan("Contoso.Jobs.Chatty", cutoff, 100);
+
+        Assert.Equal(1, deleted);
+        using var dbContext = factory.CreateDbContext();
+        Assert.Equal(2, dbContext.JobExecutions.Count());
+    }
+
+    private static void Seed(SqliteDbContextFactory factory, params (string JobTypeName, DateTimeOffset StartedAt)[] executions)
+    {
+        using var dbContext = factory.CreateDbContext();
+        foreach (var (jobTypeName, startedAt) in executions)
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = jobTypeName,
+                JobTypeName = jobTypeName,
+                StartedAt = startedAt,
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test"
+            });
+        }
+        dbContext.SaveChanges();
     }
 }

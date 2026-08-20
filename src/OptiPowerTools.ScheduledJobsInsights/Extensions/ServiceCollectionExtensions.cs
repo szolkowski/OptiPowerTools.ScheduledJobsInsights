@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
@@ -10,6 +11,7 @@ using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
+using OptiPowerTools.ScheduledJobsInsights.Retention;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Extensions;
 
@@ -63,6 +65,16 @@ public static class ServiceCollectionExtensions
                 SingleWriter = false
             });
         });
+
+        // TryAdd: the host may already have registered one (a test host with a fake clock, say).
+        services.TryAddSingleton(TimeProvider.System);
+
+        // Singleton: the type scan is process-lifetime data, since base types and attributes are compiled in.
+        services.AddSingleton<LoggedJobTypeIndex>();
+        services.AddSingleton<IJobRetentionService, JobRetentionService>();
+
+        // The same instance under its public, cleanup-facing face.
+        services.AddSingleton<IJobRetentionPolicySource>(provider => provider.GetRequiredService<IJobRetentionService>());
 
         services.AddSingleton<IJobExecutionWriter, JobExecutionWriter>();
         services.AddSingleton<IJobExecutionQueryService, JobExecutionQueryService>();

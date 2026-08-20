@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using OptiPowerTools.ScheduledJobsInsights.Data;
 
@@ -11,9 +12,11 @@ using OptiPowerTools.ScheduledJobsInsights.Data;
 namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
 {
     [DbContext(typeof(ScheduledJobsInsightsDbContext))]
-    partial class ScheduledJobsInsightsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260820135516_AddStatusIndex")]
+    partial class AddStatusIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -76,8 +79,6 @@ namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ScheduledJobId");
-
-                    b.HasIndex("JobTypeName", "StartedAt");
 
                     b.HasIndex("StartedAt", "Id")
                         .IsDescending();
@@ -157,38 +158,6 @@ namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
                     b.HasIndex("JobExecutionId", "Name");
 
                     b.ToTable("JobMetrics", "scheduled_jobs_insights");
-                });
-
-            modelBuilder.Entity("OptiPowerTools.ScheduledJobsInsights.Data.Entities.JobRetentionPolicy", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("JobTypeName")
-                        .IsRequired()
-                        .HasMaxLength(400)
-                        .HasColumnType("nvarchar(400)");
-
-                    b.Property<DateTimeOffset>("ModifiedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("ModifiedBy")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int?>("RetentionDays")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("JobTypeName")
-                        .IsUnique();
-
-                    b.ToTable("JobRetentionPolicies", "scheduled_jobs_insights");
                 });
 
             modelBuilder.Entity("OptiPowerTools.ScheduledJobsInsights.Data.Entities.JobLogEntry", b =>

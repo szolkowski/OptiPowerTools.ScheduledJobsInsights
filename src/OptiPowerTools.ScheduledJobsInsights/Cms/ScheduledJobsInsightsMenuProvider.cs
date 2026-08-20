@@ -40,6 +40,9 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// <summary>Final segment of this package's menu path, whatever the placement resolves to.</summary>
     private const string LeafSegment = "/scheduledjobsinsights";
 
+    /// <summary>Menu leaf for the retention screen, a sibling of the insights entry.</summary>
+    private const string RetentionLeafSegment = "/scheduledjobsinsightsretention";
+
     /// <inheritdoc />
     public IEnumerable<MenuItem> GetMenuItems()
     {
@@ -53,9 +56,12 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
             _ => BuildCmsSection()
         };
 
-        // Independent of MenuPlacement — this is an additional entry, not an alternative one.
+        // Independent of MenuPlacement — these are additional entries, not alternative ones.
         if (_options.ShowInDataSyncManagement)
             items.Add(BuildDataSyncManagementItem());
+
+        if (_options.ShowRetentionMenuItem)
+            items.Add(BuildRetentionItem());
 
         return items;
     }
@@ -76,6 +82,19 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
             SortIndex = SortIndex.Last - 10
         };
     }
+
+    /// <summary>
+    /// Builds the entry for the retention screen. Sits under <em>Data &amp; Sync Management</em>
+    /// beside the insights entry, since it configures the same data.
+    /// </summary>
+    private UrlMenuItem BuildRetentionItem() =>
+        new($"{(string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName)} - Retention",
+            DataSyncManagementPath + RetentionLeafSegment,
+            $"{_options.CmsShellPath}?view={ScheduledJobsInsightsCmsController.RetentionView}")
+        {
+            IsAvailable = _ => IsCurrentUserAuthorized(),
+            SortIndex = SortIndex.Last - 9
+        };
 
     private List<MenuItem> BuildCmsSection()
     {

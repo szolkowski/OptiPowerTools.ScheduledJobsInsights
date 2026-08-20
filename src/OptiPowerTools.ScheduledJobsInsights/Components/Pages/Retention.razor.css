@@ -1,0 +1,82 @@
+.intro,
+.default-note,
+.footnote {
+    margin: 0 0 0.5rem;
+}
+
+.footnote,
+.hint {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+.retention-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+}
+
+.retention-table th,
+.retention-table td {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+    vertical-align: top;
+}
+
+.numeric {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.job-name {
+    font-weight: 600;
+}
+
+/* The CLR name is the identity retention is keyed on, so it is worth showing — but quietly, and
+   clipped, because it is long and only matters when two jobs share a display name. */
+.job-type {
+    font-size: 0.75rem;
+    opacity: 0.6;
+    max-width: 24rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.effective {
+    font-weight: 600;
+}
+
+.tag {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    opacity: 0.75;
+}
+
+.tag-invalid,
+.tag-orphan {
+    border-color: #EF5350;
+    color: #C62828;
+    opacity: 1;
+}
+
+.saved {
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+    color: #2E7D32;
+}
+
+.error-text {
+    color: #EF5350;
+}
+
+.audit {
+    white-space: nowrap;
+}

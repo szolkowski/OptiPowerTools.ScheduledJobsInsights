@@ -15,6 +15,9 @@ namespace OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 /// </remarks>
 internal static class DisplayFormat
 {
+    /// <summary>A whole number with thousands separators — "2,019".</summary>
+    public static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
     /// <summary>A line count with its unit — "1 line", "2,019 lines".</summary>
     public static string LineCount(int count) =>
         count == 1 ? "1 line" : count.ToString("N0", CultureInfo.InvariantCulture) + " lines";

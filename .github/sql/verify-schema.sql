@@ -45,12 +45,52 @@ SELECT @failures = @failures
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(@tbl) AND name = 'IX_JobExecutions_StartedAt_Id')
 BEGIN PRINT 'FAIL: IX_JobExecutions_StartedAt_Id missing'; SET @failures += 1; END
 
+-- The status index, added by AddStatusIndex. Without it, filtering the list by status scans the whole
+-- table: measured at 100,000 executions, "Running" with nothing running cost 35,208 logical reads
+-- against 3 with the index. The descending flags matter for the same reason as above -- they are what
+-- lets the keyset page come back already ordered.
+;WITH statusKeys AS (
+    SELECT c.name, ic.key_ordinal, ic.is_descending_key
+    FROM sys.indexes i
+    JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+    WHERE i.object_id = OBJECT_ID(@tbl) AND i.name = 'IX_JobExecutions_Status_StartedAt_Id'
+)
+SELECT @failures = @failures
+    + CASE WHEN (SELECT COUNT(*) FROM statusKeys) = 3 THEN 0 ELSE 1 END
+    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='Status'    AND key_ordinal=1 AND is_descending_key=0) THEN 0 ELSE 1 END
+    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='StartedAt' AND key_ordinal=2 AND is_descending_key=1) THEN 0 ELSE 1 END
+    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='Id'        AND key_ordinal=3 AND is_descending_key=1) THEN 0 ELSE 1 END;
+
 -- Child rows must cascade with their parent execution; the cleanup job relies on it.
 IF (SELECT COUNT(*) FROM sys.foreign_keys
     WHERE parent_object_id IN (OBJECT_ID('scheduled_jobs_insights.JobLogEntries'),
                                OBJECT_ID('scheduled_jobs_insights.JobMetrics'))
       AND delete_referential_action_desc = 'CASCADE') <> 2
 BEGIN PRINT 'FAIL: JobLogEntries/JobMetrics are not both ON DELETE CASCADE'; SET @failures += 1; END
+
+-- Per-job retention, added by AddJobRetentionPolicies. The unique index is what the resolver relies
+-- on to guarantee one policy per job type.
+IF OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies') IS NULL
+BEGIN PRINT 'FAIL: JobRetentionPolicies table missing'; SET @failures += 1; END
+ELSE
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM sys.columns
+                   WHERE object_id = OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies')
+                     AND name = 'RetentionDays' AND is_nullable = 1)
+    BEGIN PRINT 'FAIL: JobRetentionPolicies.RetentionDays must be nullable (null means indefinite)'; SET @failures += 1; END
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes i
+                   JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                   JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+                   WHERE i.object_id = OBJECT_ID('scheduled_jobs_insights.JobRetentionPolicies')
+                     AND i.is_unique = 1 AND c.name = 'JobTypeName')
+    BEGIN PRINT 'FAIL: JobRetentionPolicies.JobTypeName is not uniquely indexed'; SET @failures += 1; END
+END
+
+-- Per-job retention deletes filter by job type within an age range; without this they scan.
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(@tbl) AND name = 'IX_JobExecutions_JobTypeName_StartedAt')
+BEGIN PRINT 'FAIL: IX_JobExecutions_JobTypeName_StartedAt missing'; SET @failures += 1; END
 
 IF @failures > 0
     RAISERROR('Schema verification failed with %d problem(s).', 16, 1, @failures);

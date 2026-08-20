@@ -24,12 +24,21 @@ public class ScheduledJobsInsightsCmsController : Controller
         _options = options.Value;
     }
 
+    /// <summary>Query-string value of <c>view</c> that selects the retention screen.</summary>
+    internal const string RetentionView = "retention";
+
     /// <summary>
-    /// Renders the execution list, or a single execution's detail when <paramref name="id"/> is supplied.
+    /// Renders the execution list, a single execution's detail when <paramref name="id"/> is
+    /// supplied, or the retention screen when <paramref name="view"/> is <c>retention</c>.
     /// </summary>
     /// <param name="id">Execution id from the <c>id</c> query string, or <c>null</c> for the list.</param>
+    /// <param name="view">
+    /// Which screen to render. A query string rather than a route segment for the same reason as
+    /// <paramref name="id"/>: the CMS shell resolves its navigation by matching the request path
+    /// against registered menu items, and any extra segment matches none of them.
+    /// </param>
     [HttpGet]
-    public IActionResult Index(long? id)
+    public IActionResult Index(long? id, string? view = null)
     {
         if (_options.EnableStandardAuthorization
             && (User.Identity?.IsAuthenticated != true
@@ -45,6 +54,11 @@ public class ScheduledJobsInsightsCmsController : Controller
         // is only meaningful during prerendering, and a component that consulted it would see the right
         // zone on the prerender pass and null once the circuit takes over, flipping the page back to UTC.
         ViewBag.ViewerTimeZone = Request.Cookies[ViewerClock.CookieName];
+        ViewBag.ShowRetention = string.Equals(view, RetentionView, StringComparison.OrdinalIgnoreCase);
+
+        // Handed to the component rather than read there: retention changes are audited, and a Blazor
+        // component has no HttpContext once the circuit takes over.
+        ViewBag.CurrentUser = User.Identity?.Name;
 
         return View();
     }

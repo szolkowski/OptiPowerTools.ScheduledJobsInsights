@@ -19,6 +19,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
 - Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list.
+- Per-job retention, including indefinite: declare it on the job with `[JobRetention]`, or set it per job in a CMS screen that shows what each job declared and why.
 - Unhandled exceptions are never swallowed — native CMS admin's `HasLastExecutionFailed`/`LastExecutionMessage` tracking is completely unaffected.
 - Cannot take your site down: if the insights database is unreachable, the application still starts, jobs still run, and `OnStatusChanged` still drives the CMS status column — only the history is lost, and it says so in the log.
 - Configurable via `IOptions<T>` or `appsettings.json`.
@@ -324,6 +325,7 @@ Code overrides configuration when both are used.
 | `CustomSectionName` | `string` | `"OptiPowerTools"` | Section name for `TopLevel`/`CustomSection` placement. |
 | `CustomMenuItemName` | `string` | *(empty)* | Overrides the menu item label; falls back to `PageTitle`. |
 | `ShowInDataSyncManagement` | `bool` | `true` | Also adds an entry under **Settings › Data & Sync Management**, directly below the CMS's own **Scheduled Jobs** page. Independent of `MenuPlacement` — see below. |
+| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen beside the insights one. The screen stays reachable at `?view=retention` either way. |
 | `CmsShellPath` | `string` | `"/ScheduledJobsInsightsCms/Index"` | URL path where the UI is served. A single execution is addressed with an `id` query string, e.g. `/ScheduledJobsInsightsCms/Index?id=42`. |
 
 ### Data & Sync Management entry
@@ -405,6 +407,52 @@ No `--startup-project` is needed — `Data/ScheduledJobsInsightsDbContextFactory
 `IDesignTimeDbContextFactory`, so the library serves as its own startup project. (Passing the `.Web`
 host instead fails: `Microsoft.EntityFrameworkCore.Design` is a `PrivateAssets="All"` reference of the
 library and does not flow to it.)
+
+## Retention
+
+How long each job's execution history is kept, resolved in this order:
+
+| | set by | wins over |
+|---|---|---|
+| **1. Override** | an administrator, in the **Job Retention** screen | everything |
+| **2. `[JobRetention]`** | the job's own code | the default |
+| **3. `RetentionDays`** | configuration (default 30) | — |
+
+Any of the three can be **indefinite**, meaning the cleanup job skips that history entirely.
+
+### Declaring retention on a job
+
+```csharp
+[ScheduledJob(DisplayName = "Nightly Catalog Sync", IntervalType = ScheduledIntervalType.Days)]
+[JobRetention(7, Description = "Logs one line per SKU; a week is enough to diagnose a bad run.")]
+public class CatalogSyncJob : LoggedScheduledJobBase { }
+```
+
+Use `JobRetentionAttribute.Indefinite` to keep a job's history forever. The attribute travels with the
+code, so a fresh deployment gets it right without anyone remembering to configure anything — but it is
+a *default*, not a mandate: an administrator can still override it.
+
+The `Description` is shown beside the value in the retention screen, so whoever is deciding whether to
+override it can see what the job's author intended and why.
+
+### The Job Retention screen
+
+Reached from the **Retention** link on the execution list, or from its own entry under **Settings ›
+Data & Sync Management**. For every job it shows the declared value and its rationale, what is
+actually in force and where that came from, how many executions are currently stored, and who last
+changed the setting.
+
+The list covers every job deriving from `LoggedScheduledJobBase` — so a job can be configured before
+its first run — plus every job type that only exists in history, so records left behind by deleted
+code can still be trimmed. Those rows are marked **history only**.
+
+Jobs on Optimizely's own `ScheduledJobBase` are deliberately absent: they never write execution
+history, so there is nothing to retain, and listing the CMS's two dozen built-ins would bury the
+handful that matter.
+
+Changes take effect on the next run of the cleanup job. Nothing is deleted at the moment you save.
+
+> **Shortening a retention deletes history.** That is why every change records who made it and when.
 
 ## Cleanup job
 
@@ -535,7 +583,7 @@ and every state the two UI pages can render.
 | `InventorySyncJob` | Multi-phase logging at `Info`/`Success`/`Warning` severities. |
 | `ReportBuilderJob` | Building a `Summary` up as the work happens — sections, a per-region breakdown and totals — alongside `LogInputData` and custom `RecordMetric` calls. |
 | `FlakyImportJob` | Throws on alternating runs — proves a failure still surfaces correctly in both native CMS admin and this package's UI, and that the summary recorded before the throw is still persisted. |
-| `ChattyBatchJob` | Emits ~5,000 log lines in a tight loop — exercises the buffered writer and the virtualized log viewer under load. |
+| `ChattyBatchJob` | Emits ~5,000 log lines in a tight loop — exercises the buffered writer and the virtualized log viewer under load. Also the worked example for `[JobRetention]`, since it is exactly the kind of job that warrants a shorter one. |
 | `StatusReportingJob` | `OnStatusChanged` — drives the CMS's live status column and is captured as `LogEntrySource.StatusChanged` lines, interleaved with ordinary `Log` calls. |
 | `SlowMigrationJob` | Runs for ~60s so an execution can be watched mid-flight: the `Running` badge, the detail page's 2s polling, the `—` duration, and the seconds duration format. Builds a summary but never flushes it, so the whole **Result summary** section appears on the tick after the job completes. Supports the CMS Stop button. |
 | `SeverityShowcaseJob` | One line at every `LogSeverity`, so the console renders the complete colour and label set. |

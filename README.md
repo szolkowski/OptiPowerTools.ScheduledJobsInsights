@@ -1,6 +1,6 @@
 # OptiPowerTools.ScheduledJobsInsights
 
-Structured logging, metrics, and a Blazor CMS UI for **native Optimizely CMS 13 scheduled jobs**. Extends `EPiServer.Scheduler.ScheduledJobBase` to persist every `OnStatusChanged` message, the job's return value, unhandled exceptions, execution metrics (duration, allocations, CPU time, GC counts), and anything you log explicitly — to EF Core-backed SQL tables, with a paginated/console-style Blazor viewer and an automatic retention cleanup job.
+Execution history for **native Optimizely CMS 13 scheduled jobs**. Swap `EPiServer.Scheduler.ScheduledJobBase` for `LoggedScheduledJobBase` and every run is recorded: each `OnStatusChanged` message, the job's return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts) — persisted to EF Core-backed SQL tables, browsable in a paginated list and console-style log viewer embedded in the CMS admin, and aged out by an automatic retention cleanup job.
 
 Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also [OptiPowerTools.Hangfire](https://github.com/szolkowski/OptiPowerTools.Hangfire) if your background jobs run on Hangfire instead of (or alongside) Optimizely's native scheduler.
 

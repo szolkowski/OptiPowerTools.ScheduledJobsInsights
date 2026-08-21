@@ -57,18 +57,28 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # Every ${{ … }} that reaches a shell arrives through env rather than being pasted into the
+      # script text. inputs.version is supplied by whoever dispatches the workflow, and expanding it
+      # inline would let them close the quote and run their own commands — in a job holding an OIDC
+      # identity that can publish to nuget.org.
       - name: Resolve version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
             echo "dry_run=true" >> "$GITHUB_OUTPUT"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${REF_NAME#v}"
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
+          # Also the gate that makes the value safe downstream: everything after this point is known
+          # to match SemVer, so it cannot carry shell metacharacters.
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::'$VERSION' is not a SemVer version (expected MAJOR.MINOR.PATCH[-prerelease])."
             exit 1
@@ -81,16 +91,18 @@ jobs:
       # pushes and pull requests to main, not on tags. Gating here is what stops a red build
       # reaching a feed that cannot be unpublished.
       - name: Test
-        run: dotnet test ${{ env.TESTS }} -c Release
+        run: dotnet test "$TESTS" -c Release
 
       - name: Pack
-        run: >
-          dotnet pack ${{ env.PROJECT }} -c Release -o ./nupkg
-          -p:Version=${{ steps.version.outputs.version }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: dotnet pack "$PROJECT" -c Release -o ./nupkg -p:Version="$VERSION"
 
       # Shipped for hosts that set AutoMigrateDatabase=false, whose app-pool identity often lacks
       # DDL rights. Idempotent, so it is safe to re-run against a database at any migration level.
       - name: Generate idempotent migration script
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           # A globally installed tool is not on PATH in a fresh shell; without this `dotnet ef` below
@@ -98,9 +110,9 @@ jobs:
           export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet tool install --global dotnet-ef
 
-          SCRIPT="./nupkg/scheduled-jobs-insights-${{ steps.version.outputs.version }}.sql"
+          SCRIPT="./nupkg/scheduled-jobs-insights-$VERSION.sql"
           dotnet ef migrations script --idempotent \
-            --project ${{ env.PROJECT }} \
+            --project "$PROJECT" \
             --context OptiPowerTools.ScheduledJobsInsights.Data.ScheduledJobsInsightsDbContext \
             --output "$SCRIPT"
           # dotnet ef writes a UTF-8 BOM, and sqlcmd reports "Incorrect syntax near ''" on the very
@@ -113,9 +125,11 @@ jobs:
       # database, once more to prove it is genuinely idempotent, then checked against the expected
       # schema. This also guards the BOM strip above — without it sqlcmd fails on the first line.
       - name: Verify the shipped script applies
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          SCRIPT="./nupkg/scheduled-jobs-insights-${{ steps.version.outputs.version }}.sql"
+          SCRIPT="./nupkg/scheduled-jobs-insights-$VERSION.sql"
 
           cid=$(docker ps --filter "ancestor=$SQLSERVER_IMAGE" --format '{{.ID}}' | head -1)
           if [ -z "$cid" ]; then
@@ -149,7 +163,9 @@ jobs:
       # Runs in a dry run too — obtaining a key is exactly the proof that the policy is correct, and
       # an unused key simply expires after its hour.
       - name: NuGet login (OIDC to short-lived key)
-        uses: NuGet/login@v1
+        # Pinned to a commit rather than a tag: a tag can be moved to point at different code, and
+        # this step runs in a job that can publish to nuget.org. v1.2.0.
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
         id: nuget-login
         with:
           user: ${{ secrets.NUGET_USER }}
@@ -159,35 +175,42 @@ jobs:
       # exists.
       - name: Dry run — stopping before publish
         if: steps.version.outputs.dry_run == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "### Dry run passed :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Version \`${{ steps.version.outputs.version }}\` packed, the migration script verified against SQL Server, and a short-lived NuGet key obtained over OIDC." >> "$GITHUB_STEP_SUMMARY"
+          echo "Version \`$VERSION\` packed, the migration script verified against SQL Server, and a short-lived NuGet key obtained over OIDC." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Nothing was pushed. Tag the commit to publish for real." >> "$GITHUB_STEP_SUMMARY"
           ls -la ./nupkg
 
       - name: Push to NuGet.org
         if: steps.version.outputs.dry_run == 'false'
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: >
           dotnet nuget push "./nupkg/*.nupkg"
           --source https://api.nuget.org/v3/index.json
-          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --api-key "$NUGET_API_KEY"
           --skip-duplicate
 
       - name: Create GitHub Release
         if: steps.version.outputs.dry_run == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           PRERELEASE=""
-          if [[ "${{ steps.version.outputs.version }}" == *-* ]]; then
+          if [[ "$VERSION" == *-* ]]; then
             PRERELEASE="--prerelease"
           fi
-          gh release create "${{ github.ref_name }}" \
+          gh release create "$TAG" \
             ./nupkg/*.nupkg \
             ./nupkg/*.snupkg \
             ./nupkg/*.sql \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --generate-notes \
             $PRERELEASE
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

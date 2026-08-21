@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using NSubstitute;
+using OptiPowerTools.ScheduledJobsInsights.Cms;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data;
 using OptiPowerTools.ScheduledJobsInsights.Extensions;
@@ -78,7 +79,13 @@ public class ConsumerIntegrationTests
         // SQL Server here. Everything else is exactly what a consumer's container holds.
         services.AddSingleton<IDbContextFactory<ScheduledJobsInsightsDbContext>>(database);
 
-        return services.BuildServiceProvider();
+        // Scope validation on, as ASP.NET does in Development: resolving a singleton of ours that
+        // holds a scoped service fails here rather than in somebody's application.
+        //
+        // ValidateOnBuild stays off. It eagerly validates every descriptor in the container,
+        // including Blazor Server's own, which need an IWebHostEnvironment a bare ServiceCollection
+        // does not have — it would fail on Microsoft's registrations, not ours.
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 
     [Fact]
@@ -145,6 +152,19 @@ public class ConsumerIntegrationTests
         Assert.NotNull(provider.GetRequiredService<IJobExecutionWriter>());
         Assert.NotNull(provider.GetRequiredService<ICleanupRepository>());
         Assert.NotNull(provider.GetRequiredService<IJobRetentionPolicySource>());
+    }
+
+    [Fact]
+    public void TheMenuProvider_DoesNotCaptureAScopedService()
+    {
+        // Optimizely registers menu providers as singletons and IAuthorizationService is scoped, so
+        // taking one in the constructor is a captive dependency: the scoped service, and everything
+        // it captured, alive for the process. Under Development's scope validation it does not merely
+        // leak — the application fails to start.
+        using var database = new SqliteDbContextFactory();
+        using var provider = BuildConsumerHost(database);
+
+        Assert.NotNull(provider.GetRequiredService<ScheduledJobsInsightsMenuProvider>());
     }
 
     [Fact]

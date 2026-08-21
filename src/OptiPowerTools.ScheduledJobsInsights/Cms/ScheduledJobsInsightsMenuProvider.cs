@@ -1,6 +1,7 @@
 using EPiServer.Shell.Navigation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 
@@ -16,27 +17,28 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
 {
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
     private readonly IHttpContextAccessor _httpContextAccessor;
-    private readonly IAuthorizationService _authorizationService;
 
     /// <summary>
     /// Initializes a new instance of <see cref="ScheduledJobsInsightsMenuProvider"/>.
     /// </summary>
     /// <param name="options">Package options.</param>
-    /// <param name="httpContextAccessor">Supplies the current user.</param>
-    /// <param name="authorizationService">Evaluates the same policy the page itself enforces.</param>
-    /// <exception cref="ArgumentNullException">Any argument is <c>null</c>.</exception>
+    /// <param name="httpContextAccessor">Supplies the current request, its user and its services.</param>
+    /// <exception cref="ArgumentNullException">Either argument is <c>null</c>.</exception>
+    /// <remarks>
+    /// Deliberately does <em>not</em> take <see cref="IAuthorizationService"/>. Optimizely registers
+    /// menu providers as singletons and that service is scoped, so holding one would be a captive
+    /// dependency — the scoped service and everything it captured living for the life of the
+    /// process. It is resolved per call from the request's own scope instead.
+    /// </remarks>
     public ScheduledJobsInsightsMenuProvider(
         IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
-        IHttpContextAccessor httpContextAccessor,
-        IAuthorizationService authorizationService)
+        IHttpContextAccessor httpContextAccessor)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(httpContextAccessor);
-        ArgumentNullException.ThrowIfNull(authorizationService);
 
         _options = options.Value;
         _httpContextAccessor = httpContextAccessor;
-        _authorizationService = authorizationService;
     }
 
     /// <summary>
@@ -182,10 +184,16 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// </remarks>
     private bool IsCurrentUserAuthorized()
     {
-        if (_httpContextAccessor.HttpContext?.User is not { } principal)
+        if (_httpContextAccessor.HttpContext is not { } httpContext)
             return false;
 
-        return _authorizationService
+        // From the request's scope, not a captured one — see the constructor.
+        var authorizationService = httpContext.RequestServices.GetService<IAuthorizationService>();
+
+        if (authorizationService is null || httpContext.User is not { } principal)
+            return false;
+
+        return authorizationService
             .AuthorizeAsync(principal, resource: null, ScheduledJobsInsightsAuthorization.PolicyName)
             .GetAwaiter()
             .GetResult()

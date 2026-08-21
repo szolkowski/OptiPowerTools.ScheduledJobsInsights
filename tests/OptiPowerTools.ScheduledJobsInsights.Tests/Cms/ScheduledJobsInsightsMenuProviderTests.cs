@@ -14,7 +14,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     private const string DataSyncManagementItemPath = "/global/cms/admin/scheduledjobs/scheduledjobsinsights";
 
     private static ScheduledJobsInsightsMenuProvider CreateProvider(OptiPowerToolScheduledJobsInsightsOptions options) =>
-        new(Options.Create(options), Substitute.For<IHttpContextAccessor>(), Substitute.For<IAuthorizationService>());
+        new(Options.Create(options), Substitute.For<IHttpContextAccessor>());
 
     [Fact]
     public void GetMenuItems_ReturnsEmpty_WhenMenuDisabled()

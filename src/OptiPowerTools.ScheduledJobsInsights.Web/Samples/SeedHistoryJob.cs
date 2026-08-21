@@ -48,10 +48,12 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
 
     private readonly IJobExecutionWriter _writer;
 
-    public SeedHistoryJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public SeedHistoryJob(JobLoggingContext context)
+        : base(context)
     {
-        _writer = writer;
+        // The writer is public API precisely so callers like this one can record executions that are
+        // not scheduled job runs at all.
+        _writer = context.Writer;
     }
 
     protected override string ExecuteJob()
@@ -112,7 +114,7 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
             if (withSummary)
                 _writer.SetResultSummary(executionId, BuildSummary(fake.Name, itemCount, succeeded: false));
 
-            _writer.Complete(executionId, succeeded: false, resultMessage: null, exception: CaptureException(fake.Name));
+            _writer.Complete(executionId, ExecutionStatus.Failed, resultMessage: null, exception: CaptureException(fake.Name));
             return true;
         }
 
@@ -121,7 +123,7 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
         if (withSummary)
             _writer.SetResultSummary(executionId, BuildSummary(fake.Name, itemCount, succeeded: true));
 
-        _writer.Complete(executionId, succeeded: true, resultMessage: $"Processed {itemCount} items.", exception: null);
+        _writer.Complete(executionId, ExecutionStatus.Succeeded, resultMessage: $"Processed {itemCount} items.", exception: null);
         return false;
     }
 

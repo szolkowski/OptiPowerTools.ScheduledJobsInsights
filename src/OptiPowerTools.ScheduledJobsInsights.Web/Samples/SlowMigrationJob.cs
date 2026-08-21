@@ -33,17 +33,11 @@ public sealed class SlowMigrationJob : LoggedScheduledJobBase
     private const int BatchCount = 30;
     private static readonly TimeSpan BatchDuration = TimeSpan.FromSeconds(2);
 
-    private volatile bool _stopRequested;
-
-    public SlowMigrationJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public SlowMigrationJob(JobLoggingContext context)
+        : base(context)
     {
-    }
-
-    public override void Stop()
-    {
-        _stopRequested = true;
-        base.Stop();
+        // Without this the CMS does not offer a Stop button at all.
+        IsStoppable = true;
     }
 
     protected override string ExecuteJob()
@@ -55,7 +49,7 @@ public sealed class SlowMigrationJob : LoggedScheduledJobBase
         var migrated = 0;
         for (var batch = 1; batch <= BatchCount; batch++)
         {
-            if (_stopRequested)
+            if (IsStopRequested)
             {
                 Log($"Stop requested — halting after batch {migrated}.", LogSeverity.Warning);
                 Summary.AppendLine($"  Stopped early — {BatchCount - migrated} batch(es) not attempted.");

@@ -22,8 +22,8 @@ public sealed class ReportBuilderJob : LoggedScheduledJobBase
 {
     private static readonly string[] Regions = ["EMEA", "AMER", "APAC", "LATAM"];
 
-    public ReportBuilderJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public ReportBuilderJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

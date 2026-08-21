@@ -19,7 +19,7 @@ public class LoggedScheduledJobBaseTests
 
         Assert.Equal("all good", result);
         writer.Received(1).BeginExecution(job.ScheduledJobId, Arg.Any<string>(), typeof(TestLoggedJob).FullName!);
-        writer.Received(1).Complete(42L, succeeded: true, resultMessage: "all good", exception: null);
+        writer.Received(1).Complete(42L, ExecutionStatus.Succeeded, resultMessage: "all good", exception: null);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public class LoggedScheduledJobBaseTests
         var caught = Assert.Throws<InvalidOperationException>(() => job.Execute());
 
         Assert.Same(thrown, caught);
-        writer.Received(1).Complete(7L, succeeded: false, resultMessage: null, exception: thrown);
+        writer.Received(1).Complete(7L, ExecutionStatus.Failed, resultMessage: null, exception: thrown);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public class LoggedScheduledJobBaseTests
         Received.InOrder(() =>
         {
             writer.SetResultSummary(12L, Arg.Is<string>(text => text.StartsWith("12 rows exported")));
-            writer.Complete(12L, true, Arg.Any<string>(), null);
+            writer.Complete(12L, ExecutionStatus.Succeeded, Arg.Any<string>(), null);
         });
     }
 
@@ -179,7 +179,7 @@ public class LoggedScheduledJobBaseTests
         Assert.Throws<InvalidOperationException>(() => job.Execute());
 
         writer.Received(1).SetResultSummary(14L, Arg.Is<string>(text => text.Contains("aborted at row 42")));
-        writer.Received(1).Complete(14L, false, null, thrown);
+        writer.Received(1).Complete(14L, ExecutionStatus.Failed, null, thrown);
     }
 
     [Fact]
@@ -216,12 +216,11 @@ public class LoggedScheduledJobBaseTests
     }
 
     [Fact]
-    public void Summary_HonoursTheWriterConfiguredLimit()
+    public void Summary_HonoursTheConfiguredLimit()
     {
         var writer = Substitute.For<IJobExecutionWriter>();
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(17L);
-        writer.MaxResultSummaryLength.Returns(24);
-        var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
+        var job = new TestLoggedJob(writer, maxResultSummaryLength: 24)
         {
             SummaryToAppend = new string('x', 500)
         };
@@ -232,9 +231,9 @@ public class LoggedScheduledJobBaseTests
     }
 
     [Fact]
-    public void Summary_FallsBackToTheDefaultLimit_WhenTheWriterReportsNone()
+    public void Summary_FallsBackToTheDefaultLimit_WhenNoneIsConfigured()
     {
-        // A substituted writer reports 0 for an int property, and a job must not blow up on that.
+        // Zero means "not configured" rather than "no summaries allowed"; a job must not blow up on it.
         var writer = Substitute.For<IJobExecutionWriter>();
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(18L);
         var job = new TestLoggedJob(writer, Substitute.For<IScheduledJobRepository>())
@@ -245,6 +244,137 @@ public class LoggedScheduledJobBaseTests
         job.Execute();
 
         writer.Received(1).SetResultSummary(18L, Arg.Is<string>(text => text.Contains("still recorded")));
+    }
+
+    [Fact]
+    public void Execute_WhenTheJobWasStopped_RecordsStoppedRatherThanSucceeded()
+    {
+        // A run cut short by an administrator did not succeed, whatever it managed to return.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(50L);
+        var job = new TestLoggedJob(writer) { StopMidRun = true, ResultToReturn = "stopped early" };
+
+        job.Execute();
+
+        Assert.True(job.SawStopRequest);
+        writer.Received(1).Complete(50L, ExecutionStatus.Stopped, "stopped early", null);
+    }
+
+    [Fact]
+    public void Execute_WithoutAStopRequest_StillRecordsTheNaturalOutcome()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(51L);
+        var job = new TestLoggedJob(writer);
+
+        job.Execute();
+
+        Assert.False(job.SawStopRequest);
+        writer.Received(1).Complete(51L, ExecutionStatus.Succeeded, Arg.Any<string>(), null);
+    }
+
+    [Fact]
+    public void StopToken_IsCancelledByStop_AndIsNoneOnceTheRunIsOver()
+    {
+        // The source is created per run and disposed with it, so a nightly job does not accumulate
+        // one per execution. Outside a run the token is simply None rather than a disposed source.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(57L);
+        var job = new TokenObservingJob(writer);
+
+        job.Execute();
+
+        Assert.True(job.TokenWasCancellable);
+        Assert.True(job.TokenWasCancelledAfterStop);
+        Assert.False(job.CurrentToken.CanBeCanceled);
+    }
+
+    [Fact]
+    public void Stop_AfterTheRunHasFinished_DoesNotThrow()
+    {
+        // The CMS calls Stop, not the job. A stop arriving just as the run ended must not surface as
+        // an ObjectDisposedException out of Optimizely's own scheduler.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(58L);
+        var job = new TestLoggedJob(writer);
+        job.Execute();
+
+        Assert.Null(Record.Exception(job.Stop));
+    }
+
+    [Fact]
+    public void LogInputData_WithACyclicObjectGraph_DoesNotThrowIntoTheJob()
+    {
+        // An EF navigation or an IContent is a reference cycle, and System.Text.Json throws on one.
+        // A job that merely described its own input must not fail because of it.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(52L);
+        var job = new CyclicInputJob(writer);
+
+        var result = job.Execute();
+
+        Assert.Equal("done", result);
+        writer.Received(1).Complete(52L, ExecutionStatus.Succeeded, Arg.Any<string>(), null);
+    }
+
+    [Fact]
+    public void LogInputData_WithAnUnserializableValue_RecordsWhyRatherThanNothing()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(53L);
+
+        new UnserializableInputJob(writer).Execute();
+
+        writer.Received(1).SetInputData(53L, Arg.Is<string>(json => json.Contains("InputDataUnavailable")));
+    }
+
+    [Fact]
+    public void Execute_WhenRecordingMetricsThrows_StillReportsTheRunAsSucceeded()
+    {
+        // Metrics are the least important thing this class does, and must never be able to turn a
+        // clean run into a reported failure.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(54L);
+        writer.When(w => w.RecordMetric(Arg.Any<long>(), JobMetricNames.DurationMs, Arg.Any<double>(), Arg.Any<string>()))
+            .Do(_ => throw new InvalidOperationException("metric sink exploded"));
+        var job = new TestLoggedJob(writer) { ResultToReturn = "fine" };
+
+        var result = job.Execute();
+
+        Assert.Equal("fine", result);
+        writer.Received(1).Complete(54L, ExecutionStatus.Succeeded, "fine", null);
+    }
+
+    [Fact]
+    public void Execute_WhenRecordingMetricsThrowsOnTheFailurePath_StillRethrowsTheJobsOwnException()
+    {
+        // Otherwise the metrics exception replaces the real one and the row is stranded at Running.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(55L);
+        // Only the automatic metric: a throw from the job's own RecordMetric call is the job's
+        // problem, and this test is about the wrapper's.
+        writer.When(w => w.RecordMetric(Arg.Any<long>(), JobMetricNames.DurationMs, Arg.Any<double>(), Arg.Any<string>()))
+            .Do(_ => throw new InvalidOperationException("metric sink exploded"));
+        var thrown = new InvalidOperationException("the real failure");
+        var job = new TestLoggedJob(writer) { ExceptionToThrow = thrown };
+
+        var caught = Assert.Throws<InvalidOperationException>(() => job.Execute());
+
+        Assert.Same(thrown, caught);
+        writer.Received(1).Complete(55L, ExecutionStatus.Failed, null, thrown);
+    }
+
+    [Fact]
+    public void Execute_WhenCompletingTheExecutionThrows_StillRethrowsTheJobsOwnException()
+    {
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(56L);
+        writer.When(w => w.Complete(Arg.Any<long>(), Arg.Any<ExecutionStatus>(), Arg.Any<string>(), Arg.Any<Exception>()))
+            .Do(_ => throw new InvalidOperationException("writer exploded"));
+        var thrown = new InvalidOperationException("the real failure");
+        var job = new TestLoggedJob(writer) { ExceptionToThrow = thrown };
+
+        Assert.Same(thrown, Assert.Throws<InvalidOperationException>(() => job.Execute()));
     }
 
     /// <summary>
@@ -286,7 +416,7 @@ public class LoggedScheduledJobBaseTests
 
         job.Execute();
 
-        writer.DidNotReceive().Complete(Arg.Any<long>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<Exception>());
+        writer.DidNotReceive().Complete(Arg.Any<long>(), Arg.Any<ExecutionStatus>(), Arg.Any<string>(), Arg.Any<Exception>());
         writer.DidNotReceive().Log(Arg.Any<long>(), Arg.Any<int>(), Arg.Any<LogSeverity>(), Arg.Any<string>(), Arg.Any<LogEntrySource>());
         writer.DidNotReceive().RecordMetric(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<double>(), Arg.Any<string>());
         writer.DidNotReceive().SetInputData(Arg.Any<long>(), Arg.Any<string>());

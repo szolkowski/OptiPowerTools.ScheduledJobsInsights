@@ -34,24 +34,38 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
+    /// <param name="context">Collaborators the base class records this job's own runs with.</param>
+    /// <param name="cleanupRepository">Performs the batched deletes.</param>
+    /// <param name="retentionService">Resolves the retention in force for each job type.</param>
+    /// <param name="options">Package options; supplies the batch size.</param>
+    /// <exception cref="ArgumentNullException">Any argument is <c>null</c>.</exception>
     public ScheduledJobsInsightsCleanupJob(
-        IJobExecutionWriter writer,
-        IScheduledJobRepository scheduledJobRepository,
+        JobLoggingContext context,
         ICleanupRepository cleanupRepository,
         IJobRetentionPolicySource retentionService,
         IOptions<OptiPowerToolScheduledJobsInsightsOptions> options)
-        : base(writer, scheduledJobRepository)
+        : base(context)
     {
+        ArgumentNullException.ThrowIfNull(cleanupRepository);
+        ArgumentNullException.ThrowIfNull(retentionService);
+        ArgumentNullException.ThrowIfNull(options);
+
         _cleanupRepository = cleanupRepository;
         _retentionService = retentionService;
         _options = options.Value;
+
+        // A first run against years of accumulated history can take a long time; an administrator
+        // watching it must be able to call it off. The base class owns the token itself, so there is
+        // no Stop() override to write and nothing here to dispose.
+        IsStoppable = true;
     }
 
     /// <summary>Deletes executions that have outlived the retention applying to their job.</summary>
     protected override string ExecuteJob()
     {
         var now = DateTimeOffset.UtcNow;
-        var perJob = _retentionService.GetEffectiveOverridesAsync().GetAwaiter().GetResult();
+        var cancellationToken = StopToken;
+        var perJob = _retentionService.GetEffectiveOverridesAsync(cancellationToken).GetAwaiter().GetResult();
         var defaultPeriod = _retentionService.DefaultPeriod;
 
         LogInputData(new
@@ -71,7 +85,8 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         {
             totalDeleted += DeleteInBatches(
                 $"default ({Describe(defaultPeriod)})",
-                batch => _cleanupRepository.DeleteExecutionsOlderThan(defaultCutoff, batch, governedJobTypes));
+                batch => _cleanupRepository.DeleteExecutionsOlderThan(defaultCutoff, batch, governedJobTypes, cancellationToken),
+                cancellationToken);
         }
         else
         {
@@ -80,6 +95,9 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 
         foreach (var (jobTypeName, period) in perJob.OrderBy(x => x.Key, StringComparer.Ordinal))
         {
+            if (cancellationToken.IsCancellationRequested)
+                break;
+
             if (period.CutoffFrom(now) is not { } cutoff)
             {
                 Log($"{jobTypeName}: retention is indefinite, skipping.", LogSeverity.Debug);
@@ -88,14 +106,21 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 
             totalDeleted += DeleteInBatches(
                 $"{jobTypeName} ({Describe(period)})",
-                batch => _cleanupRepository.DeleteExecutionsOlderThan(jobTypeName, cutoff, batch));
+                batch => _cleanupRepository.DeleteExecutionsOlderThan(jobTypeName, cutoff, batch, cancellationToken),
+                cancellationToken);
         }
 
-        RecordMetric("ExecutionsDeleted", totalDeleted);
+        RecordMetric(JobMetricNames.ExecutionsDeleted, totalDeleted);
 
         Summary.AppendLine($"Default retention: {Describe(defaultPeriod)}");
         Summary.AppendLine($"Jobs with their own retention: {perJob.Count}");
         Summary.AppendLine($"Executions deleted: {totalDeleted:N0}");
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            Summary.AppendLine("Stopped before the sweep completed.");
+            return $"Stopped after deleting {totalDeleted} job execution(s).";
+        }
 
         return $"Deleted {totalDeleted} job execution(s).";
     }
@@ -104,13 +129,21 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
     /// Runs one delete repeatedly until it stops finding anything. Each call is its own transaction,
     /// so a large backlog is cleared without holding locks across the whole of it.
     /// </summary>
-    private int DeleteInBatches(string what, Func<int, int> deleteBatch)
+    private int DeleteInBatches(string what, Func<int, int> deleteBatch, CancellationToken cancellationToken)
     {
         var deletedForThisRule = 0;
         int deletedThisBatch;
 
         do
         {
+            // Checked between batches rather than within one: a delete already in flight finishes,
+            // so Stop never leaves a half-applied batch behind.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                Log($"Stopped during {what} after {deletedForThisRule} execution(s).", LogSeverity.Warning);
+                break;
+            }
+
             deletedThisBatch = deleteBatch(_options.CleanupBatchSize);
             deletedForThisRule += deletedThisBatch;
 

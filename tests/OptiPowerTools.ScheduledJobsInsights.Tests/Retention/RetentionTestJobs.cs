@@ -1,4 +1,3 @@
-using EPiServer.DataAbstraction;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Retention;
 
@@ -11,8 +10,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Retention;
 /// </summary>
 internal abstract class RetentionTestJobBase : LoggedScheduledJobBase
 {
-    protected RetentionTestJobBase(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    protected RetentionTestJobBase(JobLoggingContext context)
+        : base(context)
     {
     }
 
@@ -22,24 +21,24 @@ internal abstract class RetentionTestJobBase : LoggedScheduledJobBase
 [JobRetention(7, Description = "Logs one line per row; a week is plenty.")]
 internal sealed class ChattyTestJob : RetentionTestJobBase
 {
-    public ChattyTestJob(IJobExecutionWriter writer, IScheduledJobRepository repository) : base(writer, repository) { }
+    public ChattyTestJob(JobLoggingContext context) : base(context) { }
 }
 
 [JobRetention(JobRetentionAttribute.Indefinite, Description = "Compliance requires the full history.")]
 internal sealed class ForeverTestJob : RetentionTestJobBase
 {
-    public ForeverTestJob(IJobExecutionWriter writer, IScheduledJobRepository repository) : base(writer, repository) { }
+    public ForeverTestJob(JobLoggingContext context) : base(context) { }
 }
 
 /// <summary>Declares a value that is neither positive nor <see cref="JobRetentionAttribute.Indefinite"/>.</summary>
 [JobRetention(0)]
 internal sealed class InvalidRetentionTestJob : RetentionTestJobBase
 {
-    public InvalidRetentionTestJob(IJobExecutionWriter writer, IScheduledJobRepository repository) : base(writer, repository) { }
+    public InvalidRetentionTestJob(JobLoggingContext context) : base(context) { }
 }
 
 /// <summary>A logged job with no attribute at all — it should still be listed, on the default.</summary>
 internal sealed class PlainTestJob : RetentionTestJobBase
 {
-    public PlainTestJob(IJobExecutionWriter writer, IScheduledJobRepository repository) : base(writer, repository) { }
+    public PlainTestJob(JobLoggingContext context) : base(context) { }
 }

@@ -1,4 +1,5 @@
 using EPiServer.Shell.Navigation;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -11,18 +12,31 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 /// embedded in the CMS shell chrome.
 /// </summary>
 [MenuProvider]
-public class ScheduledJobsInsightsMenuProvider : IMenuProvider
+public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
 {
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IAuthorizationService _authorizationService;
 
     /// <summary>
     /// Initializes a new instance of <see cref="ScheduledJobsInsightsMenuProvider"/>.
     /// </summary>
-    public ScheduledJobsInsightsMenuProvider(IOptions<OptiPowerToolScheduledJobsInsightsOptions> options, IHttpContextAccessor httpContextAccessor)
+    /// <param name="options">Package options.</param>
+    /// <param name="httpContextAccessor">Supplies the current user.</param>
+    /// <param name="authorizationService">Evaluates the same policy the page itself enforces.</param>
+    /// <exception cref="ArgumentNullException">Any argument is <c>null</c>.</exception>
+    public ScheduledJobsInsightsMenuProvider(
+        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IHttpContextAccessor httpContextAccessor,
+        IAuthorizationService authorizationService)
     {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(httpContextAccessor);
+        ArgumentNullException.ThrowIfNull(authorizationService);
+
         _options = options.Value;
         _httpContextAccessor = httpContextAccessor;
+        _authorizationService = authorizationService;
     }
 
     /// <summary>
@@ -156,12 +170,26 @@ public class ScheduledJobsInsightsMenuProvider : IMenuProvider
         return [section, item];
     }
 
+    /// <summary>
+    /// Asks the same question the page does, through the same policy.
+    /// </summary>
+    /// <remarks>
+    /// Previously this rolled its own role check, which meant the menu and the controller could
+    /// disagree — with <c>EnableStandardAuthorization</c> off, the page was reachable by URL while
+    /// its own menu entry stayed hidden from the very users allowed to open it. Evaluating the
+    /// policy is synchronous in practice: the requirements are in-memory and no handler here does
+    /// I/O. <see cref="MenuItem.IsAvailable"/> gives no async form to await from.
+    /// </remarks>
     private bool IsCurrentUserAuthorized()
     {
-        var principal = _httpContextAccessor.HttpContext?.User;
-        return principal?.Identity?.IsAuthenticated == true
-            && _options.AuthorizedRoles is { } roles
-            && roles.Any(principal.IsInRole);
+        if (_httpContextAccessor.HttpContext?.User is not { } principal)
+            return false;
+
+        return _authorizationService
+            .AuthorizeAsync(principal, resource: null, ScheduledJobsInsightsAuthorization.PolicyName)
+            .GetAwaiter()
+            .GetResult()
+            .Succeeded;
     }
 
     private static string NormalizePath(string path) =>

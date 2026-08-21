@@ -9,22 +9,18 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 
 /// <summary>
 /// Not part of the NuGet package — shows that a logged job is still an ordinary DI citizen. Beyond
-/// the two parameters the base class needs, this one takes an <see cref="IContentLoader"/> and uses
-/// it for real work. Optimizely builds a fresh job instance per execution through
-/// <c>ActivatorUtilities.GetServiceOrCreateInstance</c>, so any registered service can be injected;
-/// only <see cref="IJobExecutionWriter"/> and <see cref="IScheduledJobRepository"/> have to be
-/// forwarded to <c>base</c>.
+/// the <see cref="JobLoggingContext"/> the base class needs, this one takes an
+/// <see cref="IContentLoader"/> and uses it for real work. Optimizely builds a fresh job instance per
+/// execution through <c>ActivatorUtilities.GetServiceOrCreateInstance</c>, so any registered service
+/// can be injected; only the context has to be forwarded to <c>base</c>.
 /// </summary>
 [ScheduledJob(DisplayName = "Sample: Content Audit", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
 public sealed class ContentAuditJob : LoggedScheduledJobBase
 {
     private readonly IContentLoader _contentLoader;
 
-    public ContentAuditJob(
-        IJobExecutionWriter writer,
-        IScheduledJobRepository scheduledJobRepository,
-        IContentLoader contentLoader)
-        : base(writer, scheduledJobRepository)
+    public ContentAuditJob(JobLoggingContext context, IContentLoader contentLoader)
+        : base(context)
     {
         _contentLoader = contentLoader;
     }

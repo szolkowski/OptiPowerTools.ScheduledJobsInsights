@@ -1,4 +1,5 @@
 using EPiServer.Shell.Navigation;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -13,7 +14,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     private const string DataSyncManagementItemPath = "/global/cms/admin/scheduledjobs/scheduledjobsinsights";
 
     private static ScheduledJobsInsightsMenuProvider CreateProvider(OptiPowerToolScheduledJobsInsightsOptions options) =>
-        new(Options.Create(options), Substitute.For<IHttpContextAccessor>());
+        new(Options.Create(options), Substitute.For<IHttpContextAccessor>(), Substitute.For<IAuthorizationService>());
 
     [Fact]
     public void GetMenuItems_ReturnsEmpty_WhenMenuDisabled()

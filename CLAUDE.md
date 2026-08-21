@@ -120,12 +120,12 @@ section. Three things about it are deliberate:
    execution. The truncation notice's length is budgeted for up front, so `ToString()` never exceeds
    `MaxLength` and nothing downstream has to truncate a second time. `JobExecutionWriter` applies the
    same bound independently, since `SetResultSummary` can be called directly.
-3. The configured limit reaches the base class through **`IJobExecutionWriter.MaxResultSummaryLength`**.
-   That looks like an odd place for a config value, and it is — but derived jobs forward a fixed pair
-   of arguments to `base(writer, repository)`, so an `IOptions<T>` constructor parameter would break
-   every one of them, and the writer is the only DI-resolved collaborator the base class holds. A
-   writer reporting a non-positive value (an NSubstitute double at its default) falls back to
-   `JobResultSummary.DefaultMaxLength` rather than throwing.
+3. The configured limit reaches the base class through **`JobLoggingContext.MaxResultSummaryLength`**.
+   It used to live on `IJobExecutionWriter`, which was the wrong home for a rendering-policy value —
+   it was there only because derived jobs forwarded a fixed pair of arguments to `base`, leaving the
+   writer as the sole DI-resolved collaborator the base class held. `JobLoggingContext` removed that
+   constraint before 1.0 froze it (see `PRE-1.0-REVIEW.md`, API-1/API-2). A non-positive configured
+   value falls back to `JobResultSummary.DefaultMaxLength` rather than throwing.
 
 Job name resolution (`IScheduledJobRepository.Get(ScheduledJobId)`) is wrapped in try/catch with a
 fallback to `GetType().Name` — this is deliberate, not just defensive: it's what makes the class

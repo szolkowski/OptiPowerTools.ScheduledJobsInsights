@@ -216,6 +216,55 @@ public class JobRetentionServiceTests
     }
 
     [Fact]
+    public async Task AnUnusableStoredOverride_IsIgnoredAndFlagged_RatherThanDeletingEverything()
+    {
+        // A zero reaches CutoffFrom as "now", which would delete the job's whole history including
+        // the run in progress. Nothing in the UI can write one, but a hand-edited row or a restored
+        // backup can.
+        using var factory = new SqliteDbContextFactory();
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobRetentionPolicies.Add(new JobRetentionPolicy
+            {
+                JobTypeName = ChattyType,
+                RetentionDays = 0,
+                ModifiedBy = "someone",
+                ModifiedAt = DateTimeOffset.UtcNow
+            });
+            dbContext.SaveChanges();
+        }
+        var service = CreateService(factory);
+
+        var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == ChattyType);
+
+        Assert.Null(job.Override);
+        Assert.True(job.HasInvalidOverride);
+        // Falls back to the attribute, exactly as though the row were absent.
+        Assert.Equal(RetentionSource.Attribute, job.Resolve(RetentionPeriod.OfDays(30)).Source);
+    }
+
+    [Fact]
+    public async Task AnUnusableStoredOverride_IsNotHandedToTheCleanupJob()
+    {
+        using var factory = new SqliteDbContextFactory();
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobRetentionPolicies.Add(new JobRetentionPolicy
+            {
+                JobTypeName = "Contoso.Jobs.Tampered",
+                RetentionDays = -5,
+                ModifiedBy = "someone",
+                ModifiedAt = DateTimeOffset.UtcNow
+            });
+            dbContext.SaveChanges();
+        }
+
+        var effective = await CreateService(factory).GetEffectiveOverridesAsync();
+
+        Assert.DoesNotContain("Contoso.Jobs.Tampered", effective.Keys);
+    }
+
+    [Fact]
     public async Task GetEffectiveOverridesAsync_ResolvesAttributesAndOverridesForTheCleanupJob()
     {
         using var factory = new SqliteDbContextFactory();

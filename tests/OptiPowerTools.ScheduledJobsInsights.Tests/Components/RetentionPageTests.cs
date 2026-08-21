@@ -29,11 +29,12 @@ public class RetentionPageTests : ComponentTestBase
         string? attributeDescription = null,
         bool hasInvalidAttribute = false,
         RetentionPeriod? overridden = null,
+        bool hasInvalidOverride = false,
         string? modifiedBy = null,
         DateTimeOffset? modifiedAt = null,
         int executionCount = 0) =>
         new(jobTypeName, displayName, isRegistered, existsInCode, attribute, attributeDescription,
-            hasInvalidAttribute, overridden, modifiedBy, modifiedAt, executionCount);
+            hasInvalidAttribute, overridden, hasInvalidOverride, modifiedBy, modifiedAt, executionCount);
 
     private IRenderedComponent<RetentionPage> RenderPage(string? viewerTimeZone = null, string? currentUser = "alice") =>
         Render<RetentionPage>(p => p
@@ -113,6 +114,42 @@ public class RetentionPageTests : ComponentTestBase
     }
 
     [Fact]
+    public void AnUnusableStoredOverride_IsFlaggedInTheRow()
+    {
+        // Otherwise the row silently shows the default in force while a broken row sits behind it.
+        GivenJobs(AJob(hasInvalidOverride: true));
+
+        Assert.Contains("stored value ignored", RenderPage().Find(".tag-invalid").TextContent);
+    }
+
+    [Fact]
+    public void AValueThisRowNeverOffered_IsRefusedRatherThanSaved()
+    {
+        // The chosen value arrives over the circuit rather than from the rendered <option> list, so
+        // a crafted message can name anything. Zero would delete the job's entire history.
+        GivenJobs(AJob());
+        var page = RenderPage();
+
+        page.Find("tbody select").Change("0");
+
+        _retention.DidNotReceive().SetOverrideAsync(
+            Arg.Any<string>(), Arg.Any<RetentionPeriod?>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        Assert.Contains("not one of the available options", page.Find("[role=alert]").TextContent);
+    }
+
+    [Fact]
+    public void TheDropdownStillAcceptsAnOverrideSetOutsideThePresets()
+    {
+        // The guard above must not reject the non-preset value this row deliberately offers.
+        GivenJobs(AJob(overridden: RetentionPeriod.OfDays(42)));
+
+        RenderPage().Find("tbody select").Change("42");
+
+        _retention.Received(1).SetOverrideAsync(
+            Arg.Any<string>(), RetentionPeriod.OfDays(42), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public void ChoosingAPeriod_SavesItAgainstTheCurrentUser()
     {
         GivenJobs(AJob());
@@ -189,4 +226,13 @@ public class RetentionPageTests : ComponentTestBase
         Assert.Contains("2026-08-20 14:00", audit);
         Assert.Contains("alice", audit);
     }
+    [Fact]
+    public void ANonDefaultCmsShellPath_FlowsIntoTheBackLink()
+    {
+        Options.CmsShellPath = "/custom/insights";
+        GivenJobs(AJob());
+
+        Assert.Equal("/custom/insights", RenderPage().Find("a.action-link").GetAttribute("href"));
+    }
+
 }

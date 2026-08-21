@@ -8,6 +8,7 @@
    first paint; if that ever stops being true, the fix is PersistentComponentState rather than
    dropping prerendering. *@
 @implements IDisposable
+@attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
@@ -42,6 +43,7 @@
             <option value="@ExecutionStatus.Running">Running</option>
             <option value="@ExecutionStatus.Succeeded">Succeeded</option>
             <option value="@ExecutionStatus.Failed">Failed</option>
+            <option value="@ExecutionStatus.Stopped">Stopped</option>
         </select>
     </label>
 </div>

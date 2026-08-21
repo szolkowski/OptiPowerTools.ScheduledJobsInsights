@@ -2,6 +2,7 @@
    the CMS shell — see Views/ScheduledJobsInsightsCms/Index.cshtml — so this is not a routable page;
    Id arrives as a component parameter from the MVC route rather than from Blazor routing. *@
 @implements IAsyncDisposable
+@attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
 @using OptiPowerTools.ScheduledJobsInsights.Configuration

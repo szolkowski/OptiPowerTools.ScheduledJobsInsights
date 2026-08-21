@@ -20,6 +20,44 @@ public class RetentionPeriodTests
         Assert.True(RetentionPeriod.Indefinite.IsIndefinite);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-30)]
+    public void OfDays_RefusesAValueThatWouldDeleteEverything(int days)
+    {
+        // Zero puts the cutoff at "now" and negative puts it in the future. Either deletes the whole
+        // history for that job, including the run currently in progress — whose disappearing row
+        // then breaks the foreign key for its own buffered log lines.
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetentionPeriod.OfDays(days));
+    }
+
+    [Fact]
+    public void ADefaultInstance_IsIndefinite()
+    {
+        // Of the things a zeroed struct could mean, keeping everything is the only harmless one.
+        Assert.True(default(RetentionPeriod).IsIndefinite);
+        Assert.Null(default(RetentionPeriod).CutoffFrom(DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void FromStoredValue_ReadsNullAsIndefinite() =>
+        Assert.True(RetentionPeriod.FromStoredValue(null)!.Value.IsIndefinite);
+
+    [Fact]
+    public void FromStoredValue_ReadsAPositiveDayCount() =>
+        Assert.Equal(RetentionPeriod.OfDays(90), RetentionPeriod.FromStoredValue(90));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void FromStoredValue_ReportsAnUnusableStoredValue_RatherThanObeyingIt(int stored)
+    {
+        // Storage is outside this type's control: a hand-edited row, a restored backup, a script.
+        // Reading has to cope with what writing would have refused.
+        Assert.Null(RetentionPeriod.FromStoredValue(stored));
+    }
+
     [Fact]
     public void FromAttribute_ReadsAPositiveDayCount() =>
         Assert.Equal(RetentionPeriod.OfDays(7), RetentionPeriod.FromAttribute(new JobRetentionAttribute(7)));

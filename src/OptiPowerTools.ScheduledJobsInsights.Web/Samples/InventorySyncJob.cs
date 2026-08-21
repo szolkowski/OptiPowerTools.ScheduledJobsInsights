@@ -14,8 +14,8 @@ public sealed class InventorySyncJob : LoggedScheduledJobBase
 {
     private static readonly string[] Warehouses = ["North", "South", "East", "West"];
 
-    public InventorySyncJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public InventorySyncJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

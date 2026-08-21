@@ -30,7 +30,11 @@ public sealed class JobResultSummary
     /// <summary>Character limit applied when no explicit one is given — 100,000.</summary>
     public const int DefaultMaxLength = 100_000;
 
-    private const string TruncationNotice = "… summary truncated";
+    /// <summary>
+    /// Appended when content had to be dropped. Internal rather than private so
+    /// <see cref="JobExecutionWriter"/> can bound a directly-written summary the same way.
+    /// </summary>
+    internal const string TruncationNotice = "… summary truncated";
 
     private readonly StringBuilder _builder = new();
     private readonly Lock _gate = new();

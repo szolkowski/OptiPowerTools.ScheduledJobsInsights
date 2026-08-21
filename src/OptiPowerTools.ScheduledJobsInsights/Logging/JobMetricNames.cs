@@ -11,4 +11,7 @@ internal static class JobMetricNames
     public const string GcGen0Collections = "GcGen0Collections";
     public const string GcGen1Collections = "GcGen1Collections";
     public const string GcGen2Collections = "GcGen2Collections";
+
+    /// <summary>Recorded by the cleanup job for the number of executions it removed.</summary>
+    public const string ExecutionsDeleted = "ExecutionsDeleted";
 }

@@ -4,7 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
 
     <!-- NuGet Package Metadata -->
-    <Version>0.9.5</Version>
+    <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
+         value here is only what a local `dotnet pack` produces. -->
+    <Version>1.0.0-rc.1</Version>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>
@@ -16,16 +18,20 @@
     <PackageIcon>icon.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights</PackageProjectUrl>
-    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <!-- MIT: nothing to accept, and the prompt is friction for no benefit. -->
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
 
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
     <RepositoryUrl>https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
 
-    <!-- SourceLink & deterministic builds -->
+    <!-- SourceLink & deterministic builds. Without the symbol package the SourceLink settings buy a
+         consumer nothing: there is no PDB on the feed for a debugger to resolve sources against. -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
     <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>

@@ -11,8 +11,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 /// The view hosts the Blazor components directly through the Component Tag Helper, so they render
 /// within the CMS navigation and inherit the shell's styling.
 /// </summary>
-[Authorize]
-public class ScheduledJobsInsightsCmsController : Controller
+[Authorize(Policy = ScheduledJobsInsightsAuthorization.PolicyName)]
+public sealed class ScheduledJobsInsightsCmsController : Controller
 {
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
 
@@ -40,12 +40,8 @@ public class ScheduledJobsInsightsCmsController : Controller
     [HttpGet]
     public IActionResult Index(long? id, string? view = null)
     {
-        if (_options.EnableStandardAuthorization
-            && (User.Identity?.IsAuthenticated != true
-                || _options.AuthorizedRoles is not { } roles
-                || !roles.Any(role => User.IsInRole(role))))
-            return Forbid();
-
+        // Authorization is the policy on the class, enforced by the framework before this runs —
+        // not a check written out here, which the menu could then disagree with.
         ViewBag.ExecutionId = id;
         ViewBag.PageTitle = _options.PageTitle;
 

@@ -74,17 +74,36 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     public string PageTitle { get; set; } = "Scheduled Jobs Insights";
 
     /// <summary>
-    /// The Optimizely/EPiServer roles authorized to access the page.
+    /// The Optimizely/EPiServer roles authorized to access the page and the retention screen.
     /// Defaults to Administrators, CmsAdmins, and WebAdmins.
     /// </summary>
-    public string[] AuthorizedRoles { get; set; } = ["Administrators", "CmsAdmins", "WebAdmins"];
+    /// <remarks>
+    /// Ignored when <see cref="AuthorizationPolicy"/> names a policy of your own, or when
+    /// <see cref="AllowAnyAuthenticatedUser"/> is set.
+    /// </remarks>
+    public IList<string> AuthorizedRoles { get; set; } = ["Administrators", "CmsAdmins", "WebAdmins"];
 
     /// <summary>
-    /// Whether to apply the built-in Optimizely role-based authorization check in the CMS shell controller.
-    /// When false, only the standard <c>[Authorize]</c> attribute is applied (any authenticated user).
-    /// Defaults to true.
+    /// Name of an authorization policy registered by the host, used instead of the built-in role
+    /// check. Leave <c>null</c> to authorize on <see cref="AuthorizedRoles"/>.
     /// </summary>
-    public bool EnableStandardAuthorization { get; set; } = true;
+    /// <remarks>
+    /// The named policy is applied as ordinary endpoint authorization metadata, so it composes with
+    /// whatever else the application does. Startup fails with a named error if no such policy is
+    /// registered — a silently unenforced policy would be the worst possible outcome here.
+    /// </remarks>
+    public string? AuthorizationPolicy { get; set; }
+
+    /// <summary>
+    /// Grants access to <em>every authenticated user</em>, with no role or policy check.
+    /// Defaults to <c>false</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only appropriate when access is already restricted elsewhere — a reverse proxy, or a network
+    /// boundary. On an Optimizely site with front-end membership, "authenticated" includes ordinary
+    /// site visitors, who would then be able to read execution history and any captured input data.
+    /// </remarks>
+    public bool AllowAnyAuthenticatedUser { get; set; }
 
     /// <summary>
     /// Whether to add a menu item in the Optimizely CMS navigation.
@@ -151,5 +170,22 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     /// by matching the request path against registered menu items.
     /// Defaults to "/ScheduledJobsInsightsCms/Index".
     /// </summary>
+    /// <remarks>
+    /// Validated at startup: it must be an absolute path with at least one segment and no query
+    /// string or fragment, since it is used simultaneously as a route template, a menu URL and the
+    /// base for the UI's own cross-links.
+    /// </remarks>
     public string CmsShellPath { get; set; } = "/ScheduledJobsInsightsCms/Index";
+
+    /// <summary>
+    /// Whether <c>UseOptiPowerToolScheduledJobsInsights</c> maps the Blazor Server hub.
+    /// <c>null</c> (the default) detects an existing <c>/_blazor</c> mapping and skips its own.
+    /// </summary>
+    /// <remarks>
+    /// Mapping the hub twice registers two endpoints on the same route pattern, which fails every
+    /// Blazor request in the application with <c>AmbiguousMatchException</c>. Detection handles the
+    /// common case; set it explicitly when the host maps its hub after this call, or on a
+    /// non-default path.
+    /// </remarks>
+    public bool? MapBlazorHub { get; set; }
 }

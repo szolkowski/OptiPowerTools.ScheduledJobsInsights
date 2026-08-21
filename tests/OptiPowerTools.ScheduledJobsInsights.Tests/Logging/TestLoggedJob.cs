@@ -24,13 +24,33 @@ internal sealed class TestLoggedJob : LoggedScheduledJobBase
     /// <summary>Calls <c>FlushSummary</c> mid-run, as a long job checkpointing its progress would.</summary>
     public bool CheckpointSummary { get; set; }
 
-    public TestLoggedJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    /// <summary>Records whether the run observed a stop request.</summary>
+    public bool SawStopRequest { get; private set; }
+
+    /// <summary>When true, <c>ExecuteJob</c> calls <c>Stop()</c> on itself part-way through.</summary>
+    public bool StopMidRun { get; set; }
+
+    public TestLoggedJob(
+        IJobExecutionWriter writer,
+        IScheduledJobRepository? scheduledJobRepository = null,
+        int maxResultSummaryLength = 0,
+        TimeProvider? timeProvider = null)
+        : base(TestJobLoggingContext.For(writer, scheduledJobRepository, maxResultSummaryLength, timeProvider))
+    {
+    }
+
+    public TestLoggedJob(JobLoggingContext context)
+        : base(context)
     {
     }
 
     protected override string ExecuteJob()
     {
+        if (StopMidRun)
+            Stop();
+
+        SawStopRequest = IsStopRequested;
+
         if (RaiseStatusChanged)
             OnStatusChanged(StatusChangedMessage);
 
@@ -53,5 +73,70 @@ internal sealed class TestLoggedJob : LoggedScheduledJobBase
             throw ExceptionToThrow;
 
         return ResultToReturn;
+    }
+}
+
+/// <summary>A node that references itself — the shape of an EF navigation or an IContent.</summary>
+internal sealed class CyclicNode
+{
+    public string Name { get; init; } = "root";
+
+    public CyclicNode? Self { get; set; }
+}
+
+/// <summary>Logs input data that <c>System.Text.Json</c> cannot serialize without help.</summary>
+internal sealed class CyclicInputJob : LoggedScheduledJobBase
+{
+    public CyclicInputJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    protected override string ExecuteJob()
+    {
+        var node = new CyclicNode();
+        node.Self = node;
+        LogInputData(node);
+        return "done";
+    }
+}
+
+/// <summary>Logs a value whose type <c>System.Text.Json</c> refuses outright.</summary>
+internal sealed class UnserializableInputJob : LoggedScheduledJobBase
+{
+    public UnserializableInputJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    protected override string ExecuteJob()
+    {
+        // A dictionary keyed by a type with no supported converter.
+        LogInputData(new Dictionary<CyclicNode, string> { [new CyclicNode()] = "value" });
+        return "done";
+    }
+}
+
+/// <summary>Observes <c>StopToken</c> across the boundaries of a run.</summary>
+internal sealed class TokenObservingJob : LoggedScheduledJobBase
+{
+    public TokenObservingJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    public bool TokenWasCancellable { get; private set; }
+
+    public bool TokenWasCancelledAfterStop { get; private set; }
+
+    /// <summary>Reads the protected token from outside the run, which is the point of the test.</summary>
+    public CancellationToken CurrentToken => StopToken;
+
+    protected override string ExecuteJob()
+    {
+        TokenWasCancellable = StopToken.CanBeCanceled;
+        Stop();
+        TokenWasCancelledAfterStop = StopToken.IsCancellationRequested;
+        return "done";
     }
 }

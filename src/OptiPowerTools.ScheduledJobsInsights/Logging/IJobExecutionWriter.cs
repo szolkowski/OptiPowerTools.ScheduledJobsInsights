@@ -9,6 +9,11 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// <see cref="JobLogBackgroundWriter"/>.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Intended to be consumed, not implemented.</b> Resolve it from DI to record executions that are
+/// not scheduled jobs; do not implement it in consuming code. Members may be added in future minor
+/// versions, which would break any outside implementation.
+/// </para>
 /// <b>No member of this interface throws.</b> Implementations report failures out of band and carry
 /// on. A job is running when these are called, and this package's contract is that it only
 /// <em>observes</em> an execution: losing the record of a run must never turn into a failure of the
@@ -28,7 +33,14 @@ public interface IJobExecutionWriter
     long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName);
 
     /// <summary>Marks an execution as finished, recording its outcome.</summary>
-    void Complete(long executionId, bool succeeded, string? resultMessage, Exception? exception);
+    /// <param name="executionId">Execution to complete.</param>
+    /// <param name="outcome">
+    /// How the run ended. <see cref="ExecutionStatus.Running"/> is not a valid completion and is
+    /// recorded as <see cref="ExecutionStatus.Failed"/>.
+    /// </param>
+    /// <param name="resultMessage">The one-line result, or <c>null</c>.</param>
+    /// <param name="exception">The exception that ended the run, or <c>null</c>.</param>
+    void Complete(long executionId, ExecutionStatus outcome, string? resultMessage, Exception? exception);
 
     /// <summary>Buffers a log line for asynchronous batched persistence.</summary>
     void Log(long executionId, int sequence, LogSeverity severity, string message, LogEntrySource source);
@@ -41,21 +53,12 @@ public interface IJobExecutionWriter
     /// </summary>
     /// <param name="executionId">Execution to attach the summary to.</param>
     /// <param name="summary">
-    /// The rendered summary. Truncated to <see cref="MaxResultSummaryLength"/> if longer, so callers
-    /// writing an execution directly are bounded the same way <see cref="JobResultSummary"/> is.
+    /// The rendered summary. Truncated to the configured
+    /// <see cref="Configuration.OptiPowerToolScheduledJobsInsightsOptions.MaxResultSummaryLength"/>
+    /// if longer, so callers writing an execution directly are bounded the same way
+    /// <see cref="JobResultSummary"/> is.
     /// </param>
     void SetResultSummary(long executionId, string summary);
-
-    /// <summary>
-    /// The configured character limit for result summaries.
-    /// </summary>
-    /// <remarks>
-    /// Exposed here because <see cref="LoggedScheduledJobBase"/> needs the configured value to build
-    /// its <see cref="JobResultSummary"/>, and the writer is the only DI-resolved collaborator it
-    /// holds — derived jobs forward a fixed pair of constructor arguments to <c>base</c>, so an
-    /// <c>IOptions&lt;T&gt;</c> parameter cannot be added there without breaking every one of them.
-    /// </remarks>
-    int MaxResultSummaryLength { get; }
 
     /// <summary>Buffers a metric value for asynchronous batched persistence.</summary>
     void RecordMetric(long executionId, string name, double value, string? unit);

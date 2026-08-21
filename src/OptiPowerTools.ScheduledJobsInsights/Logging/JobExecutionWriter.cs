@@ -16,17 +16,18 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// while keeping the common case cheap.
 /// </summary>
 /// <remarks>
-/// Log/RecordMetric never throw. They are called from inside a running job, and this package's
-/// contract is that it only *observes* an execution: a failure to record a log line must not become
-/// a failure of the job that logged it. Begin/Complete/SetInputData/SetResultSummary do still
-/// propagate — <c>BeginExecution</c> has to, since the execution id it returns is what everything
-/// else is keyed on.
+/// <b>No member throws.</b> Every one of them is called from inside a running job, and this package's
+/// contract is that it only *observes* an execution: a failure to record must never become a failure
+/// of the run. Immediate writes funnel through <see cref="Write"/>, which logs and swallows;
+/// <see cref="BeginExecution"/> reports failure by returning <c>null</c>, which disables recording
+/// for the rest of that run.
 /// </remarks>
 internal sealed class JobExecutionWriter : IJobExecutionWriter
 {
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly ChannelWriter<JobRecord> _channelWriter;
     private readonly ILogger<JobExecutionWriter> _logger;
+    private readonly int _maxResultSummaryLength;
 
     /// <summary>Set once the first channel-full fallback has been reported, to keep the log readable.</summary>
     private int _backpressureReported;
@@ -44,10 +45,8 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         // A misconfigured zero would make every summary unstorable, which is a worse outcome than
         // quietly using the default bound.
         var configured = options.Value.MaxResultSummaryLength;
-        MaxResultSummaryLength = configured > 0 ? configured : JobResultSummary.DefaultMaxLength;
+        _maxResultSummaryLength = configured > 0 ? configured : JobResultSummary.DefaultMaxLength;
     }
-
-    public int MaxResultSummaryLength { get; }
 
     public long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)
     {
@@ -80,15 +79,23 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         }
     }
 
-    public void Complete(long executionId, bool succeeded, string? resultMessage, Exception? exception) =>
+    public void Complete(long executionId, ExecutionStatus outcome, string? resultMessage, Exception? exception)
+    {
+        // Running is not a completion. Recording it would leave the row looking unfinished forever,
+        // so an out-of-range caller is treated as a failure rather than silently stranding the run.
+        var status = outcome is ExecutionStatus.Succeeded or ExecutionStatus.Failed or ExecutionStatus.Stopped
+            ? outcome
+            : ExecutionStatus.Failed;
+
         Write(executionId, nameof(Complete), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
             .ExecuteUpdate(setters => setters
-                .SetProperty(e => e.Status, succeeded ? ExecutionStatus.Succeeded : ExecutionStatus.Failed)
+                .SetProperty(e => e.Status, status)
                 .SetProperty(e => e.CompletedAt, DateTimeOffset.UtcNow)
                 .SetProperty(e => e.ResultMessage, resultMessage)
                 .SetProperty(e => e.ExceptionMessage, exception != null ? exception.Message : null)
                 .SetProperty(e => e.ExceptionStackTrace, exception != null ? exception.StackTrace : null)));
+    }
 
     public void SetInputData(long executionId, string inputDataJson) =>
         Write(executionId, nameof(SetInputData), dbContext => dbContext.JobExecutions
@@ -99,13 +106,30 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     {
         // Written immediately rather than through the channel: Complete() follows straight after, and
         // a buffered summary could otherwise land after the execution is already marked finished.
-        var bounded = summary.Length > MaxResultSummaryLength
-            ? summary[..MaxResultSummaryLength]
-            : summary;
+        var bounded = Truncate(summary, _maxResultSummaryLength);
 
         Write(executionId, nameof(SetResultSummary), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
             .ExecuteUpdate(setters => setters.SetProperty(e => e.ResultSummary, bounded)));
+    }
+
+    /// <summary>
+    /// Bounds a summary written directly through <see cref="SetResultSummary"/>, which
+    /// <see cref="JobResultSummary"/>'s own bound does not cover. Ends with the same notice the
+    /// summary type uses, so a truncated value never looks merely short, and never splits a
+    /// surrogate pair — half a character would render as a replacement glyph.
+    /// </summary>
+    private static string Truncate(string summary, int maxLength)
+    {
+        if (summary.Length <= maxLength)
+            return summary;
+
+        var budget = Math.Max(1, maxLength - (Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length));
+
+        if (budget < summary.Length && char.IsHighSurrogate(summary[budget - 1]))
+            budget--;
+
+        return summary[..budget] + Environment.NewLine + JobResultSummary.TruncationNotice;
     }
 
     /// <summary>

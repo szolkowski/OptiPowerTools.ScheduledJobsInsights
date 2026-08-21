@@ -155,7 +155,16 @@ else
 }
 
 @code {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    /// <summary>
+    /// How often a still-running execution is re-read.
+    /// </summary>
+    /// <remarks>
+    /// Settable for tests only. Two seconds is far too long to wait in a test, and the alternative —
+    /// leaving the poll loop, the trailing read and the finish detection uncovered — is worse than an
+    /// internal seam that costs nothing on the public surface. Tests that change it share one xUnit
+    /// collection so they cannot run concurrently with each other.
+    /// </remarks>
+    internal static TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromSeconds(2);
 
     private const string DefaultCopyLabel = "Copy";

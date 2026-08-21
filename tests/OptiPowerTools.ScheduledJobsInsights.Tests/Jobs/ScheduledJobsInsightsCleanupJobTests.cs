@@ -122,7 +122,8 @@ public class ScheduledJobsInsightsCleanupJobTests
             Arg.Is<DateTimeOffset>(cutoff => cutoff >= expected.AddMinutes(-1) && cutoff <= expected.AddMinutes(1)),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>());
-        Assert.Contains("3", result);
+        // The whole message, not a substring: "3" also matches 13, 30 and 300.
+        Assert.Equal("Deleted 3 job execution(s).", result);
     }
 
     [Fact]

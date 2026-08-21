@@ -40,4 +40,10 @@ internal static class DisplayFormat
             ? duration.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture) + " ms"
             : duration.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s";
     }
+    /// <summary>
+    /// A day count with its unit, singular where that reads correctly ("1 day", not "1 days").
+    /// </summary>
+    /// <param name="days">Number of days.</param>
+    public static string Days(int days) => days == 1 ? "1 day" : $"{Number(days)} days";
+
 }

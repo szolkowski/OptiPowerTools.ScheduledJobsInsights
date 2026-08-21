@@ -67,6 +67,50 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     /// </summary>
     public int PageSize { get; set; } = 50;
 
+    /// <summary>Default for <see cref="MaxLogMessageLength"/>.</summary>
+    public const int DefaultMaxLogMessageLength = 4_000;
+
+    /// <summary>
+    /// Longest log message stored, in characters. Longer messages are truncated with an ellipsis.
+    /// Defaults to 4,000.
+    /// </summary>
+    /// <remarks>
+    /// The column itself is unbounded, which is the problem: a job logging a response body per
+    /// iteration writes megabytes per row, and the execution list and detail page both have to carry
+    /// that. Raise it if you genuinely log large payloads — but prefer
+    /// <see cref="Logging.LoggedScheduledJobBase.Summary"/>, which is bounded and rendered for
+    /// reading rather than one line per row.
+    /// </remarks>
+    public int MaxLogMessageLength { get; set; } = DefaultMaxLogMessageLength;
+
+    /// <summary>Default for <see cref="MaxLogEntriesPerExecution"/>.</summary>
+    public const int DefaultMaxLogEntriesPerExecution = 20_000;
+
+    /// <summary>
+    /// Most log lines the detail page will read for one execution. Defaults to 20,000.
+    /// </summary>
+    /// <remarks>
+    /// The reader is a Blazor Server circuit, which holds every line it is given for as long as the
+    /// page stays open — so an unbounded read of a very chatty execution is an out-of-memory on the
+    /// server, once per viewer. A run that exceeds this is reported as truncated rather than
+    /// silently shortened.
+    /// </remarks>
+    public int MaxLogEntriesPerExecution { get; set; } = DefaultMaxLogEntriesPerExecution;
+
+    /// <summary>
+    /// How long an execution may sit unfinished before the cleanup job records it as
+    /// <see cref="ExecutionStatus.Interrupted"/>. Defaults to 24 hours; <see cref="TimeSpan.Zero"/>
+    /// disables the sweep.
+    /// </summary>
+    /// <remarks>
+    /// A process recycled mid-run writes nothing further, so its row stays <c>Running</c> for ever
+    /// and quietly distorts every count and filter that follows. The default is deliberately far
+    /// longer than any reasonable job: marking a genuinely long-running job as interrupted while it
+    /// is still working would be worse than leaving a stale row for a day. Raise it if you run jobs
+    /// that legitimately take longer.
+    /// </remarks>
+    public TimeSpan InterruptedExecutionThreshold { get; set; } = TimeSpan.FromHours(24);
+
     /// <summary>
     /// The title displayed in the CMS shell chrome and browser tab.
     /// Defaults to "Scheduled Jobs Insights".

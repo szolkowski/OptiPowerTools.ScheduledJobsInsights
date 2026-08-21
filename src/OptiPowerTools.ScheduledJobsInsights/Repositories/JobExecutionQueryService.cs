@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data;
 using OptiPowerTools.ScheduledJobsInsights.Data.Entities;
 
@@ -25,23 +27,44 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
 
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly TimeProvider _timeProvider;
+    private readonly int _maxLogEntries;
 
     /// <summary>Serialises refreshes so a cache miss produces one query, not one per caller.</summary>
     private readonly SemaphoreSlim _jobNameRefreshGate = new(1, 1);
 
     private IReadOnlyList<string> _cachedJobNames = [];
-    private DateTimeOffset _jobNamesExpireAt = DateTimeOffset.MinValue;
+    /// <summary>
+    /// When the cached list goes stale, as UTC ticks.
+    /// </summary>
+    /// <remarks>
+    /// Ticks rather than a <see cref="DateTimeOffset"/>, read and written with
+    /// <see cref="Volatile"/>: this is read outside the gate, and a <see cref="DateTimeOffset"/> is
+    /// wider than a machine word, so a concurrent write can be observed half-applied. A torn read
+    /// here yields a garbage expiry — an eternally fresh cache, or a permanently expired one.
+    /// </remarks>
+    private long _jobNamesExpireAtTicks = DateTimeOffset.MinValue.UtcTicks;
 
     public JobExecutionQueryService(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IOptions<OptiPowerToolScheduledJobsInsightsOptions>? options = null)
     {
         _dbContextFactory = dbContextFactory;
         _timeProvider = timeProvider;
+
+        var configured = options?.Value.MaxLogEntriesPerExecution ?? 0;
+        _maxLogEntries = configured > 0
+            ? configured
+            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution;
     }
 
     public async Task<ExecutionPage> GetExecutionsAsync(ExecutionFilter filter, ExecutionCursor? after, int pageSize, CancellationToken cancellationToken = default)
     {
+        // Startup validation rejects a non-positive PageSize, but this takes the size as an argument
+        // and zero produces nonsense: an empty page reporting HasMore with no cursor, so Next stays
+        // enabled and silently returns to the first page.
+        pageSize = Math.Max(1, pageSize);
+
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
         var query = dbContext.JobExecutions.AsNoTracking().AsQueryable();
@@ -95,7 +118,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
     /// </remarks>
     public async Task<IReadOnlyList<string>> GetDistinctJobNamesAsync(CancellationToken cancellationToken = default)
     {
-        if (_timeProvider.GetUtcNow() < _jobNamesExpireAt)
+        if (IsJobNameCacheFresh())
             return _cachedJobNames;
 
         await _jobNameRefreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -103,7 +126,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
         {
             // Re-checked inside the gate: prerendering and the circuit start this within milliseconds
             // of each other, so without this the "saved" query would simply happen twice anyway.
-            if (_timeProvider.GetUtcNow() < _jobNamesExpireAt)
+            if (IsJobNameCacheFresh())
                 return _cachedJobNames;
 
             await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -117,7 +140,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
 
             // Stamped only after a successful read, so a failed query is retried rather than caching
             // an empty dropdown for a minute.
-            _jobNamesExpireAt = _timeProvider.GetUtcNow() + JobNameCacheDuration;
+            Volatile.Write(ref _jobNamesExpireAtTicks, (_timeProvider.GetUtcNow() + JobNameCacheDuration).UtcTicks);
 
             return _cachedJobNames;
         }
@@ -143,9 +166,16 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
             .AsNoTracking()
             .Where(e => e.JobExecutionId == executionId && e.Sequence > afterSequence)
             .OrderBy(e => e.Sequence)
+            // Capped because the caller is a Blazor Server circuit that holds every line it is given
+            // for as long as the page is open. An unbounded read of a two-million-line execution is
+            // an out-of-memory on the *server*, once per viewer.
+            .Take(_maxLogEntries)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }
+
+    private bool IsJobNameCacheFresh() =>
+        _timeProvider.GetUtcNow().UtcTicks < Volatile.Read(ref _jobNamesExpireAtTicks);
 
     public async Task<IReadOnlyList<JobMetric>> GetMetricsAsync(long executionId, CancellationToken cancellationToken = default)
     {

@@ -1,8 +1,11 @@
 using EPiServer.DataAbstraction;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
+using OptiPowerTools.ScheduledJobsInsights.Data;
 using OptiPowerTools.ScheduledJobsInsights.Data.Entities;
 using OptiPowerTools.ScheduledJobsInsights.Retention;
 using OptiPowerTools.ScheduledJobsInsights.Tests.Data;
@@ -26,13 +29,23 @@ public class JobRetentionServiceTests
             .Select(j => new ScheduledJob { TypeName = j.TypeName, Name = j.DisplayName })
             .ToList());
 
-        return new JobRetentionService(
-            factory,
-            repository,
+        return CreateService(factory, repository, defaultDays);
+    }
+
+    /// <summary>The service over a given database and job registry, with its collaborators real.</summary>
+    private static JobRetentionService CreateService(
+        IDbContextFactory<ScheduledJobsInsightsDbContext> factory,
+        IScheduledJobRepository repository,
+        int defaultDays = 30,
+        TimeProvider? timeProvider = null,
+        ILogger<JobRetentionService>? logger = null) =>
+        new(factory,
+            new JobRetentionPolicyStore(factory, NullLogger<JobRetentionPolicyStore>.Instance),
+            new RegisteredJobNames(repository, NullLogger<RegisteredJobNames>.Instance),
             new LoggedJobTypeIndex(),
             Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { RetentionDays = defaultDays }),
-            NullLogger<JobRetentionService>.Instance);
-    }
+            logger ?? NullLogger<JobRetentionService>.Instance,
+            timeProvider);
 
     private static void SeedExecutions(SqliteDbContextFactory factory, string jobTypeName, int count)
     {
@@ -233,12 +246,17 @@ public class JobRetentionServiceTests
             });
             dbContext.SaveChanges();
         }
-        var service = CreateService(factory);
+        var logger = new RecordingLogger<JobRetentionService>();
+        var service = CreateService(factory, Substitute.For<IScheduledJobRepository>(), logger: logger);
 
         var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == ChattyType);
 
         Assert.Null(job.Override);
         Assert.True(job.HasInvalidOverride);
+        // Reported, not merely flagged in a screen the administrator may never open.
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Level == LogLevel.Warning && entry.Message.Contains(ChattyType, StringComparison.Ordinal));
         // Falls back to the attribute, exactly as though the row were absent.
         Assert.Equal(RetentionSource.Attribute, job.Resolve(RetentionPeriod.OfDays(30)).Source);
     }
@@ -265,6 +283,27 @@ public class JobRetentionServiceTests
     }
 
     [Fact]
+    public async Task SetOverrideAsync_RecoversFromALostRaceOnTheUniqueIndex()
+    {
+        // Read-then-write against a unique index: two administrators saving at once both see no
+        // existing row, both insert, and the loser hits the constraint — which surfaced as a red
+        // banner on the retention screen. Re-reading and retrying once turns the loser into an
+        // update. The conflict is injected rather than raced for: against Sqlite on one connection
+        // two real callers simply serialise, so a "both at once" test passes with or without the fix.
+        using var sqlite = new SqliteDbContextFactory();
+        var factory = new ConflictOnFirstSaveDbContextFactory(sqlite);
+        var service = CreateService(factory, Substitute.For<IScheduledJobRepository>());
+
+        await service.SetOverrideAsync("Contoso.Jobs.Contended", RetentionPeriod.OfDays(90), "bob");
+
+        Assert.Equal(2, factory.Attempts);
+        using var dbContext = sqlite.CreateDbContext();
+        var stored = Assert.Single(dbContext.JobRetentionPolicies.Where(p => p.JobTypeName == "Contoso.Jobs.Contended"));
+        Assert.Equal(90, stored.RetentionDays);
+        Assert.Equal("bob", stored.ModifiedBy);
+    }
+
+    [Fact]
     public async Task GetEffectiveOverridesAsync_ResolvesAttributesAndOverridesForTheCleanupJob()
     {
         using var factory = new SqliteDbContextFactory();
@@ -279,6 +318,66 @@ public class JobRetentionServiceTests
         Assert.True(effective[ForeverType].IsIndefinite);
         // An unusable attribute contributes nothing, so the job falls to the default.
         Assert.DoesNotContain(InvalidType, effective.Keys);
+    }
+
+    [Fact]
+    public async Task TheExecutionCount_IsCachedAcrossTheRenderAndTheCircuit()
+    {
+        // The screen loads twice per view — once prerendered, once when the circuit connects — and
+        // this GROUP BY over every execution row is the only query here that scales with history.
+        // Uncached it was the most expensive query in the UI, paid twice for every visit.
+        using var sqlite = new SqliteDbContextFactory();
+        SeedExecutions(sqlite, "Contoso.Jobs.Thing", 3);
+        var clock = new AdjustableTimeProvider();
+        var service = CreateService(sqlite, Substitute.For<IScheduledJobRepository>(), timeProvider: clock);
+
+        var first = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        // Another execution lands, but within the cache window the screen keeps the count it had.
+        SeedExecutions(sqlite, "Contoso.Jobs.Thing", 1);
+        var cached = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        clock.Advance(TimeSpan.FromSeconds(61));
+        var refreshed = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        Assert.Equal(3, first.ExecutionCount);
+        Assert.Equal(3, cached.ExecutionCount);
+        Assert.Equal(4, refreshed.ExecutionCount);
+    }
+
+    [Fact]
+    public async Task GetEffectiveOverridesAsync_AgreesWithTheScreen_ForEverySource()
+    {
+        // The cleanup job acts on this; the screen shows Resolve. They used to be two independent
+        // expressions of the same precedence order, agreeing only by inspection. This asserts they
+        // agree by construction, across all four sources at once.
+        using var factory = new SqliteDbContextFactory();
+        SeedExecutions(factory, "Contoso.Jobs.HistoryOnly", 2);
+        var service = CreateService(factory, defaultDays: 30);
+        await service.SetOverrideAsync(PlainType, RetentionPeriod.OfDays(90), "alice");
+
+        var effective = await service.GetEffectiveOverridesAsync();
+        var onScreen = await service.GetAllAsync();
+
+        foreach (var job in onScreen)
+        {
+            var (period, source) = job.Resolve(service.DefaultPeriod);
+
+            if (source is RetentionSource.Default)
+            {
+                // Governed only by the default sweep, so it must not appear as an exclusion.
+                Assert.DoesNotContain(job.JobTypeName, effective.Keys);
+            }
+            else
+            {
+                Assert.Equal(period, effective[job.JobTypeName]);
+            }
+        }
+
+        // Sanity: the fixture really does exercise more than one source.
+        Assert.Equal(RetentionPeriod.OfDays(90), effective[PlainType]);       // override
+        Assert.Equal(RetentionPeriod.OfDays(7), effective[ChattyType]);       // attribute
+        Assert.DoesNotContain("Contoso.Jobs.HistoryOnly", effective.Keys);    // default
     }
 
     [Fact]
@@ -308,12 +407,7 @@ public class JobRetentionServiceTests
         var repository = Substitute.For<IScheduledJobRepository>();
         repository.List().Returns(_ => throw new InvalidOperationException("registry unavailable"));
 
-        var service = new JobRetentionService(
-            factory,
-            repository,
-            new LoggedJobTypeIndex(),
-            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions()),
-            NullLogger<JobRetentionService>.Instance);
+        var service = CreateService(factory, repository);
 
         var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
         Assert.Equal("Thing", job.DisplayName);

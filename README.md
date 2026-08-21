@@ -18,11 +18,12 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - An optional per-run **result summary** — a multi-line report the job builds as it works, shown in its own collapsible section of the detail view, separate from the one-line message Optimizely shows in its admin grid.
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
-- Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list.
+- Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list. It also resolves runs abandoned by a recycled process, which would otherwise sit at *Running* for ever.
 - Per-job retention, including indefinite: declare it on the job with `[JobRetention]`, or set it per job in a CMS screen that shows what each job declared and why.
 - Unhandled exceptions are never swallowed — native CMS admin's `HasLastExecutionFailed`/`LastExecutionMessage` tracking is completely unaffected.
 - Cannot take your site down: if the insights database is unreachable, the application still starts, jobs still run, and `OnStatusChanged` still drives the CMS status column — only the history is lost, and it says so in the log.
-- Configurable via `IOptions<T>` or `appsettings.json`.
+- Authorization by Optimizely role out of the box, or by an authorization policy of your own — applied as ordinary endpoint metadata, so the page, the retention screen and the menu entries can never disagree about who may see them.
+- Configurable via `IOptions<T>` or `appsettings.json`, validated at startup so a misconfiguration fails there rather than silently once jobs are running.
 
 ## Screenshots
 
@@ -39,6 +40,15 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 ![Result summary section](images/ResultSummary.jpg)
 
 ## Quick Start
+
+### Package sources
+
+The package itself is on nuget.org, but its Optimizely dependencies are not — they come from
+Optimizely's own feed, which any CMS project already has configured:
+
+```xml
+<add key="Optimizely" value="https://api.nuget.optimizely.com/v3/index.json" />
+```
 
 ### Required project setting
 
@@ -177,6 +187,19 @@ Code that records an execution without being a scheduled job at all can call
 The CMS menu item opens a paginated execution list — job name, status, start time, duration, result —
 with filters for job and status, and a link across to the CMS's own **Scheduled Jobs** page.
 
+### Execution statuses
+
+| | |
+|---|---|
+| **Running** | Started, no outcome reported yet. |
+| **Succeeded** | `ExecuteJob()` returned without throwing. |
+| **Failed** | It threw. The message and stack trace are recorded, and the exception is rethrown unchanged. |
+| **Stopped** | An administrator pressed Stop and the job noticed — see [Writing a logged job](#writing-a-logged-job). Distinct from Succeeded: the work was cut short. |
+| **Interrupted** | No outcome was ever reported and the run has been given up on: the process was recycled, the container replaced, or the host crashed mid-job. Applied retrospectively by the cleanup job after `InterruptedExecutionThreshold`, because a process that dies mid-run cannot record anything itself. The completion time stays empty — it is genuinely unknown. |
+
+The last two exist so the history says what actually happened. Without them a stopped job reads as a
+success and an abandoned one sits at *Running* for ever, quietly distorting every count and filter.
+
 **Timestamps are shown in your own time zone**, stated above the table and suffixed with the offset
 on the detail page (`2026-08-19 17:37:16 UTC+02:00`). The browser's IANA zone is recorded in a
 `sji-timezone` cookie by the page itself and applied server-side, so it survives prerendering rather
@@ -309,6 +332,9 @@ Code overrides configuration when both are used.
 | ------ | ---- | ------- | ----------- |
 | `ConnectionString` | `string` | `""` | **Required.** SQL Server connection string for job execution/log/metric storage. |
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
+| `MaxLogMessageLength` | `int` | `4000` | Longest log message stored; longer ones are truncated with an ellipsis. The column itself is unbounded, so this is what stops a job that logs a response body per iteration writing megabytes per row. |
+| `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer. |
+| `InterruptedExecutionThreshold` | `TimeSpan` | `24:00:00` | How long a run may sit unfinished before the cleanup job records it as **Interrupted**. `TimeSpan.Zero` disables the sweep. |
 | `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
 | `LogChannelCapacity` | `int` | `10000` | Capacity of the in-memory buffer for log/metric writes before falling back to a synchronous insert. |
@@ -391,10 +417,15 @@ reached:
   Optimizely's success/failure tracking is unchanged.
 - **The CMS status column still updates**, because `OnStatusChanged` raises the native event before
   any recording is attempted.
-- **Nothing throws into job code.** No member of `IJobExecutionWriter` throws; failures are logged.
+- **Nothing throws into job code.** No member of `IJobExecutionWriter` throws, and neither does
+  anything around it: capturing input data survives an object graph JSON cannot serialize (a cycle
+  through an EF navigation, say), and the automatic metrics are captured and recorded defensively, so
+  a counter this package cannot read costs a metric rather than the run. A metrics failure can no
+  longer report a successful job as failed, nor replace the job's own exception with its own.
 
-What you lose is the execution history for the affected period, and the insights UI itself, which
-needs the database to show anything.
+What you lose is the execution history for the affected period. The UI itself needs the database to
+show anything, so it reports that it could not read the history rather than rendering an empty list —
+and rather than dropping the CMS's own circuit-error bar over the page.
 
 ## Database & migrations
 
@@ -486,14 +517,34 @@ Changes take effect on the next run of the cleanup job. Nothing is deleted at th
 
 `ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) in batches of `CleanupBatchSize`, and reports what it removed as its execution message.
 
-Each run does two passes:
+Each run does three passes:
 
+0. **Give up on abandoned runs.** Executions still `Running` since longer ago than
+   `InterruptedExecutionThreshold` are recorded as **Interrupted**. A process recycled mid-run writes
+   nothing further, so nothing else would ever finish those rows — and until they are resolved, every
+   count and status filter is wrong. `CompletedAt` stays empty: the end time is genuinely unknown.
 1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
 2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
 
 An indefinite default is legitimate: the sweep is then skipped altogether and only the jobs that opted into a retention are trimmed.
 
 After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
+
+### If your application already uses Blazor
+
+`UseOptiPowerToolScheduledJobsInsights` maps the Blazor Server hub the UI connects over. Mapping
+`/_blazor` twice puts two endpoints on one route pattern and every Blazor request in the application
+then fails with `AmbiguousMatchException` — with nothing in the message naming this package.
+
+By default it detects an existing mapping and skips its own, so most hosts need do nothing. Set
+`MapBlazorHub` explicitly if yours maps its hub **after** this call, which detection cannot see:
+
+```csharp
+options.MapBlazorHub = false;   // your application owns /_blazor
+```
+
+Note the hub this package maps carries its authorization policy. A hub the host already mapped is
+left exactly as the host configured it.
 
 ## Removing this package
 
@@ -622,7 +673,7 @@ and every state the two UI pages can render.
 | `FlakyImportJob` | Throws on alternating runs — proves a failure still surfaces correctly in both native CMS admin and this package's UI, and that the summary recorded before the throw is still persisted. |
 | `ChattyBatchJob` | Emits ~5,000 log lines in a tight loop — exercises the buffered writer and the virtualized log viewer under load. Also the worked example for `[JobRetention]`, since it is exactly the kind of job that warrants a shorter one. |
 | `StatusReportingJob` | `OnStatusChanged` — drives the CMS's live status column and is captured as `LogEntrySource.StatusChanged` lines, interleaved with ordinary `Log` calls. |
-| `SlowMigrationJob` | Runs for ~60s so an execution can be watched mid-flight: the `Running` badge, the detail page's 2s polling, the `—` duration, and the seconds duration format. Builds a summary but never flushes it, so the whole **Result summary** section appears on the tick after the job completes. Supports the CMS Stop button. |
+| `SlowMigrationJob` | Runs for ~60s so an execution can be watched mid-flight: the `Running` badge, the detail page's 2s polling, the `—` duration, and the seconds duration format. Builds a summary but never flushes it, so the whole **Result summary** section appears on the tick after the job completes. Sets `IsStoppable` and checks `IsStopRequested` between batches, so stopping it mid-run records the execution as **Stopped**. |
 | `SeverityShowcaseJob` | One line at every `LogSeverity`, so the console renders the complete colour and label set. |
 | `QuietJob` | Logs nothing at all — what an unmodified job looks like after only changing its base class, and the detail page's empty-log state. |
 | `ContentAuditJob` | Constructor DI — takes an `IContentLoader` beyond the two parameters the base class needs. |

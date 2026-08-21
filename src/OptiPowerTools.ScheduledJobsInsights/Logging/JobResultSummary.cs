@@ -16,8 +16,12 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// A <see cref="StringBuilder"/> is wrapped rather than exposed so appends can be bounded: the
 /// summary is persisted as a single unbounded column, and a job appending one line per processed
 /// row could otherwise write megabytes into every execution. Once <see cref="MaxLength"/> is
-/// reached further appends are discarded and <see cref="ToString"/> ends with a truncation notice,
-/// so the result never exceeds <see cref="MaxLength"/> characters.
+/// reached further appends are discarded and <see cref="ToString"/> ends with a truncation notice.
+/// The notice's own length is budgeted for up front, so at any realistic limit the result stays
+/// within <see cref="MaxLength"/>. The exception is a limit smaller than the notice itself — the
+/// content budget floors at one character, so a <c>MaxLength</c> of 5 yields roughly 21. Harmless,
+/// since <see cref="JobExecutionWriter"/> bounds the stored value independently, but it is a floor
+/// rather than a guarantee.
 /// </para>
 /// <para>
 /// Appends are synchronized, matching the thread-safety of

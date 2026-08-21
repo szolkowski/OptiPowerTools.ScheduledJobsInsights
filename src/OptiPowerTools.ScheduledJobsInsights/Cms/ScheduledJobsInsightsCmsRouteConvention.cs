@@ -29,8 +29,12 @@ internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationMode
         if (action is null)
             return;
 
-        action.Selectors.Clear();
-        action.Selectors.Add(new SelectorModel
+        // Rebuilt from the existing selector rather than replaced outright. Clearing and adding a
+        // bare SelectorModel threw away the HttpMethodActionConstraint that [HttpGet] produces, so the
+        // endpoint answered every verb — POST, PUT and DELETE all rendered the page.
+        var existing = action.Selectors.FirstOrDefault();
+
+        var replacement = new SelectorModel
         {
             AttributeRouteModel = new AttributeRouteModel
             {
@@ -41,6 +45,18 @@ internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationMode
                 // on its loading dots forever.
                 Template = _path
             }
-        });
+        };
+
+        if (existing is not null)
+        {
+            foreach (var constraint in existing.ActionConstraints)
+                replacement.ActionConstraints.Add(constraint);
+
+            foreach (var metadata in existing.EndpointMetadata)
+                replacement.EndpointMetadata.Add(metadata);
+        }
+
+        action.Selectors.Clear();
+        action.Selectors.Add(replacement);
     }
 }

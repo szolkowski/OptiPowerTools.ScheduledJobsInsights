@@ -32,10 +32,20 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     /// <summary>
     /// Records taken out of the channel but not yet written. A field rather than a local because
     /// both <see cref="ExecuteAsync"/> and <see cref="StopAsync"/> have to be able to flush it, and
-    /// only one of them is guaranteed to run. Never touched concurrently: <see cref="StopAsync"/>
-    /// only reaches it after <c>base.StopAsync</c> has awaited <see cref="ExecuteAsync"/> to a stop.
+    /// only one of them is guaranteed to run.
     /// </summary>
+    /// <remarks>
+    /// Guarded by <see cref="_drainGate"/>. The two drains genuinely can overlap:
+    /// <c>base.StopAsync</c> returns when <em>either</em> <see cref="ExecuteAsync"/> completes or the
+    /// host's shutdown timeout fires, so a drain that is taking its time is abandoned rather than
+    /// awaited — and <see cref="StopAsync"/> then starts a second one over the same list. Two threads
+    /// mutating a <see cref="List{T}"/> corrupts it, and an <see cref="IndexOutOfRangeException"/> out
+    /// of a hosted service on shutdown is exactly the kind of noise this class exists to avoid.
+    /// </remarks>
     private readonly List<JobRecord> _pending = [];
+
+    /// <summary>Serialises the two drain paths; see <see cref="_pending"/>.</summary>
+    private readonly SemaphoreSlim _drainGate = new(1, 1);
 
     private readonly Channel<JobRecord> _channel;
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
@@ -62,14 +72,26 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
         {
             while (await reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
             {
-                // _pending rather than a local: collecting takes records *out* of the channel, so a
-                // batch abandoned mid-collect is gone — a drain that only reads the channel finds
-                // nothing. Shutdown cancels while the collector is typically parked waiting for more.
-                await CollectBatchAsync(reader, _pending, stoppingToken).ConfigureAwait(false);
-                if (_pending.Count > 0)
-                    await FlushAsync(_pending, stoppingToken).ConfigureAwait(false);
+                // Under the gate for the same reason the shutdown drain is: once the host's shutdown
+                // timeout fires, StopAsync stops waiting for this loop and drains _pending itself,
+                // while this iteration may still be filling it. Uncontended in normal operation.
+                await _drainGate.WaitAsync(stoppingToken).ConfigureAwait(false);
 
-                _pending.Clear();
+                try
+                {
+                    // _pending rather than a local: collecting takes records *out* of the channel, so
+                    // a batch abandoned mid-collect is gone — a drain that only reads the channel
+                    // finds nothing. Shutdown cancels while the collector is typically parked waiting.
+                    await CollectBatchAsync(reader, _pending, stoppingToken).ConfigureAwait(false);
+                    if (_pending.Count > 0)
+                        await FlushAsync(_pending, stoppingToken).ConfigureAwait(false);
+
+                    _pending.Clear();
+                }
+                finally
+                {
+                    _drainGate.Release();
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -125,8 +147,17 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             if (remaining <= TimeSpan.Zero)
                 break;
 
-            var readTask = reader.WaitToReadAsync(stoppingToken).AsTask();
-            var completedTask = await Task.WhenAny(readTask, Task.Delay(remaining, stoppingToken)).ConfigureAwait(false);
+            // Linked source cancelled in the finally: whichever of the two loses the race is
+            // otherwise left running — a timer and a channel waiter abandoned on every iteration, for
+            // the life of the process.
+            using var deadlineSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+
+            var readTask = reader.WaitToReadAsync(deadlineSource.Token).AsTask();
+            var delayTask = Task.Delay(remaining, deadlineSource.Token);
+            var completedTask = await Task.WhenAny(readTask, delayTask).ConfigureAwait(false);
+
+            await deadlineSource.CancelAsync().ConfigureAwait(false);
+
             if (completedTask != readTask)
                 break; // flush interval elapsed before more data arrived
 
@@ -147,14 +178,32 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     /// </remarks>
     private async Task DrainRemainingAsync()
     {
-        while (_channel.Reader.TryRead(out var item))
-            _pending.Add(item);
+        // Not WaitAsync(token): a drain that skipped itself because the other one held the gate would
+        // lose exactly the records this method exists to save.
+        await _drainGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-        if (_pending.Count == 0)
-            return;
+        try
+        {
+            while (_channel.Reader.TryRead(out var item))
+                _pending.Add(item);
 
-        await FlushAsync(_pending, CancellationToken.None).ConfigureAwait(false);
-        _pending.Clear();
+            if (_pending.Count == 0)
+                return;
+
+            await FlushAsync(_pending, CancellationToken.None).ConfigureAwait(false);
+            _pending.Clear();
+        }
+        finally
+        {
+            _drainGate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public override void Dispose()
+    {
+        _drainGate.Dispose();
+        base.Dispose();
     }
 
     /// <summary>
@@ -178,11 +227,20 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             {
                 if (attempt == MaxFlushAttempts)
                 {
+                    // Retrying could not save the batch, so before giving up on all of it, try each
+                    // record on its own. A batch mixes records from *different* executions, and it
+                    // takes only one poisoned row — a duplicate (JobExecutionId, Sequence) from a
+                    // direct IJobExecutionWriter.Log caller, or a row whose parent execution the
+                    // cleanup job has just deleted — to fail the SaveChanges for all hundred.
+                    var salvaged = await SalvageIndividuallyAsync(batch, stoppingToken).ConfigureAwait(false);
+
                     _logger.LogError(
                         ex,
-                        "ScheduledJobsInsights dropped {RecordCount} buffered log/metric record(s) after {AttemptCount} failed write attempts. Job execution history is incomplete for this period; the writer is still running.",
+                        "ScheduledJobsInsights could not write a batch of {RecordCount} buffered log/metric record(s) after {AttemptCount} attempts. {SalvagedCount} were then written individually and {DroppedCount} dropped. Job execution history is incomplete for this period; the writer is still running.",
                         batch.Count,
-                        MaxFlushAttempts);
+                        MaxFlushAttempts,
+                        salvaged,
+                        batch.Count - salvaged);
                     return;
                 }
 
@@ -197,6 +255,43 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
                 await Task.Delay(RetryBackoff * attempt, stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Writes each record separately after a batch has failed, so one bad row costs one row.
+    /// </summary>
+    /// <returns>How many records were written.</returns>
+    /// <remarks>
+    /// Only reached once a batch has already failed three times, so the cost of a write per record
+    /// is irrelevant next to the alternative — losing the log lines of every job that happened to be
+    /// running at the same moment as the one that produced the bad row.
+    /// </remarks>
+    private async Task<int> SalvageIndividuallyAsync(List<JobRecord> batch, CancellationToken cancellationToken)
+    {
+        var salvaged = 0;
+        var single = new List<JobRecord>(1);
+
+        foreach (var record in batch)
+        {
+            single.Clear();
+            single.Add(record);
+
+            try
+            {
+                await WriteBatchAsync(single, cancellationToken).ConfigureAwait(false);
+                salvaged++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break; // Shutting down; the rest are lost either way.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "ScheduledJobsInsights dropped one unwritable log/metric record.");
+            }
+        }
+
+        return salvaged;
     }
 
     private async Task WriteBatchAsync(List<JobRecord> batch, CancellationToken cancellationToken)

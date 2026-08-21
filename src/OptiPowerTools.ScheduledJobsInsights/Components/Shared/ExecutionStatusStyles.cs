@@ -11,6 +11,8 @@ internal static class ExecutionStatusStyles
         ExecutionStatus.Failed => "#EF5350",
         // Amber rather than green or red: stopped is neither a success nor a fault.
         ExecutionStatus.Stopped => "#FFA726",
+        // Grey: nothing is known to have gone wrong, only that nothing was ever reported.
+        ExecutionStatus.Interrupted => "#9E9E9E",
         _ => "#4FC3F7"
     };
 
@@ -19,6 +21,7 @@ internal static class ExecutionStatusStyles
         ExecutionStatus.Succeeded => "Succeeded",
         ExecutionStatus.Failed => "Failed",
         ExecutionStatus.Stopped => "Stopped",
+        ExecutionStatus.Interrupted => "Interrupted",
         _ => "Running"
     };
 }

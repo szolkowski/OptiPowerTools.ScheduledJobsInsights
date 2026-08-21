@@ -38,6 +38,15 @@ internal sealed class OptiPowerToolScheduledJobsInsightsOptionsValidator
         RequirePositive(options.LogBatchSize, nameof(options.LogBatchSize), failures);
         RequirePositive(options.PageSize, nameof(options.PageSize), failures);
         RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), failures);
+        RequirePositive(options.MaxLogEntriesPerExecution, nameof(options.MaxLogEntriesPerExecution), failures);
+
+        // Not RequirePositive: the truncation marker has to fit inside the limit, so a limit of 1
+        // would produce a message shorter than the ellipsis replacing it.
+        if (options.InterruptedExecutionThreshold < TimeSpan.Zero)
+            failures.Add($"InterruptedExecutionThreshold cannot be negative (was {options.InterruptedExecutionThreshold}); use TimeSpan.Zero to disable the sweep.");
+
+        if (options.MaxLogMessageLength is > 0 and < 16)
+            failures.Add($"MaxLogMessageLength must be at least 16 (was {options.MaxLogMessageLength}), or zero to use the default.");
 
         if (options.LogFlushInterval <= TimeSpan.Zero)
             failures.Add($"LogFlushInterval must be greater than zero (was {options.LogFlushInterval}).");

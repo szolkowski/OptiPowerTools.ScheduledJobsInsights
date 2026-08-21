@@ -197,6 +197,59 @@ public class JobExecutionWriterTests
     }
 
     [Fact]
+    public void RecordMetric_ClampsANameAndUnitTooLongForTheirColumns()
+    {
+        // A 300-character metric name does not merely lose itself: the insert fails, and it takes the
+        // whole batch with it — including the log lines of every other job running at that moment.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+
+        writer.RecordMetric(1, new string('n', 300), 1, new string('u', 80));
+
+        var record = Assert.IsType<MetricRecordItem>(Assert.Single(ReadAll(channel)));
+        Assert.Equal(200, record.Name.Length);
+        Assert.Equal(50, record.Unit!.Length);
+    }
+
+    [Fact]
+    public void Log_ClampsAMessageBeyondTheConfiguredLimit()
+    {
+        // The column is unbounded, which is the problem: a job logging a response body per iteration
+        // writes megabytes per row.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { MaxLogMessageLength = 32 });
+        var writer = new JobExecutionWriter(factory, channel, options, NullLogger<JobExecutionWriter>.Instance);
+
+        writer.Log(1, 1, LogSeverity.Info, new string('x', 500), LogEntrySource.DevLog);
+
+        var record = Assert.IsType<LogRecordItem>(Assert.Single(ReadAll(channel)));
+        Assert.Equal(32, record.Message.Length);
+        Assert.EndsWith("…", record.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Log_LeavesAnOrdinaryMessageAlone()
+    {
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+
+        writer.Log(1, 1, LogSeverity.Info, "a perfectly normal line", LogEntrySource.DevLog);
+
+        Assert.Equal("a perfectly normal line", Assert.IsType<LogRecordItem>(Assert.Single(ReadAll(channel))).Message);
+    }
+
+    private static List<JobRecord> ReadAll(Channel<JobRecord> channel)
+    {
+        var records = new List<JobRecord>();
+        while (channel.Reader.TryRead(out var record))
+            records.Add(record);
+        return records;
+    }
+
+    [Fact]
     public void Log_DoesNotThrow_WhenTheSynchronousFallbackFails()
     {
         // A full buffer forces the synchronous path, and the database is unavailable. The job that

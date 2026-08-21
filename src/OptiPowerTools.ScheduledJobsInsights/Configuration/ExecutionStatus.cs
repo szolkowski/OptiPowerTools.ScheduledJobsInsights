@@ -23,5 +23,18 @@ public enum ExecutionStatus : byte
     /// The run ended early because an administrator stopped it from the CMS. Distinct from
     /// <see cref="Succeeded"/>: the work was cut short, so its result is not a clean outcome.
     /// </summary>
-    Stopped = 3
+    Stopped = 3,
+
+    /// <summary>
+    /// The run never reported an outcome and has been given up on — the process was recycled, the
+    /// container replaced, or the host crashed while the job was running.
+    /// </summary>
+    /// <remarks>
+    /// Applied retrospectively by the cleanup job, not by the run itself: a process that dies
+    /// mid-execution writes nothing further by definition, which is precisely why the row would
+    /// otherwise sit at <see cref="Running"/> for ever. Distinct from <see cref="Failed"/> — nothing
+    /// is known to have gone wrong with the work — and from <see cref="Stopped"/>, which was somebody
+    /// deciding.
+    /// </remarks>
+    Interrupted = 4
 }

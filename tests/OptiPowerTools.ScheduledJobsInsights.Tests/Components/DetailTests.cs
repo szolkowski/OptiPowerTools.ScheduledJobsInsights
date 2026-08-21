@@ -6,6 +6,7 @@ using DetailPage = OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 
+[Collection(DetailTestCollection.Name)]
 public class DetailTests : ComponentTestBase
 {
     private IRenderedComponent<DetailPage> RenderDetail(long id = 1, string? viewerTimeZone = null) =>

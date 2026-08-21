@@ -51,6 +51,9 @@ public class LoggedScheduledJobBaseTests
         writer.Received(1).RecordMetric(1L, JobMetricNames.AllocatedBytes, Arg.Any<double>(), "bytes");
         writer.Received(1).RecordMetric(1L, JobMetricNames.CpuTimeMs, Arg.Any<double>(), "ms");
         writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen0Collections, Arg.Any<double>(), null);
+        // All three generations: asserting only Gen0 let the Gen1/Gen2 lines be deleted silently.
+        writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen1Collections, Arg.Any<double>(), null);
+        writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen2Collections, Arg.Any<double>(), null);
     }
 
     [Fact]

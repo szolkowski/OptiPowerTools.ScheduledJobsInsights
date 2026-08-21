@@ -1,4 +1,5 @@
 using System.Reflection;
+using EPiServer.Framework.TypeScanner;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Retention;
@@ -24,9 +25,18 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 internal sealed class LoggedJobTypeIndex
 {
     private readonly Lazy<Dictionary<string, JobRetentionAttribute?>> _loggedJobs;
+    private readonly ITypeScannerLookup? _typeScanner;
 
-    public LoggedJobTypeIndex()
+    /// <summary>Initializes the index.</summary>
+    /// <param name="typeScanner">
+    /// Optimizely's own scanner, which is the supported way to enumerate types in a CMS: it sees the
+    /// assemblies the platform scans, rather than whichever happen to be loaded at the moment this
+    /// runs. Optional so the index still works where the platform is not present — unit tests, and
+    /// any host that has not registered it — falling back to the loaded assemblies.
+    /// </param>
+    public LoggedJobTypeIndex(ITypeScannerLookup? typeScanner = null)
     {
+        _typeScanner = typeScanner;
         _loggedJobs = new Lazy<Dictionary<string, JobRetentionAttribute?>>(
             Scan, LazyThreadSafetyMode.ExecutionAndPublication);
     }
@@ -41,28 +51,62 @@ internal sealed class LoggedJobTypeIndex
     public JobRetentionAttribute? FindAttribute(string jobTypeName) =>
         _loggedJobs.Value.GetValueOrDefault(jobTypeName);
 
-    private static Dictionary<string, JobRetentionAttribute?> Scan()
+    private Dictionary<string, JobRetentionAttribute?> Scan()
     {
         // A plain dictionary is enough: Lazy(ExecutionAndPublication) guarantees exactly one thread
         // ever runs this, and the result is never mutated afterwards.
         var found = new Dictionary<string, JobRetentionAttribute?>(StringComparer.Ordinal);
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in CandidateTypes())
         {
-            if (assembly.IsDynamic)
-                continue;
-
-            foreach (var type in SafeGetTypes(assembly))
+            if (type is { IsAbstract: false, FullName: { } fullName }
+                && typeof(LoggedScheduledJobBase).IsAssignableFrom(type))
             {
-                if (type is { IsAbstract: false, FullName: { } fullName }
-                    && typeof(LoggedScheduledJobBase).IsAssignableFrom(type))
-                {
-                    found.TryAdd(fullName, type.GetCustomAttribute<JobRetentionAttribute>(inherit: false));
-                }
+                found.TryAdd(fullName, type.GetCustomAttribute<JobRetentionAttribute>(inherit: false));
             }
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// The types to consider: Optimizely's scan where the platform provides one, otherwise whatever
+    /// is loaded.
+    /// </summary>
+    /// <remarks>
+    /// The fallback is genuinely weaker, which is why it is only a fallback:
+    /// <c>AppDomain.CurrentDomain.GetAssemblies()</c> returns what the CLR has loaded at that instant,
+    /// and the result is cached for the process. A logged job in an assembly not yet loaded when the
+    /// cleanup job first runs would be missing from the governed set — so a
+    /// <c>[JobRetention(Indefinite)]</c> on it would not protect it, and the default sweep would
+    /// delete history the author explicitly asked to keep for ever.
+    /// </remarks>
+    private IEnumerable<Type> CandidateTypes()
+    {
+        if (_typeScanner is null)
+        {
+            return AppDomain.CurrentDomain.GetAssemblies()
+                .Where(assembly => !assembly.IsDynamic)
+                .SelectMany(SafeGetTypes);
+        }
+
+        try
+        {
+            return _typeScanner.AllTypes;
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            // Partial results are the point: the exception carries the types that did load, and one
+            // unloadable plugin type must not empty the whole index. An empty index is not a
+            // cosmetic loss — the cleanup job's list of jobs to *leave alone* comes from here, so
+            // losing it would let the default sweep delete history a job asked to keep for ever.
+            return ex.Types.Where(type => type is not null)!;
+        }
+        catch (Exception)
+        {
+            // Same reasoning, for a scanner that fails some other way.
+            return [];
+        }
     }
 
     private static IEnumerable<Type> SafeGetTypes(Assembly assembly)

@@ -5,6 +5,12 @@
     var viewerTimeZone = (string?)ViewBag.ViewerTimeZone;
     var showRetention = (bool)(ViewBag.ShowRetention ?? false);
     var currentUser = (string?)ViewBag.CurrentUser;
+
+    // The scoped-CSS bundle is named after the entry assembly. ApplicationName usually equals it but
+    // is settable independently through WebApplicationOptions, so prefer the assembly name and fall
+    // back only when there isn't one.
+    var scopedCssName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
+        ?? HostEnvironment.ApplicationName;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -27,9 +33,17 @@
 
     @* Razor scoped CSS (Index.razor.css / Detail.razor.css) is bundled into the *host* application's
        stylesheet, whose name follows the entry assembly - hence resolving it at runtime rather than
-       hardcoding a name this package cannot know. *@
-    <link rel="stylesheet" href="@Url.Content($"~/{HostEnvironment.ApplicationName}.styles.css")" />
-    <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" />
+       hardcoding a name this package cannot know.
+
+       ApplicationName is not guaranteed to match that bundle: a host can set it explicitly through
+       WebApplicationOptions, and the bundle keeps the assembly name. When they differ this link 404s
+       and the components render unstyled, so the assembly name is preferred when it is available and
+       ApplicationName is only the fallback.
+
+       asp-append-version on both: an upgraded package otherwise serves whatever CSS the browser
+       cached from the previous version, which is a support call that looks like a rendering bug. *@
+    <link rel="stylesheet" href="@Url.Content($"~/{scopedCssName}.styles.css")" asp-append-version="true" />
+    <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" asp-append-version="true" />
 
     @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in the
        document head, before the components below are rendered on any subsequent request, and the

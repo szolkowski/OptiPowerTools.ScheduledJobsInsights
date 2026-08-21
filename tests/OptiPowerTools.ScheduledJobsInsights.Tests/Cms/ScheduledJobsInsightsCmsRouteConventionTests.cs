@@ -1,5 +1,8 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
+using Microsoft.AspNetCore.Mvc.Routing;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
@@ -12,11 +15,27 @@ public class ScheduledJobsInsightsCmsRouteConventionTests
             typeof(ScheduledJobsInsightsCmsController).GetTypeInfo(), Array.Empty<object>());
         var actionMethod = typeof(ScheduledJobsInsightsCmsController)
             .GetMethod(nameof(ScheduledJobsInsightsCmsController.Index))!;
-        var actionModel = new ActionModel(actionMethod, Array.Empty<object>())
+        var actionModel = new ActionModel(actionMethod, actionMethod.GetCustomAttributes(inherit: true))
         {
             ActionName = nameof(ScheduledJobsInsightsCmsController.Index),
             Controller = controllerModel
         };
+
+        // The selector MVC itself would have built from [HttpGet]. Without it the convention has no
+        // constraint to lose, and a test asserting Single(Selectors) passes whether or not the
+        // convention throws the verb restriction away.
+        var httpMethods = actionMethod
+            .GetCustomAttributes<HttpGetAttribute>(inherit: true)
+            .SelectMany(attribute => attribute.HttpMethods)
+            .ToArray();
+
+        Assert.NotEmpty(httpMethods);
+
+        actionModel.Selectors.Add(new SelectorModel
+        {
+            ActionConstraints = { new HttpMethodActionConstraint(httpMethods) }
+        });
+
         controllerModel.Actions.Add(actionModel);
 
         var application = new ApplicationModel();
@@ -39,6 +58,21 @@ public class ScheduledJobsInsightsCmsRouteConventionTests
         // on its loading dots.
         var selector = Assert.Single(actionModel.Selectors);
         Assert.Equal("/custom/shell/path", selector.AttributeRouteModel!.Template);
+    }
+
+    [Fact]
+    public void Apply_KeepsTheVerbRestriction()
+    {
+        // The convention rewrites the route by replacing the selector. Replacing it outright also
+        // discarded the HttpMethodActionConstraint that [HttpGet] produces, leaving an endpoint that
+        // answered every verb — POST, PUT and DELETE all rendered the page.
+        var (application, actionModel) = CreateApplicationModel();
+
+        new ScheduledJobsInsightsCmsRouteConvention("/custom/shell/path").Apply(application);
+
+        var constraint = Assert.IsType<HttpMethodActionConstraint>(
+            Assert.Single(Assert.Single(actionModel.Selectors).ActionConstraints));
+        Assert.Equal(["GET"], constraint.HttpMethods);
     }
 
     [Fact]

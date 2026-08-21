@@ -17,6 +17,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 /// function name are asserted implicitly, and a typo in either is a test failure rather than a button
 /// that silently does nothing in the browser.
 /// </remarks>
+[Collection(DetailTestCollection.Name)]
 public class DetailInteropTests : ComponentTestBase
 {
     /// <summary>Must match the import in Detail.razor exactly; strict mode is what enforces that.</summary>

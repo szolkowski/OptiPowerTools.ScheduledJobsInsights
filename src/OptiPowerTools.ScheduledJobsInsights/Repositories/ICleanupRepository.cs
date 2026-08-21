@@ -45,4 +45,18 @@ public interface ICleanupRepository
         DateTimeOffset cutoff,
         int batchSize,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks executions still running since before <paramref name="cutoff"/> as
+    /// <see cref="Configuration.ExecutionStatus.Interrupted"/>.
+    /// </summary>
+    /// <param name="cutoff">Runs started before this and still unfinished are given up on.</param>
+    /// <param name="cancellationToken">Cancelled when an administrator stops the cleanup job.</param>
+    /// <returns>How many executions were marked.</returns>
+    /// <remarks>
+    /// A process recycled mid-run cannot record its own outcome, so nothing else will ever finish
+    /// these rows. Left alone they accumulate, and every count, filter and "is it still running?"
+    /// question is wrong for as long as they sit there.
+    /// </remarks>
+    int MarkInterruptedExecutions(DateTimeOffset cutoff, CancellationToken cancellationToken = default);
 }

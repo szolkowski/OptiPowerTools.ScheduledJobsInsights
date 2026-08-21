@@ -12,7 +12,9 @@ public class OptiPowerToolScheduledJobsInsightsOptionsTests
 
         Assert.Equal("/ScheduledJobsInsightsCms/Index", options.CmsShellPath);
         Assert.True(options.EnableCmsMenu);
-        Assert.True(options.EnableStandardAuthorization);
+        Assert.False(options.AllowAnyAuthenticatedUser);
+        Assert.Null(options.AuthorizationPolicy);
+        Assert.Null(options.MapBlazorHub);
         Assert.Equal(CmsMenuPlacement.CmsSection, options.MenuPlacement);
         Assert.Contains("Administrators", options.AuthorizedRoles);
         Assert.Equal(JobResultSummary.DefaultMaxLength, options.MaxResultSummaryLength);

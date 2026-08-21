@@ -4,6 +4,7 @@ using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Jobs;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
+using OptiPowerTools.ScheduledJobsInsights.Tests.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
 using OptiPowerTools.ScheduledJobsInsights.Retention;
 
@@ -21,8 +22,7 @@ public class ScheduledJobsInsightsCleanupJobTests
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
 
         return new ScheduledJobsInsightsCleanupJob(
-            writer,
-            Substitute.For<IScheduledJobRepository>(),
+            TestJobLoggingContext.For(writer),
             repository,
             retention,
             Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
@@ -50,21 +50,21 @@ public class ScheduledJobsInsightsCleanupJobTests
     {
         // The loop is convergent rather than counted: it keeps going until a batch comes back empty.
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(500, 500, 120, 0);
 
         var result = CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30))).Execute();
 
         Assert.Contains("1120", result);
         repository.Received(4).DeleteExecutionsOlderThan(
-            Arg.Any<DateTimeOffset>(), 500, Arg.Any<IReadOnlyCollection<string>>());
+            Arg.Any<DateTimeOffset>(), 500, Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public void Execute_UsesTheDefaultRetentionForTheCutoff()
     {
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
         var before = DateTimeOffset.UtcNow.AddDays(-7);
 
@@ -73,7 +73,7 @@ public class ScheduledJobsInsightsCleanupJobTests
         repository.Received().DeleteExecutionsOlderThan(
             Arg.Is<DateTimeOffset>(cutoff => cutoff >= before.AddMinutes(-1) && cutoff <= before.AddMinutes(1)),
             Arg.Any<int>(),
-            Arg.Any<IReadOnlyCollection<string>>());
+            Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -81,9 +81,9 @@ public class ScheduledJobsInsightsCleanupJobTests
     {
         // Otherwise the default would delete history that a job explicitly asked to keep for longer.
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
-        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(0);
 
         var retention = RetentionOf(
@@ -95,16 +95,17 @@ public class ScheduledJobsInsightsCleanupJobTests
         repository.Received().DeleteExecutionsOlderThan(
             Arg.Any<DateTimeOffset>(),
             Arg.Any<int>(),
-            Arg.Is<IReadOnlyCollection<string>>(excluded => excluded.Contains("Contoso.Jobs.AuditJob")));
+            Arg.Is<IReadOnlyCollection<string>>(excluded => excluded.Contains("Contoso.Jobs.AuditJob")),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public void Execute_AppliesEachJobsOwnCutoff()
     {
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
-        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(3, 0);
 
         var retention = RetentionOf(
@@ -117,7 +118,8 @@ public class ScheduledJobsInsightsCleanupJobTests
         repository.Received().DeleteExecutionsOlderThan(
             "Contoso.Jobs.ChattyJob",
             Arg.Is<DateTimeOffset>(cutoff => cutoff >= expected.AddMinutes(-1) && cutoff <= expected.AddMinutes(1)),
-            Arg.Any<int>());
+            Arg.Any<int>(),
+            Arg.Any<CancellationToken>());
         Assert.Contains("3", result);
     }
 
@@ -125,7 +127,7 @@ public class ScheduledJobsInsightsCleanupJobTests
     public void Execute_SkipsJobsSetToIndefinite()
     {
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
 
         var retention = RetentionOf(
@@ -135,7 +137,7 @@ public class ScheduledJobsInsightsCleanupJobTests
         CreateJob(repository, retention).Execute();
 
         repository.DidNotReceive().DeleteExecutionsOlderThan(
-            "Contoso.Jobs.ForeverJob", Arg.Any<DateTimeOffset>(), Arg.Any<int>());
+            "Contoso.Jobs.ForeverJob", Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -143,7 +145,7 @@ public class ScheduledJobsInsightsCleanupJobTests
     {
         // An installation can choose to keep everything by default and trim only the noisy jobs.
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(2, 0);
 
         var retention = RetentionOf(
@@ -153,16 +155,16 @@ public class ScheduledJobsInsightsCleanupJobTests
         CreateJob(repository, retention).Execute();
 
         repository.DidNotReceive().DeleteExecutionsOlderThan(
-            Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>());
+            Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>());
         repository.Received().DeleteExecutionsOlderThan(
-            "Contoso.Jobs.ChattyJob", Arg.Any<DateTimeOffset>(), Arg.Any<int>());
+            "Contoso.Jobs.ChattyJob", Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public void Execute_WithNothingToDelete_ReportsZeroRatherThanFailing()
     {
         var repository = Substitute.For<ICleanupRepository>();
-        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>())
+        repository.DeleteExecutionsOlderThan(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
 
         var result = CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30))).Execute();

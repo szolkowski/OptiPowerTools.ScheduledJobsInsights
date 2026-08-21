@@ -31,8 +31,8 @@ public sealed class BulkSummaryJob : LoggedScheduledJobBase
 
     private static readonly string[] Sections = ["Products", "Campaigns", "Support articles", "Press releases"];
 
-    public BulkSummaryJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public BulkSummaryJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

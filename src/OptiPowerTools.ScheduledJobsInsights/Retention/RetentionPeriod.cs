@@ -9,14 +9,54 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// configured period; whether one exists at all is expressed by the nullability of the field holding
 /// it.
 /// </remarks>
-/// <param name="Days">Days to keep, or <c>null</c> for indefinitely.</param>
-public readonly record struct RetentionPeriod(int? Days)
+/// <remarks>
+/// <para>
+/// There is no public constructor, and that is the point. The only two ways to make one are
+/// <see cref="Indefinite"/> and <see cref="OfDays"/>, which is what makes the type's promise —
+/// a positive number of days, or forever — true rather than merely documented. A zero would make
+/// <see cref="CutoffFrom"/> return <em>now</em> and delete a job's entire history, including the run
+/// currently in progress; a negative one would put the cutoff in the future and do the same.
+/// </para>
+/// <para>
+/// <c>default(RetentionPeriod)</c> is <see cref="Indefinite"/>: of the values a zeroed struct could
+/// mean, keeping everything is the only harmless one.
+/// </para>
+/// </remarks>
+public readonly record struct RetentionPeriod
 {
+    /// <summary>Days to keep, or <c>null</c> for indefinitely.</summary>
+    public int? Days { get; private init; }
+
     /// <summary>Keep forever — the cleanup job skips these executions entirely.</summary>
-    public static RetentionPeriod Indefinite => new((int?)null);
+    public static RetentionPeriod Indefinite => new() { Days = null };
 
     /// <summary>Keep for a fixed number of days.</summary>
-    public static RetentionPeriod OfDays(int days) => new(days);
+    /// <param name="days">A positive number of days.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="days"/> is zero or negative.</exception>
+    public static RetentionPeriod OfDays(int days)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(days);
+
+        return new RetentionPeriod { Days = days };
+    }
+
+    /// <summary>
+    /// Reads a period from storage, returning <c>null</c> when the stored value cannot be acted on.
+    /// </summary>
+    /// <param name="days">The stored value: <c>null</c> for indefinite, otherwise a day count.</param>
+    /// <remarks>
+    /// Storage is outside this type's control — a hand-edited row, a restored backup, a script — so
+    /// reading is the one path that must cope with a value <see cref="OfDays"/> would reject. A
+    /// non-positive value is reported as unusable rather than obeyed, since obeying it would delete
+    /// the history it was supposed to govern.
+    /// </remarks>
+    internal static RetentionPeriod? FromStoredValue(int? days)
+    {
+        if (days is null)
+            return Indefinite;
+
+        return days > 0 ? OfDays(days.Value) : null;
+    }
 
     /// <summary>Whether this period never expires.</summary>
     public bool IsIndefinite => Days is null;

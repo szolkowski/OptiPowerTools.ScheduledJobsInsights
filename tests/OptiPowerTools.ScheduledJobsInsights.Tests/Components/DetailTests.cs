@@ -227,4 +227,13 @@ public class DetailTests : ComponentTestBase
     private static AngleSharp.Dom.IElement SectionTitled(IRenderedComponent<DetailPage> page, string title) =>
         page.FindAll("details.accordion")
             .Single(section => section.QuerySelector(".accordion-title")!.TextContent.Trim() == title);
+    [Fact]
+    public void ANonDefaultCmsShellPath_FlowsIntoTheBackLink()
+    {
+        Options.CmsShellPath = "/custom/insights";
+        GivenExecution(AnExecution());
+
+        Assert.Equal("/custom/insights", RenderDetail().Find("a").GetAttribute("href"));
+    }
+
 }

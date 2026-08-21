@@ -29,8 +29,8 @@ public sealed class SummaryShowcaseJob : LoggedScheduledJobBase
     private const int Batches = 12;
     private const int ItemsPerBatch = 120;
 
-    public SummaryShowcaseJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public SummaryShowcaseJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

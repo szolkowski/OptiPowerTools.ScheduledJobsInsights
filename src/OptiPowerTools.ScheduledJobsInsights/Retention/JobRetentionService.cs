@@ -137,7 +137,21 @@ internal sealed class JobRetentionService : IJobRetentionService
             .ConfigureAwait(false);
 
         foreach (var policy in overrides)
-            effective[policy.JobTypeName] = new RetentionPeriod(policy.RetentionDays);
+        {
+            if (RetentionPeriod.FromStoredValue(policy.RetentionDays) is { } stored)
+            {
+                effective[policy.JobTypeName] = stored;
+                continue;
+            }
+
+            // Left to the attribute or the default rather than obeyed. A stored zero or negative
+            // resolves to a cutoff of now-or-later, which would delete the very history the row was
+            // written to govern — including the run in progress.
+            _logger.LogWarning(
+                "ScheduledJobsInsights is ignoring the stored retention of {RetentionDays} day(s) for {JobTypeName}: it must be a positive number of days, or null for indefinite. The job falls back to its attribute or the installation default until the row is corrected.",
+                policy.RetentionDays,
+                policy.JobTypeName);
+        }
 
         return effective;
     }
@@ -152,6 +166,8 @@ internal sealed class JobRetentionService : IJobRetentionService
         var isRegistered = registered.TryGetValue(jobTypeName, out var registeredName);
         overrides.TryGetValue(jobTypeName, out var policy);
 
+        var storedOverride = policy is null ? null : RetentionPeriod.FromStoredValue(policy.RetentionDays);
+
         return new JobRetention(
             JobTypeName: jobTypeName,
             DisplayName: isRegistered ? registeredName! : ShortNameOf(jobTypeName),
@@ -160,7 +176,8 @@ internal sealed class JobRetentionService : IJobRetentionService
             Attribute: attribute is null ? null : RetentionPeriod.FromAttribute(attribute),
             AttributeDescription: attribute?.Description,
             HasInvalidAttribute: attribute is { IsValid: false },
-            Override: policy is null ? null : new RetentionPeriod(policy.RetentionDays),
+            Override: storedOverride,
+            HasInvalidOverride: policy is not null && storedOverride is null,
             ModifiedBy: policy?.ModifiedBy,
             ModifiedAt: policy?.ModifiedAt,
             ExecutionCount: history.GetValueOrDefault(jobTypeName));

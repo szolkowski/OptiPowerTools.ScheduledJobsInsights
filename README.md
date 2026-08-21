@@ -94,7 +94,6 @@ Connection string can point to the same database as Optimizely or to a separate 
 Derive from `LoggedScheduledJobBase` and implement `ExecuteJob()` instead of the usual `Execute()`:
 
 ```csharp
-using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
@@ -102,8 +101,8 @@ using OptiPowerTools.ScheduledJobsInsights.Logging;
 [ScheduledJob(DisplayName = "Nightly Catalog Sync", IntervalType = ScheduledIntervalType.Days)]
 public class CatalogSyncJob : LoggedScheduledJobBase
 {
-    public CatalogSyncJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public CatalogSyncJob(JobLoggingContext context)
+        : base(context)
     {
     }
 
@@ -129,7 +128,8 @@ public class CatalogSyncJob : LoggedScheduledJobBase
 - `Execute()` is sealed — the wrapper always runs, so implement `ExecuteJob()` instead.
 - Every `OnStatusChanged(...)` call you make is captured automatically, in addition to the native event.
 - If `ExecuteJob()` throws, the exception is recorded (message, stack trace) and then rethrown unchanged — native CMS admin's failure tracking behaves exactly as it would without this package.
-- Constructor parameters are resolved via DI, the same way Optimizely already constructs every `ScheduledJobBase`.
+- Constructor parameters are resolved via DI, the same way Optimizely already constructs every `ScheduledJobBase` — add your own alongside `JobLoggingContext` and forward only the context to `base`.
+- **Stoppable jobs**: set `IsStoppable = true` in your constructor and check `IsStopRequested` between units of work. A run that ends after a stop request is recorded as **Stopped** rather than as a success, so the history says what actually happened.
 
 ### Result summary
 
@@ -260,7 +260,8 @@ services.AddOptiPowerToolScheduledJobsInsights(options =>
 
     options.PageTitle = "Scheduled Jobs Insights";
     options.AuthorizedRoles = ["Administrators", "CmsAdmins", "WebAdmins"];
-    options.EnableStandardAuthorization = true;
+    // Authorization: roles by default. Name a policy of your own with options.AuthorizationPolicy,
+    // or set options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
     options.EnableCmsMenu = true;
     options.MenuPlacement = CmsMenuPlacement.CmsSection;
     options.MenuPath = null;
@@ -289,7 +290,7 @@ services.AddOptiPowerToolScheduledJobsInsights(options =>
       "MaxResultSummaryLength": 100000,
       "PageTitle": "Scheduled Jobs Insights",
       "AuthorizedRoles": ["Administrators", "CmsAdmins", "WebAdmins"],
-      "EnableStandardAuthorization": true,
+
       "EnableCmsMenu": true,
       "MenuPlacement": "CmsSection",
       "ShowInDataSyncManagement": true,
@@ -316,8 +317,10 @@ Code overrides configuration when both are used.
 | `PageSize` | `int` | `50` | Executions shown per page in the Blazor list. |
 | `MaxResultSummaryLength` | `int` | `100000` | Character limit for an execution's result summary. Appends past it are discarded and the stored text ends with a truncation notice. Values of zero or less fall back to the default. |
 | `PageTitle` | `string` | `"Scheduled Jobs Insights"` | Title shown in the CMS shell chrome and browser tab. |
-| `AuthorizedRoles` | `string[]` | `["Administrators", "CmsAdmins", "WebAdmins"]` | Optimizely roles allowed to access the page. |
-| `EnableStandardAuthorization` | `bool` | `true` | Apply the built-in role check in the CMS shell controller. |
+| `AuthorizedRoles` | `IList<string>` | `["Administrators", "CmsAdmins", "WebAdmins"]` | Optimizely roles allowed to reach the page, the retention screen and the menu entries. Ignored when `AuthorizationPolicy` or `AllowAnyAuthenticatedUser` is set. |
+| `AuthorizationPolicy` | `string?` | `null` | Name of an authorization policy **you** registered, used instead of the role check. Startup fails with a named error if no such policy exists. |
+| `AllowAnyAuthenticatedUser` | `bool` | `false` | Drops the role check entirely. ⚠️ On a site with front-end membership, "authenticated" includes ordinary visitors — who could then read execution history and any captured input data. |
+| `MapBlazorHub` | `bool?` | `null` | Whether `UseOptiPowerToolScheduledJobsInsights` maps the Blazor hub. `null` detects an existing `/_blazor` mapping and skips its own. |
 | `EnableCmsMenu` | `bool` | `true` | Add a menu item to the Optimizely CMS navigation. |
 | `MenuPlacement` | `CmsMenuPlacement` | `CmsSection` | Where the menu item appears: `CmsSection`, `TopLevel`, or `CustomSection`. |
 | `MenuPath` | `string?` | `null` | Overrides the auto-derived menu path. |
@@ -395,7 +398,25 @@ needs the database to show anything.
 
 ## Database & migrations
 
-Tables live in a fixed SQL Server schema (`scheduled_jobs_insights`) via standard EF Core Migrations — there is no `SchemaName` option, so the schema location is not runtime-configurable. Pending migrations are applied automatically at startup unless `AutoMigrateDatabase` is set to `false`, in which case apply them yourself with the standard EF Core tooling:
+Tables live in a fixed SQL Server schema (`scheduled_jobs_insights`) via standard EF Core Migrations — there is no `SchemaName` option, so the schema location is not runtime-configurable.
+
+### Applying the schema
+
+By default the package applies pending migrations at startup. If the application's identity has no
+DDL rights — common on DXP — set `AutoMigrateDatabase = false` and apply the schema yourself.
+
+**Every release ships an idempotent SQL script** for exactly this, attached to the
+[GitHub release](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/releases) as
+`scheduled-jobs-insights-<version>.sql`. Run it with any tool you like; it is safe to re-run against a
+database at any migration level, including one that is already current:
+
+```bash
+sqlcmd -S <server> -d <database> -i scheduled-jobs-insights-1.0.0.sql
+```
+
+That script is the supported route for a consuming application. The `dotnet ef` command below works
+only inside a checkout of *this* repository, because `ScheduledJobsInsightsDbContext` and its
+design-time factory are `internal`:
 
 ```bash
 dotnet ef database update \
@@ -407,6 +428,10 @@ No `--startup-project` is needed — `Data/ScheduledJobsInsightsDbContextFactory
 `IDesignTimeDbContextFactory`, so the library serves as its own startup project. (Passing the `.Web`
 host instead fails: `Microsoft.EntityFrameworkCore.Design` is a `PrivateAssets="All"` reference of the
 library and does not flow to it.)
+
+> **Scaled-out deployments**: startup migration runs on every instance, and EF takes no lock across
+> them. Prefer the script, applied once as a deployment step, when more than one instance can start
+> at the same time.
 
 ## Retention
 

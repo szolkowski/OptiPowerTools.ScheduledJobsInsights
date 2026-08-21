@@ -9,6 +9,8 @@ internal static class ExecutionStatusStyles
     {
         ExecutionStatus.Succeeded => "#66BB6A",
         ExecutionStatus.Failed => "#EF5350",
+        // Amber rather than green or red: stopped is neither a success nor a fault.
+        ExecutionStatus.Stopped => "#FFA726",
         _ => "#4FC3F7"
     };
 
@@ -16,6 +18,7 @@ internal static class ExecutionStatusStyles
     {
         ExecutionStatus.Succeeded => "Succeeded",
         ExecutionStatus.Failed => "Failed",
+        ExecutionStatus.Stopped => "Stopped",
         _ => "Running"
     };
 }

@@ -11,7 +11,7 @@ public class JobRetentionPrecedenceTests
     private static JobRetention Job(RetentionPeriod? attribute, RetentionPeriod? overridden) =>
         new("Contoso.Jobs.Thing", "Thing", IsRegistered: true, ExistsInCode: true, attribute,
             AttributeDescription: null, HasInvalidAttribute: false, overridden,
-            ModifiedBy: null, ModifiedAt: null, ExecutionCount: 0);
+            HasInvalidOverride: false, ModifiedBy: null, ModifiedAt: null, ExecutionCount: 0);
 
     private static readonly RetentionPeriod Default = RetentionPeriod.OfDays(30);
 

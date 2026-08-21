@@ -22,8 +22,8 @@ public sealed class FlakyImportJob : LoggedScheduledJobBase
 {
     private static int _runCount;
 
-    public FlakyImportJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public FlakyImportJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

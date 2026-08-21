@@ -4,11 +4,17 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// The retention rules in force, as the cleanup job needs them.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Deliberately narrower than the service backing the Job Retention screen. That one deals in
 /// attributes, audit trails, execution counts and jobs that no longer exist — none of which the
 /// cleanup job has any use for. Keeping the two apart is also what lets the richer type stay
 /// internal: <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> has to be public for Optimizely to
 /// discover it, so every type in its constructor must be public too.
+/// </para>
+/// <para>
+/// Intended to be consumed rather than implemented. Members may be added in a future minor version,
+/// which would break an outside implementation.
+/// </para>
 /// </remarks>
 public interface IJobRetentionPolicySource
 {

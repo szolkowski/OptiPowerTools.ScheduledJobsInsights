@@ -24,8 +24,8 @@ public sealed class StatusReportingJob : LoggedScheduledJobBase
         "Warming caches"
     ];
 
-    public StatusReportingJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public StatusReportingJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

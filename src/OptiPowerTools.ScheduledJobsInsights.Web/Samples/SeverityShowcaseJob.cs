@@ -13,8 +13,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 [ScheduledJob(DisplayName = "Sample: Severity Showcase", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
 public sealed class SeverityShowcaseJob : LoggedScheduledJobBase
 {
-    public SeverityShowcaseJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public SeverityShowcaseJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

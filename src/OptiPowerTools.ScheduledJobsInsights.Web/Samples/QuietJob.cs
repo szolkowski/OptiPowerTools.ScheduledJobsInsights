@@ -14,8 +14,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 [ScheduledJob(DisplayName = "Sample: Quiet", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
 public sealed class QuietJob : LoggedScheduledJobBase
 {
-    public QuietJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public QuietJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

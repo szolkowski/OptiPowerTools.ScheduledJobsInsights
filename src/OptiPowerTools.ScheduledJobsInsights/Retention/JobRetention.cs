@@ -21,7 +21,13 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// True when the job carries an attribute whose value cannot be acted on. Surfaced rather than
 /// swallowed: silently ignoring it would leave the author believing retention was configured.
 /// </param>
-/// <param name="Override">An administrator's choice, if one has been made.</param>
+/// <param name="Override">An administrator's choice, if one has been made and is usable.</param>
+/// <param name="HasInvalidOverride">
+/// True when a stored override row exists but holds a value that cannot be acted on — a non-positive
+/// day count, which would delete everything rather than retain it. Surfaced for the same reason as
+/// <paramref name="HasInvalidAttribute"/>: the row is being ignored, and whoever wrote it should be
+/// told rather than left believing it applies.
+/// </param>
 /// <param name="ModifiedBy">Who made that choice.</param>
 /// <param name="ModifiedAt">When they made it.</param>
 /// <param name="ExecutionCount">How many executions are currently stored for this job.</param>
@@ -34,6 +40,7 @@ internal sealed record JobRetention(
     string? AttributeDescription,
     bool HasInvalidAttribute,
     RetentionPeriod? Override,
+    bool HasInvalidOverride,
     string? ModifiedBy,
     DateTimeOffset? ModifiedAt,
     int ExecutionCount)

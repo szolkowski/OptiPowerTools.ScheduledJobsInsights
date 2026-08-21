@@ -211,4 +211,19 @@ public class IndexTests : ComponentTestBase
         QueryService.Received().GetExecutionsAsync(
             Arg.Any<ExecutionFilter>(), Arg.Any<ExecutionCursor?>(), 7, Arg.Any<CancellationToken>());
     }
+    [Fact]
+    public void ANonDefaultCmsShellPath_FlowsIntoEveryLinkTheListRenders()
+    {
+        // CmsShellPath is simultaneously a route template, a menu URL and the base for these links.
+        // Only the first two were covered, so a link that quietly kept the default path would have
+        // shipped: it 404s on any installation that moved the page.
+        Options.CmsShellPath = "/custom/insights";
+        GivenPage(ARow(id: 7));
+
+        var page = RenderList();
+
+        Assert.Equal("/custom/insights?id=7", page.Find(".executions-table tbody a").GetAttribute("href"));
+        Assert.Equal("/custom/insights?view=retention", page.Find("a.action-link").GetAttribute("href"));
+    }
+
 }

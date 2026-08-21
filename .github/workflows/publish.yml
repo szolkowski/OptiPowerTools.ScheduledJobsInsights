@@ -1,16 +1,39 @@
 name: Publish NuGet
 
+# Tagging is the release. The tag is the single source of the version — the csproj's <Version> is
+# only what a local `dotnet pack` produces, and shipping that by accident is how v1.0.0 would have
+# published a package stamped 0.9.5.
 on:
   push:
-    tags: ['v1.*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+env:
+  PROJECT: src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
+  TESTS: tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj
+  MSSQL_SA_PASSWORD: Episerver123!
+  SQLSERVER_IMAGE: mcr.microsoft.com/mssql/server:2022-latest
 
 jobs:
   publish:
     runs-on: ubuntu-latest
 
     permissions:
-      packages: write
+      # Trusted Publishing: GitHub mints a short-lived OIDC token, nuget.org validates it against the
+      # registered policy and hands back a temporary API key. No long-lived secret to store or rotate.
+      id-token: write
       contents: write
+
+    services:
+      # Used only to prove the shipped migration script applies. Same image, credentials and shape as
+      # build.yml's, deliberately: two workflows disagreeing about how they stand up SQL Server is a
+      # maintenance trap. Throwaway container that lives and dies with the job.
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Episerver123!
+        ports:
+          - 1433:1433
 
     steps:
       - uses: actions/checkout@v4
@@ -22,22 +45,104 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Pack
-        run: dotnet pack src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj -c Release -o ./nupkg
+      - name: Resolve version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a SemVer version tag (expected vMAJOR.MINOR.PATCH[-prerelease])."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
 
-      - name: Push to GitHub Packages
-        run: dotnet nuget push ./nupkg/*.nupkg --source "https://nuget.pkg.github.com/szolkowski/index.json" --api-key "$NUGET_API_KEY"
-        env:
-          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
+      # A tag can point at any commit, including one that never passed CI — build.yml runs on
+      # pushes and pull requests to main, not on tags. Gating here is what stops a red build
+      # reaching a feed that cannot be unpublished.
+      - name: Test
+        run: dotnet test ${{ env.TESTS }} -c Release
+
+      - name: Pack
+        run: >
+          dotnet pack ${{ env.PROJECT }} -c Release -o ./nupkg
+          -p:Version=${{ steps.version.outputs.version }}
+
+      # Shipped for hosts that set AutoMigrateDatabase=false, whose app-pool identity often lacks
+      # DDL rights. Idempotent, so it is safe to re-run against a database at any migration level.
+      - name: Generate idempotent migration script
+        run: |
+          dotnet tool install --global dotnet-ef
+          SCRIPT="./nupkg/scheduled-jobs-insights-${{ steps.version.outputs.version }}.sql"
+          dotnet ef migrations script --idempotent \
+            --project ${{ env.PROJECT }} \
+            --context OptiPowerTools.ScheduledJobsInsights.Data.ScheduledJobsInsightsDbContext \
+            --output "$SCRIPT"
+          # dotnet ef writes a UTF-8 BOM, and sqlcmd reports "Incorrect syntax near ''" on the very
+          # first line because of it unless invoked with -f 65001. Stripping it here means the script
+          # just runs — in sqlcmd, SSMS or Azure Data Studio alike.
+          sed -i '1s/^\xEF\xBB\xBF//' "$SCRIPT"
+
+      # The script is what a consumer runs when AutoMigrateDatabase is false, so shipping one that
+      # does not apply would be worse than shipping none. Verified twice over: once against an empty
+      # database, once more to prove it is genuinely idempotent, then checked against the expected
+      # schema. This also guards the BOM strip above — without it sqlcmd fails on the first line.
+      - name: Verify the shipped script applies
+        run: |
+          set -euo pipefail
+          SCRIPT="./nupkg/scheduled-jobs-insights-${{ steps.version.outputs.version }}.sql"
+
+          cid=$(docker ps --filter "ancestor=$SQLSERVER_IMAGE" --format '{{.ID}}' | head -1)
+          if [ -z "$cid" ]; then
+            echo "SQL Server service container not found."; docker ps; exit 1
+          fi
+
+          # Polled rather than a service health-cmd, for the same reason as build.yml: the image's
+          # sqlcmd path has moved between versions and a wrong health-cmd fails with no diagnostics.
+          for _ in $(seq 1 60); do
+            docker exec "$cid" /opt/mssql-tools18/bin/sqlcmd \
+              -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -b -Q "SELECT 1" >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          docker exec "$cid" /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -b -Q "CREATE DATABASE ScriptCheck;"
+
+          for run in 1 2; do
+            echo "::group::Applying the script (run $run)"
+            docker exec -i "$cid" /opt/mssql-tools18/bin/sqlcmd \
+              -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -b -d ScriptCheck < "$SCRIPT"
+            echo "::endgroup::"
+          done
+
+          docker exec -i "$cid" /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -b -d ScriptCheck \
+            < .github/sql/verify-schema.sql
+
+      # Deliberately the last step before the push: the temporary key is valid for one hour, and one
+      # OIDC token buys exactly one key. Requesting it earlier risks it expiring behind a slow build.
+      - name: NuGet login (OIDC to short-lived key)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to NuGet.org
+        run: >
+          dotnet nuget push "./nupkg/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --skip-duplicate
 
       - name: Create GitHub Release
         run: |
           PRERELEASE=""
-          if [[ "${{ github.ref_name }}" == *"-beta"* ]]; then
+          if [[ "${{ steps.version.outputs.version }}" == *-* ]]; then
             PRERELEASE="--prerelease"
           fi
           gh release create "${{ github.ref_name }}" \
             ./nupkg/*.nupkg \
+            ./nupkg/*.snupkg \
+            ./nupkg/*.sql \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE

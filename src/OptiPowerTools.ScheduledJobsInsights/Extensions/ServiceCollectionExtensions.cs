@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -20,32 +21,71 @@ namespace OptiPowerTools.ScheduledJobsInsights.Extensions;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>Marks the registration as done, so a second call is a no-op rather than a duplicate.</summary>
+    private sealed class RegistrationMarker;
+
     /// <summary>
     /// Adds ScheduledJobsInsights services configured for Optimizely CMS with default options.
     /// Values bind from "OptiPowerTools:ScheduledJobsInsights" in configuration.
     /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <c>null</c>.</exception>
     public static IServiceCollection AddOptiPowerToolScheduledJobsInsights(this IServiceCollection services) =>
         services.AddOptiPowerToolScheduledJobsInsights(_ => { });
 
     /// <summary>
     /// Adds ScheduledJobsInsights services with the specified options.
     /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="setupAction">
+    /// Applied after configuration binding, so a value set here wins over
+    /// <c>appsettings.json</c>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Either argument is <c>null</c>.</exception>
+    /// <remarks>
+    /// Calling this more than once is safe: the second call returns without registering anything. It
+    /// would otherwise add a second <see cref="JobLogBackgroundWriter"/> draining a channel created
+    /// with <c>SingleReader = true</c>, whose behaviour is undefined.
+    /// </remarks>
     public static IServiceCollection AddOptiPowerToolScheduledJobsInsights(
         this IServiceCollection services,
         Action<OptiPowerToolScheduledJobsInsightsOptions> setupAction)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(setupAction);
+
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(RegistrationMarker)))
+            return services;
+
+        services.AddSingleton<RegistrationMarker>();
+
         services.AddOptions<OptiPowerToolScheduledJobsInsightsOptions>()
             .Configure<IConfiguration>((options, configuration) =>
             {
                 configuration.GetSection("OptiPowerTools:ScheduledJobsInsights").Bind(options);
                 setupAction(options);
-            });
+            })
+            // Startup is the last moment a misconfiguration is cheap to notice; every one of these
+            // otherwise degrades silently once jobs start running.
+            .ValidateOnStart();
+
+        services.TryAddSingleton<IValidateOptions<OptiPowerToolScheduledJobsInsightsOptions>,
+            OptiPowerToolScheduledJobsInsightsOptionsValidator>();
 
         services.AddHttpContextAccessor();
 
         // Blazor Server rather than the Blazor Web App model: the components are hosted inside the
         // CMS shell MVC view via the Component Tag Helper, so nothing here owns a whole HTML page.
         services.AddServerSideBlazor();
+
+        // One named policy for the page, the retention screen and the menu, so all three agree.
+        services.AddAuthorization();
+
+        // Lets the retention screen re-check the policy before a destructive write, rather than
+        // trusting the authorization that happened when the page was first served.
+        services.AddCascadingAuthenticationState();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AuthorizationOptions>,
+            ConfigureScheduledJobsInsightsAuthorization>());
 
         services.AddSingleton<ScheduledJobsInsightsMenuProvider>();
         services.AddSingleton<IConfigureOptions<MvcOptions>, ConfigureScheduledJobsInsightsMvcOptions>();

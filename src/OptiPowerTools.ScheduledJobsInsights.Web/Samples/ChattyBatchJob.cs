@@ -18,8 +18,8 @@ public sealed class ChattyBatchJob : LoggedScheduledJobBase
 {
     private const int RecordCount = 5_000;
 
-    public ChattyBatchJob(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
-        : base(writer, scheduledJobRepository)
+    public ChattyBatchJob(JobLoggingContext context)
+        : base(context)
     {
     }
 

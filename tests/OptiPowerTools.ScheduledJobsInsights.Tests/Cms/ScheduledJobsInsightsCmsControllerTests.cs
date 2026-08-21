@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -30,7 +31,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The id arrives from the "id" query string rather than a route segment, so that the request
         // path keeps matching the registered CMS menu item and the shell navigation still resolves.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
+        var options = new OptiPowerToolScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id);
@@ -40,39 +41,24 @@ public class ScheduledJobsInsightsCmsControllerTests
     }
 
     [Fact]
-    public void Index_UnauthenticatedUser_StandardAuthEnabled_ReturnsForbid()
+    public void TheController_IsGuardedByThePackagePolicy()
     {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = true };
-        var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
+        // Authorization is endpoint metadata rather than a check inside the action, so that the
+        // framework enforces it and the menu can ask the identical question. Asserting on the
+        // attribute is the only way to see that from a unit test.
+        var attribute = Assert.Single(
+            typeof(ScheduledJobsInsightsCmsController)
+                .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: false)
+                .Cast<AuthorizeAttribute>());
 
-        var result = controller.Index(id: null);
-
-        Assert.IsType<ForbidResult>(result);
+        Assert.Equal(ScheduledJobsInsightsAuthorization.PolicyName, attribute.Policy);
     }
 
     [Fact]
-    public void Index_AuthenticatedWithoutAuthorizedRole_StandardAuthEnabled_ReturnsForbid()
+    public void Index_ReturnsViewWithOptionValues()
     {
         var options = new OptiPowerToolScheduledJobsInsightsOptions
         {
-            EnableStandardAuthorization = true,
-            AuthorizedRoles = ["Administrators"]
-        };
-        var identity = new ClaimsIdentity(authenticationType: "Test");
-        identity.AddClaim(new Claim(ClaimTypes.Role, "Editors"));
-        var controller = CreateController(options, new ClaimsPrincipal(identity));
-
-        var result = controller.Index(id: null);
-
-        Assert.IsType<ForbidResult>(result);
-    }
-
-    [Fact]
-    public void Index_AuthenticatedWithAuthorizedRole_ReturnsViewWithOptionValues()
-    {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions
-        {
-            EnableStandardAuthorization = true,
             AuthorizedRoles = ["Administrators"],
             PageTitle = "Title"
         };
@@ -85,18 +71,6 @@ public class ScheduledJobsInsightsCmsControllerTests
         var viewResult = Assert.IsType<ViewResult>(result);
         Assert.Null(viewResult.ViewData["ExecutionId"]);
         Assert.Equal("Title", viewResult.ViewData["PageTitle"]);
-        Assert.Equal("Title", viewResult.ViewData["PageTitle"]);
-    }
-
-    [Fact]
-    public void Index_StandardAuthorizationDisabled_UnauthenticatedUser_ReturnsView()
-    {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
-        var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
-
-        var result = controller.Index(id: null);
-
-        Assert.IsType<ViewResult>(result);
     }
 
     [Fact]
@@ -105,7 +79,7 @@ public class ScheduledJobsInsightsCmsControllerTests
         // Read here rather than inside the components: IHttpContextAccessor only has a context during
         // prerendering, so a component that looked it up itself would resolve the zone on the
         // prerender pass and lose it the moment the circuit took over.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
+        var options = new OptiPowerToolScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()), "Europe/Warsaw");
 
         var result = controller.Index(id: null);
@@ -118,7 +92,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The first ever page view, before the view's inline script has set the cookie. The
         // components fall back to UTC rather than guessing.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions { EnableStandardAuthorization = false };
+        var options = new OptiPowerToolScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id: null);

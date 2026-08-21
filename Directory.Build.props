@@ -10,6 +10,13 @@
     <NoWarn>NU1608</NoWarn>
   </PropertyGroup>
 
+  <!-- Deterministic output on CI, so a package can be rebuilt from its tag and compared byte for
+       byte, and so embedded source paths are repository-relative rather than agent-specific.
+       GitHub Actions sets CI=true for every run. -->
+  <PropertyGroup Condition=" '$(CI)' == 'true' ">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
   <!-- docker-compose.yml bind-mounts the repo into sjinsights-web, so the host and
        the container build the same tree. Keep their bin/obj apart, or the two
        restores overwrite each other's project.assets.json (they resolve different

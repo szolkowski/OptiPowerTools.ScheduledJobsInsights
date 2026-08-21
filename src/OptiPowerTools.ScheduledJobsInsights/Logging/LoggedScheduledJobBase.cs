@@ -22,21 +22,26 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// </remarks>
 public abstract class LoggedScheduledJobBase : ScheduledJobBase
 {
+    private readonly JobLoggingContext _context;
     private readonly IJobExecutionWriter _writer;
-    private readonly IScheduledJobRepository _scheduledJobRepository;
     private long? _executionId;
     private int _logSequence;
     private JobResultSummary? _summary;
+    private volatile bool _stopRequested;
 
     /// <summary>
-    /// Initializes the base class. Derived jobs must forward both parameters to this constructor —
-    /// they're normally supplied by DI, since Optimizely constructs job instances via
-    /// <c>ActivatorUtilities.GetServiceOrCreateInstance</c>.
+    /// Initializes the base class. Derived jobs declare <see cref="JobLoggingContext"/> as a
+    /// constructor parameter and forward it here; DI supplies it, since Optimizely constructs job
+    /// instances via <c>ActivatorUtilities.GetServiceOrCreateInstance</c>.
     /// </summary>
-    protected LoggedScheduledJobBase(IJobExecutionWriter writer, IScheduledJobRepository scheduledJobRepository)
+    /// <param name="context">Collaborators this base class records with.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="context"/> is <c>null</c>.</exception>
+    protected LoggedScheduledJobBase(JobLoggingContext context)
     {
-        _writer = writer;
-        _scheduledJobRepository = scheduledJobRepository;
+        ArgumentNullException.ThrowIfNull(context);
+
+        _context = context;
+        _writer = context.Writer;
     }
 
     /// <summary>
@@ -44,6 +49,31 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// string is both the CMS admin's "last execution message" and the persisted <c>ResultMessage</c>.
     /// </summary>
     protected abstract string ExecuteJob();
+
+    /// <summary>
+    /// Whether an administrator has pressed <em>Stop</em> in the CMS since this run began. Long
+    /// jobs should check it between units of work and return early when it becomes <c>true</c>; a
+    /// run that ends this way is recorded as <see cref="ExecutionStatus.Stopped"/> rather than as a
+    /// success, because its work was cut short.
+    /// </summary>
+    protected bool IsStopRequested => _stopRequested;
+
+    /// <summary>
+    /// Records the stop request and raises the base implementation. Override to add your own
+    /// cancellation, and call <c>base.Stop()</c> so the outcome is still recorded correctly.
+    /// </summary>
+    public override void Stop()
+    {
+        _stopRequested = true;
+        base.Stop();
+    }
+
+    /// <summary>
+    /// A run that finished after a stop request completed early, whatever it returned — so it is
+    /// recorded as stopped rather than as a clean outcome.
+    /// </summary>
+    private ExecutionStatus Outcome(ExecutionStatus natural) =>
+        _stopRequested ? ExecutionStatus.Stopped : natural;
 
     /// <summary>
     /// Sealed so the capture wrapper always runs — implement <see cref="ExecuteJob"/> instead.
@@ -65,22 +95,37 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         _logSequence = 0;
         _summary = null;
 
-        var stopwatch = Stopwatch.StartNew();
-        var allocatedStart = GC.GetAllocatedBytesForCurrentThread();
-        var cpuStart = Process.GetCurrentProcess().TotalProcessorTime;
-        var gcStart = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
+        // Captured before the run, but never at the cost of the run: reading process CPU time hits
+        // /proc on Linux and throws outright on a hardened container. A baseline we cannot take is
+        // a metric we do not record, not a job we refuse to start.
+        var baseline = ExecutionBaseline.Capture(_context.TimeProvider);
 
         try
         {
             var result = ExecuteJob();
-            RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
-            CompleteExecution(succeeded: true, resultMessage: result, exception: null);
+
+            // Inside the try, but its own failure must not reach the catch below — a metrics error
+            // after a clean run would otherwise record the run as failed and rethrow.
+            SafelyRecordAutomaticMetrics(baseline);
+            CompleteExecution(Outcome(ExecutionStatus.Succeeded), resultMessage: result, exception: null);
             return result;
         }
         catch (Exception ex)
         {
-            RecordAutomaticMetrics(stopwatch, allocatedStart, cpuStart, gcStart);
-            CompleteExecution(succeeded: false, resultMessage: null, exception: ex);
+            SafelyRecordAutomaticMetrics(baseline);
+
+            // Guarded so the job's own exception always wins. An escape here would both replace it
+            // and leave the row stranded at Running, with nothing to ever finish it.
+            try
+            {
+                CompleteExecution(Outcome(ExecutionStatus.Failed), resultMessage: null, exception: ex);
+            }
+            catch
+            {
+                // Nothing useful to do: the recording is already lost and the run's own failure is
+                // the more important of the two.
+            }
+
             throw; // Never swallow — Optimizely's own executor sets HasLastExecutionFailed/LastExecutionMessage from this.
         }
     }
@@ -117,8 +162,25 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     {
         // Serialized only when there is somewhere to put it — the payload can be large, and an
         // unrecorded run should not pay to build a string nobody will read.
-        if (_executionId is { } executionId)
-            _writer.SetInputData(executionId, JsonSerializer.Serialize(inputData));
+        if (_executionId is not { } executionId)
+            return;
+
+        string json;
+
+        try
+        {
+            json = JsonSerializer.Serialize(inputData, InputDataJsonOptions);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            // Reachable with any ordinary domain object: an EF navigation or an IContent is a
+            // reference cycle, and cycles, depth limits and unsupported types all throw. Recording
+            // the failure is right; letting it out of here would fail a job that merely described
+            // its own input.
+            json = JsonSerializer.Serialize(new { InputDataUnavailable = ex.Message });
+        }
+
+        _writer.SetInputData(executionId, json);
     }
 
     /// <summary>Records a custom numeric metric for the current execution. A no-op if the run is unrecorded.</summary>
@@ -145,7 +207,7 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// running can checkpoint it with <see cref="FlushSummary"/>.
     /// </para>
     /// </remarks>
-    protected JobResultSummary Summary => _summary ??= CreateSummary();
+    protected JobResultSummary Summary => _summary ??= new JobResultSummary(_context.MaxResultSummaryLength);
 
     /// <summary>
     /// Replaces the whole summary with <paramref name="summary"/>, for jobs that already hold the
@@ -174,7 +236,7 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// Persists the summary and marks the execution finished. Skipped entirely when the run is
     /// unrecorded.
     /// </summary>
-    private void CompleteExecution(bool succeeded, string? resultMessage, Exception? exception)
+    private void CompleteExecution(ExecutionStatus outcome, string? resultMessage, Exception? exception)
     {
         if (_executionId is not { } executionId)
             return;
@@ -182,40 +244,47 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         // Flushed on the failure path too: whatever the job managed to summarise before throwing is
         // usually the most useful thing on the page when diagnosing that failure.
         FlushSummary();
-        _writer.Complete(executionId, succeeded, resultMessage, exception);
+        _writer.Complete(executionId, outcome, resultMessage, exception);
     }
+
+    /// <summary>Options used for <see cref="LogInputData"/>, tolerant of ordinary domain objects.</summary>
+    private static readonly JsonSerializerOptions InputDataJsonOptions = new()
+    {
+        ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles,
+        MaxDepth = 16
+    };
 
     /// <summary>
-    /// Builds the summary bounded by the configured limit. A writer that reports a non-positive
-    /// limit — a test double left at its default, typically — falls back to
-    /// <see cref="JobResultSummary.DefaultMaxLength"/> rather than throwing.
+    /// Records the automatic metrics, absorbing anything that goes wrong. Called from both the
+    /// success and failure paths, where a throw would corrupt the outcome of the run itself.
     /// </summary>
-    private JobResultSummary CreateSummary()
+    private void SafelyRecordAutomaticMetrics(ExecutionBaseline baseline)
     {
-        var maxLength = _writer.MaxResultSummaryLength;
-        return new JobResultSummary(maxLength > 0 ? maxLength : JobResultSummary.DefaultMaxLength);
-    }
+        try
+        {
+            var elapsed = _context.TimeProvider.GetElapsedTime(baseline.Timestamp);
+            RecordMetric(JobMetricNames.DurationMs, elapsed.TotalMilliseconds, "ms");
+            RecordMetric(JobMetricNames.AllocatedBytes, GC.GetAllocatedBytesForCurrentThread() - baseline.AllocatedBytes, "bytes");
 
-    private void RecordAutomaticMetrics(
-        Stopwatch stopwatch,
-        long allocatedStart,
-        TimeSpan cpuStart,
-        (int Gen0, int Gen1, int Gen2) gcStart)
-    {
-        stopwatch.Stop();
-        RecordMetric(JobMetricNames.DurationMs, stopwatch.Elapsed.TotalMilliseconds, "ms");
-        RecordMetric(JobMetricNames.AllocatedBytes, GC.GetAllocatedBytesForCurrentThread() - allocatedStart, "bytes");
-        RecordMetric(JobMetricNames.CpuTimeMs, (Process.GetCurrentProcess().TotalProcessorTime - cpuStart).TotalMilliseconds, "ms");
-        RecordMetric(JobMetricNames.GcGen0Collections, GC.CollectionCount(0) - gcStart.Gen0);
-        RecordMetric(JobMetricNames.GcGen1Collections, GC.CollectionCount(1) - gcStart.Gen1);
-        RecordMetric(JobMetricNames.GcGen2Collections, GC.CollectionCount(2) - gcStart.Gen2);
+            if (ExecutionBaseline.TryReadCpuTime(out var cpuNow) && baseline.CpuTime is { } cpuStart)
+                RecordMetric(JobMetricNames.CpuTimeMs, (cpuNow - cpuStart).TotalMilliseconds, "ms");
+
+            RecordMetric(JobMetricNames.GcGen0Collections, GC.CollectionCount(0) - baseline.Gen0);
+            RecordMetric(JobMetricNames.GcGen1Collections, GC.CollectionCount(1) - baseline.Gen1);
+            RecordMetric(JobMetricNames.GcGen2Collections, GC.CollectionCount(2) - baseline.Gen2);
+        }
+        catch
+        {
+            // Metrics are the least important thing this class does, and the only one whose failure
+            // could otherwise change what the CMS reports about the run.
+        }
     }
 
     private string TryResolveJobName(Guid scheduledJobId)
     {
         try
         {
-            var job = _scheduledJobRepository.Get(scheduledJobId);
+            var job = _context.ScheduledJobRepository.Get(scheduledJobId);
             if (job is not null && !string.IsNullOrEmpty(job.Name))
                 return job.Name;
         }

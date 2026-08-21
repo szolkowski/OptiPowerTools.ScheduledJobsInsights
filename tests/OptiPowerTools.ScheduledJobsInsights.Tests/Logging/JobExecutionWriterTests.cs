@@ -35,7 +35,7 @@ public class JobExecutionWriterTests
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
         var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
-        writer.Complete(executionId, succeeded: true, resultMessage: "all good", exception: null);
+        writer.Complete(executionId, ExecutionStatus.Succeeded, resultMessage: "all good", exception: null);
 
         using var dbContext = factory.CreateDbContext();
         var execution = dbContext.JobExecutions.Single(e => e.Id == executionId);
@@ -53,7 +53,7 @@ public class JobExecutionWriterTests
         var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
         var exception = new InvalidOperationException("kaboom");
 
-        writer.Complete(executionId, succeeded: false, resultMessage: null, exception: exception);
+        writer.Complete(executionId, ExecutionStatus.Failed, resultMessage: null, exception: exception);
 
         using var dbContext = factory.CreateDbContext();
         var execution = dbContext.JobExecutions.Single(e => e.Id == executionId);
@@ -155,20 +155,45 @@ public class JobExecutionWriterTests
         writer.SetResultSummary(executionId, new string('x', 500));
 
         using var dbContext = factory.CreateDbContext();
-        Assert.Equal(32, dbContext.JobExecutions.Single(e => e.Id == executionId).ResultSummary!.Length);
+        var stored = dbContext.JobExecutions.Single(e => e.Id == executionId).ResultSummary!;
+        Assert.Equal(32, stored.Length);
+        // Ends with the notice, so a truncated summary never reads as merely a short one.
+        Assert.EndsWith(JobResultSummary.TruncationNotice, stored, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetResultSummary_DoesNotSplitASurrogatePair()
+    {
+        // Half a character renders as a replacement glyph; the notice budget must not cut one open.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.WithSummaryLimit(32), NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        // Emoji are surrogate pairs, so every second char boundary falls inside one.
+        writer.SetResultSummary(executionId, string.Concat(Enumerable.Repeat("😀", 200)));
+
+        using var dbContext = factory.CreateDbContext();
+        var stored = dbContext.JobExecutions.Single(e => e.Id == executionId).ResultSummary!;
+        Assert.DoesNotContain('\uFFFD', stored);
+        Assert.False(char.IsHighSurrogate(stored[^(JobResultSummary.TruncationNotice.Length + Environment.NewLine.Length + 1)]));
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void MaxResultSummaryLength_FallsBackToDefault_WhenConfiguredValueIsNotPositive(int configured)
+    public void SetResultSummary_FallsBackToTheDefaultBound_WhenConfiguredValueIsNotPositive(int configured)
     {
+        // A misconfigured zero must not mean "no summary can ever be stored".
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
-
         var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.WithSummaryLimit(configured), NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
 
-        Assert.Equal(JobResultSummary.DefaultMaxLength, writer.MaxResultSummaryLength);
+        writer.SetResultSummary(executionId, new string('x', 500));
+
+        using var dbContext = factory.CreateDbContext();
+        Assert.Equal(500, dbContext.JobExecutions.Single(e => e.Id == executionId).ResultSummary!.Length);
     }
 
     [Fact]
@@ -223,7 +248,7 @@ public class JobExecutionWriterTests
 
         writer.SetInputData(1, "{}");
         writer.SetResultSummary(1, "summary");
-        writer.Complete(1, succeeded: true, resultMessage: "done", exception: null);
+        writer.Complete(1, ExecutionStatus.Succeeded, resultMessage: "done", exception: null);
 
         // Reaching here at all is the assertion; the count just confirms each one genuinely tried.
         Assert.Equal(3, factory.Attempts);

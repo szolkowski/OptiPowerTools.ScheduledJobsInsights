@@ -5,13 +5,17 @@
    reason the execution id is one: the CMS shell resolves which product's navigation to render by
    matching the request path against registered menu items, and any extra segment matches nothing. *@
 @implements IDisposable
+@attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using System.Globalization
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
 @using OptiPowerTools.ScheduledJobsInsights.Retention
 @inject IJobRetentionService RetentionService
 @inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject IAuthorizationService AuthorizationService
 
 <div class="page-header">
     <h1>Job retention</h1>
@@ -69,6 +73,10 @@ else
                     </td>
                     <td class="numeric">@DisplayFormat.Number(job.ExecutionCount)</td>
                     <td>
+                        @if (job.HasInvalidOverride)
+                        {
+                            <span class="tag tag-invalid" title="A stored retention row for this job holds a value that is neither a positive number of days nor empty, so it is ignored. Choose a value below to replace it.">stored value ignored</span>
+                        }
                         @if (job.HasInvalidAttribute)
                         {
                             <span class="tag tag-invalid" title="The job declares a [JobRetention] value that is neither positive nor JobRetentionAttribute.Indefinite, so it is ignored.">invalid</span>
@@ -185,12 +193,31 @@ else
     {
         var choice = args.Value?.ToString() ?? InheritChoice;
 
+        // The value arrives over the circuit, not from the rendered <option> list, so a crafted
+        // message could name any string at all. Anything this row did not offer is refused before
+        // it reaches the parser.
+        if (!IsOfferedChoice(job, choice))
+        {
+            _error = "That retention value is not one of the available options.";
+            return;
+        }
+
         _savingJobTypeName = job.JobTypeName;
         _savedJobTypeName = null;
         _error = null;
 
         try
         {
+            // Re-checked here, not only at the page that hosted this component. Shortening a
+            // retention deletes history, and this write arrives over the Blazor hub rather than
+            // through the authorized MVC endpoint — so the hub's own authorization is what has to
+            // hold, and defence in depth is cheap for a destructive operation.
+            if (!await IsAuthorizedAsync())
+            {
+                _error = "You are not authorized to change retention settings.";
+                return;
+            }
+
             await RetentionService.SetOverrideAsync(
                 job.JobTypeName,
                 ParseChoice(choice),
@@ -215,6 +242,45 @@ else
             _savingJobTypeName = null;
         }
     }
+
+    /// <summary>
+    /// The current user, cascaded by the host. Null when nothing supplies one — treated as denied.
+    /// </summary>
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    /// <summary>
+    /// Whether the current user still passes the package's authorization policy.
+    /// </summary>
+    /// <remarks>
+    /// A second check, not the first one: the page hosting this component sits behind the same
+    /// policy, so nobody reaches a circuit without having passed it once. What this adds is currency
+    /// — a long-lived circuit belonging to someone whose roles have since been revoked stops being
+    /// able to delete history.
+    /// <para>
+    /// No cascaded authentication state means the host does not supply one, in which case the
+    /// endpoint's own authorization is all there is and remains sufficient. Denying instead would
+    /// break every save on a host that never opted into the cascade.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> IsAuthorizedAsync()
+    {
+        if (AuthenticationState is null)
+            return true;
+
+        var state = await AuthenticationState;
+
+        return (await AuthorizationService.AuthorizeAsync(
+            state.User,
+            resource: null,
+            ScheduledJobsInsightsAuthorization.PolicyName)).Succeeded;
+    }
+
+    /// <summary>Whether <paramref name="choice"/> is one this row actually rendered.</summary>
+    private static bool IsOfferedChoice(JobRetention job, string choice) =>
+        choice is InheritChoice or IndefiniteChoice
+        || (int.TryParse(choice, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days)
+            && DayChoicesFor(job).Contains(days));
 
     private static RetentionPeriod? ParseChoice(string choice) => choice switch
     {

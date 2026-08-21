@@ -116,3 +116,27 @@ internal sealed class UnserializableInputJob : LoggedScheduledJobBase
         return "done";
     }
 }
+
+/// <summary>Observes <c>StopToken</c> across the boundaries of a run.</summary>
+internal sealed class TokenObservingJob : LoggedScheduledJobBase
+{
+    public TokenObservingJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    public bool TokenWasCancellable { get; private set; }
+
+    public bool TokenWasCancelledAfterStop { get; private set; }
+
+    /// <summary>Reads the protected token from outside the run, which is the point of the test.</summary>
+    public CancellationToken CurrentToken => StopToken;
+
+    protected override string ExecuteJob()
+    {
+        TokenWasCancellable = StopToken.CanBeCanceled;
+        Stop();
+        TokenWasCancelledAfterStop = StopToken.IsCancellationRequested;
+        return "done";
+    }
+}

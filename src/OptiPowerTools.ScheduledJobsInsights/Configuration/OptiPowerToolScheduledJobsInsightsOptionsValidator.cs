@@ -24,27 +24,27 @@ internal sealed class OptiPowerToolScheduledJobsInsightsOptionsValidator
 {
     public ValidateOptionsResult Validate(string? name, OptiPowerToolScheduledJobsInsightsOptions options)
     {
-        List<string>? failures = null;
-
-        void Fail(string message) => (failures ??= []).Add(message);
+        // A plain list rather than a lazily-created one behind a local function: the closure made the
+        // final null check unanalysable, and one always-allocated empty list at startup is nothing.
+        var failures = new List<string>();
 
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {
-            Fail("ConnectionString is required. Set OptiPowerTools:ScheduledJobsInsights:ConnectionString "
+            failures.Add("ConnectionString is required. Set OptiPowerTools:ScheduledJobsInsights:ConnectionString "
                  + "to the SQL Server database that should hold the execution history.");
         }
 
-        RequirePositive(options.LogChannelCapacity, nameof(options.LogChannelCapacity), Fail);
-        RequirePositive(options.LogBatchSize, nameof(options.LogBatchSize), Fail);
-        RequirePositive(options.PageSize, nameof(options.PageSize), Fail);
-        RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), Fail);
+        RequirePositive(options.LogChannelCapacity, nameof(options.LogChannelCapacity), failures);
+        RequirePositive(options.LogBatchSize, nameof(options.LogBatchSize), failures);
+        RequirePositive(options.PageSize, nameof(options.PageSize), failures);
+        RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), failures);
 
         if (options.LogFlushInterval <= TimeSpan.Zero)
-            Fail($"LogFlushInterval must be greater than zero (was {options.LogFlushInterval}).");
+            failures.Add($"LogFlushInterval must be greater than zero (was {options.LogFlushInterval}).");
 
         if (!IsUsableShellPath(options.CmsShellPath))
         {
-            Fail($"CmsShellPath must be an absolute path with at least one segment and no query string "
+            failures.Add($"CmsShellPath must be an absolute path with at least one segment and no query string "
                  + $"or fragment — \"{options.CmsShellPath}\" is not. It is used as a route template, a "
                  + "menu URL and the base for the UI's own links at the same time.");
         }
@@ -53,20 +53,20 @@ internal sealed class OptiPowerToolScheduledJobsInsightsOptionsValidator
             && string.IsNullOrWhiteSpace(options.AuthorizationPolicy)
             && options.AuthorizedRoles.Count == 0)
         {
-            Fail("AuthorizedRoles is empty, so nobody could reach the UI. Name at least one role, set "
+            failures.Add("AuthorizedRoles is empty, so nobody could reach the UI. Name at least one role, set "
                  + "AuthorizationPolicy to a policy of your own, or set AllowAnyAuthenticatedUser if "
                  + "access is already restricted elsewhere.");
         }
 
-        return failures is null
+        return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
     }
 
-    private static void RequirePositive(int value, string optionName, Action<string> fail)
+    private static void RequirePositive(int value, string optionName, List<string> failures)
     {
         if (value <= 0)
-            fail($"{optionName} must be greater than zero (was {value}).");
+            failures.Add($"{optionName} must be greater than zero (was {value}).");
     }
 
     /// <summary>

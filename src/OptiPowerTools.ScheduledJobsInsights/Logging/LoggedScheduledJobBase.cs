@@ -30,6 +30,12 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     private volatile bool _stopRequested;
 
     /// <summary>
+    /// Cancelled when an administrator stops the run. Created per execution and disposed with it,
+    /// so a job type that runs nightly for a year does not accumulate one of these per run.
+    /// </summary>
+    private CancellationTokenSource? _stopping;
+
+    /// <summary>
     /// Initializes the base class. Derived jobs declare <see cref="JobLoggingContext"/> as a
     /// constructor parameter and forward it here; DI supplies it, since Optimizely constructs job
     /// instances via <c>ActivatorUtilities.GetServiceOrCreateInstance</c>.
@@ -59,12 +65,30 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     protected bool IsStopRequested => _stopRequested;
 
     /// <summary>
-    /// Records the stop request and raises the base implementation. Override to add your own
-    /// cancellation, and call <c>base.Stop()</c> so the outcome is still recorded correctly.
+    /// Cancelled when an administrator stops this run — hand it to any async or cancellable work the
+    /// job does. Outside a run it is <see cref="CancellationToken.None"/>.
+    /// </summary>
+    protected CancellationToken StopToken => _stopping?.Token ?? CancellationToken.None;
+
+    /// <summary>
+    /// Records the stop request, cancels <see cref="StopToken"/> and raises the base implementation.
+    /// Override to add your own cancellation, and call <c>base.Stop()</c> so the outcome is still
+    /// recorded correctly.
     /// </summary>
     public override void Stop()
     {
         _stopRequested = true;
+
+        try
+        {
+            _stopping?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Stop arrived just as the run finished. Nothing to cancel, and certainly nothing worth
+            // throwing over — this is called by the CMS, not by the job.
+        }
+
         base.Stop();
     }
 
@@ -100,6 +124,8 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         // a metric we do not record, not a job we refuse to start.
         var baseline = ExecutionBaseline.Capture(_context.TimeProvider);
 
+        _stopping = new CancellationTokenSource();
+
         try
         {
             var result = ExecuteJob();
@@ -127,6 +153,13 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
             }
 
             throw; // Never swallow — Optimizely's own executor sets HasLastExecutionFailed/LastExecutionMessage from this.
+        }
+        finally
+        {
+            // Cleared before disposing so a concurrent Stop() sees null rather than a disposed source.
+            var stopping = _stopping;
+            _stopping = null;
+            stopping.Dispose();
         }
     }
 

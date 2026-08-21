@@ -32,7 +32,6 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
     private readonly ICleanupRepository _cleanupRepository;
     private readonly IJobRetentionPolicySource _retentionService;
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
-    private readonly CancellationTokenSource _stopping = new();
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
     /// <param name="context">Collaborators the base class records this job's own runs with.</param>
@@ -56,22 +55,17 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         _options = options.Value;
 
         // A first run against years of accumulated history can take a long time; an administrator
-        // watching it must be able to call it off.
+        // watching it must be able to call it off. The base class owns the token itself, so there is
+        // no Stop() override to write and nothing here to dispose.
         IsStoppable = true;
-    }
-
-    /// <summary>Cancels the batch loop when an administrator presses Stop in the CMS.</summary>
-    public override void Stop()
-    {
-        _stopping.Cancel();
-        base.Stop();
     }
 
     /// <summary>Deletes executions that have outlived the retention applying to their job.</summary>
     protected override string ExecuteJob()
     {
         var now = DateTimeOffset.UtcNow;
-        var perJob = _retentionService.GetEffectiveOverridesAsync().GetAwaiter().GetResult();
+        var cancellationToken = StopToken;
+        var perJob = _retentionService.GetEffectiveOverridesAsync(cancellationToken).GetAwaiter().GetResult();
         var defaultPeriod = _retentionService.DefaultPeriod;
 
         LogInputData(new
@@ -82,7 +76,6 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         });
 
         var totalDeleted = 0;
-        var cancellationToken = _stopping.Token;
 
         // Jobs with their own rule are excluded from the default sweep whether or not that rule is
         // shorter — otherwise the default would delete history a job explicitly asked to keep.

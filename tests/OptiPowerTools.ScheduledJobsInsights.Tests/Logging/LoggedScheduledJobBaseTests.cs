@@ -274,6 +274,35 @@ public class LoggedScheduledJobBaseTests
     }
 
     [Fact]
+    public void StopToken_IsCancelledByStop_AndIsNoneOnceTheRunIsOver()
+    {
+        // The source is created per run and disposed with it, so a nightly job does not accumulate
+        // one per execution. Outside a run the token is simply None rather than a disposed source.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(57L);
+        var job = new TokenObservingJob(writer);
+
+        job.Execute();
+
+        Assert.True(job.TokenWasCancellable);
+        Assert.True(job.TokenWasCancelledAfterStop);
+        Assert.False(job.CurrentToken.CanBeCanceled);
+    }
+
+    [Fact]
+    public void Stop_AfterTheRunHasFinished_DoesNotThrow()
+    {
+        // The CMS calls Stop, not the job. A stop arriving just as the run ended must not surface as
+        // an ObjectDisposedException out of Optimizely's own scheduler.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(58L);
+        var job = new TestLoggedJob(writer);
+        job.Execute();
+
+        job.Stop();
+    }
+
+    [Fact]
     public void LogInputData_WithACyclicObjectGraph_DoesNotThrowIntoTheJob()
     {
         // An EF navigation or an IContent is a reference cycle, and System.Text.Json throws on one.

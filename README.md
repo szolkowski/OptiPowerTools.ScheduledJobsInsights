@@ -39,6 +39,10 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 
 ![Result summary section](images/ResultSummary.jpg)
 
+**Job Retention overview** — the list covers every job deriving from LoggedScheduledJobBase — so a job can be configured before its first run — plus every job type that only exists in history, so records left behind by deleted code can still be trimmed. Those rows are marked history only.
+
+![Result summary section](images/JobRetentionView.png)
+
 ## Quick Start
 
 ### Package sources
@@ -66,8 +70,6 @@ references only when the *application project itself* contains `.razor` files �
 components live in the package, so the SDK does not notice. Without the setting the page renders but
 never becomes interactive, and the browser console shows a 404 for `blazor.server.js`.
 
-This package cannot set it for you: NuGet resolves the implicit assets pack during restore, before a
-package's MSBuild assets are imported, so the property only takes effect from the consuming project.
 Applications that already contain their own `.razor` files get it automatically and can skip this.
 
 ### Wiring it up
@@ -204,27 +206,6 @@ success and an abandoned one sits at *Running* for ever, quietly distorting ever
 on the detail page (`2026-08-19 17:37:16 UTC+02:00`). The browser's IANA zone is recorded in a
 `sji-timezone` cookie by the page itself and applied server-side, so it survives prerendering rather
 than flickering into place after the circuit connects. Two consequences worth knowing:
-
-- **The very first page view renders in UTC**, because the cookie does not exist yet. It is labelled
-  "Times shown in UTC", never silently wrong, and every view after that is in your zone.
-- **If the zone can't be established** — cookies blocked, no `Intl` support, or a host without time
-  zone data — the UI stays in UTC rather than guessing.
-
-Dates keep ISO ordering (`yyyy-MM-dd`) and numbers are formatted invariantly regardless of locale. A
-duration must read the same on your machine, on CI and in production, because that is where it gets
-compared; and a locale-ordered date reintroduces exactly the day/month ambiguity ISO ordering avoids.
-
-Rows whose run recorded a result summary are marked **summary** in the Result column.
-
-Clicking a row opens the detail view for that run: a monospace, colour-coded, virtualised log stream,
-plus collapsible sections for the result summary, metrics, input data and (on failure) the stack
-trace. **Result summary** and **Metrics** start expanded; the rest start collapsed, and each stays
-however you leave it. The summary's header carries its size (`2,019 lines · 54.9 KB`), and a summary
-longer than 200 lines starts collapsed rather than burying the log beneath it. The summary section
-has a **Copy** button — it needs a secure context, so it works over HTTPS and on `localhost` and
-reports itself unavailable otherwise. The log header shows the line count and offers **Jump to
-start** / **Jump to end**, which matter once a chatty job has produced thousands of lines. A
-**Scheduled job settings** link goes straight to that job's own CMS page.
 
 ### Watching a job that is still running
 
@@ -434,7 +415,7 @@ Tables live in a fixed SQL Server schema (`scheduled_jobs_insights`) via standar
 ### Applying the schema
 
 By default the package applies pending migrations at startup. If the application's identity has no
-DDL rights — common on DXP — set `AutoMigrateDatabase = false` and apply the schema yourself.
+DDL rights set `AutoMigrateDatabase = false` and apply the schema yourself.
 
 **Every release ships an idempotent SQL script** for exactly this, attached to the
 [GitHub release](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/releases) as
@@ -459,10 +440,6 @@ No `--startup-project` is needed — `Data/ScheduledJobsInsightsDbContextFactory
 `IDesignTimeDbContextFactory`, so the library serves as its own startup project. (Passing the `.Web`
 host instead fails: `Microsoft.EntityFrameworkCore.Design` is a `PrivateAssets="All"` reference of the
 library and does not flow to it.)
-
-> **Scaled-out deployments**: startup migration runs on every instance, and EF takes no lock across
-> them. Prefer the script, applied once as a deployment step, when more than one instance can start
-> at the same time.
 
 ## Retention
 
@@ -511,22 +488,18 @@ Choosing a value saves it straight away — there is no Save button, so there is
 
 Changes take effect on the next run of the cleanup job. Nothing is deleted at the moment you save.
 
-> **Shortening a retention deletes history.** That is why every change records who made it and when.
-
 ## Cleanup job
 
 `ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) in batches of `CleanupBatchSize`, and reports what it removed as its execution message.
 
 Each run does three passes:
 
-0. **Give up on abandoned runs.** Executions still `Running` since longer ago than
+1. **Give up on abandoned runs.** Executions still `Running` since longer ago than
    `InterruptedExecutionThreshold` are recorded as **Interrupted**. A process recycled mid-run writes
    nothing further, so nothing else would ever finish those rows — and until they are resolved, every
    count and status filter is wrong. `CompletedAt` stays empty: the end time is genuinely unknown.
-1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
-2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
-
-An indefinite default is legitimate: the sweep is then skipped altogether and only the jobs that opted into a retention are trimmed.
+2. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
+3. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
 
 After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
 

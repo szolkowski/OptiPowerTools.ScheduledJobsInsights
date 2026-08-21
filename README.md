@@ -502,6 +502,22 @@ An indefinite default is legitimate: the sweep is then skipped altogether and on
 
 After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
 
+### If your application already uses Blazor
+
+`UseOptiPowerToolScheduledJobsInsights` maps the Blazor Server hub the UI connects over. Mapping
+`/_blazor` twice puts two endpoints on one route pattern and every Blazor request in the application
+then fails with `AmbiguousMatchException` — with nothing in the message naming this package.
+
+By default it detects an existing mapping and skips its own, so most hosts need do nothing. Set
+`MapBlazorHub` explicitly if yours maps its hub **after** this call, which detection cannot see:
+
+```csharp
+options.MapBlazorHub = false;   // your application owns /_blazor
+```
+
+Note the hub this package maps carries its authorization policy. A hub the host already mapped is
+left exactly as the host configured it.
+
 ## Removing this package
 
 Unlike a fully self-contained storage layer, this package owns its own SQL Server tables. Removing it stops new executions from being recorded and drops the cleanup job from the CMS's Scheduled Jobs list, but existing `scheduled_jobs_insights.*` tables and their data are left in place until you drop them manually.

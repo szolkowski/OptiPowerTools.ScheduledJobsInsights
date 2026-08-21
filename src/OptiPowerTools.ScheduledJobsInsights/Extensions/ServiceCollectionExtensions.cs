@@ -122,6 +122,8 @@ public static class ServiceCollectionExtensions
         // is absent in a host that has not initialised the platform, and the index has a fallback.
         services.AddSingleton(provider => new LoggedJobTypeIndex(
             provider.GetService<EPiServer.Framework.TypeScanner.ITypeScannerLookup>()));
+        services.AddSingleton<JobRetentionPolicyStore>();
+        services.AddSingleton<RegisteredJobNames>();
         services.AddSingleton<IJobRetentionService, JobRetentionService>();
 
         // The same instance under its public, cleanup-facing face.

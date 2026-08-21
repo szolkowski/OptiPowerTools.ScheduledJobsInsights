@@ -8,6 +8,7 @@
 @attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using System.Globalization
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.Extensions.Logging
 @using Microsoft.AspNetCore.Components.Authorization
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
@@ -16,6 +17,7 @@
 @inject IJobRetentionService RetentionService
 @inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
 @inject IAuthorizationService AuthorizationService
+@inject ILogger<Retention> Logger
 
 <div class="page-header">
     <h1>Job retention</h1>
@@ -244,6 +246,9 @@ else
         {
             // Surfaced rather than swallowed: a retention change that silently failed would leave the
             // administrator believing history was being kept, or removed, when it is not.
+            // Logged as well as shown: the banner is all the administrator gets, and a stack trace
+            // is what whoever they report it to will need.
+            Logger.LogError(ex, "ScheduledJobsInsights could not save retention for {JobTypeName}.", job.JobTypeName);
             _error = $"Could not save retention for {job.DisplayName}: {ex.Message}";
         }
         finally

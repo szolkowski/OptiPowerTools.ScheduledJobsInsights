@@ -60,6 +60,11 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
 
     public async Task<ExecutionPage> GetExecutionsAsync(ExecutionFilter filter, ExecutionCursor? after, int pageSize, CancellationToken cancellationToken = default)
     {
+        // Startup validation rejects a non-positive PageSize, but this takes the size as an argument
+        // and zero produces nonsense: an empty page reporting HasMore with no cursor, so Next stays
+        // enabled and silently returns to the first page.
+        pageSize = Math.Max(1, pageSize);
+
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
 
         var query = dbContext.JobExecutions.AsNoTracking().AsQueryable();

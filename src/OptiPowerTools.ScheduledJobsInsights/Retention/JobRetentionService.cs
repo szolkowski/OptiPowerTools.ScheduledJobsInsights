@@ -12,7 +12,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 internal sealed class JobRetentionService : IJobRetentionService
 {
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
-    private readonly IScheduledJobRepository _scheduledJobRepository;
+    private readonly JobRetentionPolicyStore _policies;
+    private readonly RegisteredJobNames _registeredJobs;
     private readonly LoggedJobTypeIndex _jobTypes;
     private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
     private readonly ILogger<JobRetentionService> _logger;
@@ -30,7 +31,8 @@ internal sealed class JobRetentionService : IJobRetentionService
 
     public JobRetentionService(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
-        IScheduledJobRepository scheduledJobRepository,
+        JobRetentionPolicyStore policies,
+        RegisteredJobNames registeredJobs,
         LoggedJobTypeIndex jobTypes,
         IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
         ILogger<JobRetentionService> logger,
@@ -38,7 +40,8 @@ internal sealed class JobRetentionService : IJobRetentionService
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
         _dbContextFactory = dbContextFactory;
-        _scheduledJobRepository = scheduledJobRepository;
+        _policies = policies;
+        _registeredJobs = registeredJobs;
         _jobTypes = jobTypes;
         _options = options.Value;
         _logger = logger;
@@ -49,16 +52,12 @@ internal sealed class JobRetentionService : IJobRetentionService
 
     public async Task<IReadOnlyList<JobRetention>> GetAllAsync(CancellationToken cancellationToken = default)
     {
+        var overrides = await _policies.GetAllAsync(cancellationToken).ConfigureAwait(false);
+
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-
-        var overrides = await dbContext.JobRetentionPolicies
-            .AsNoTracking()
-            .ToDictionaryAsync(p => p.JobTypeName, cancellationToken)
-            .ConfigureAwait(false);
-
         var history = await GetExecutionCountsAsync(dbContext, cancellationToken).ConfigureAwait(false);
 
-        var registered = GetRegisteredJobs();
+        var registered = _registeredJobs.Read();
 
         // Logged jobs in the running application (configurable before they have ever run), plus job
         // types present only in history (still worth managing after the code is gone), plus any stale
@@ -74,111 +73,38 @@ internal sealed class JobRetentionService : IJobRetentionService
 
         return [.. jobTypeNames
             .Select(jobTypeName => Build(jobTypeName, registered, history, overrides))
-            .OrderBy(job => job.DisplayName, StringComparer.CurrentCultureIgnoreCase)];
+            // Ordinal: the server's locale is not the reader's, and this package renders dates and
+            // numbers invariantly for the same reason. A list that reorders itself when the host's
+            // culture changes is worse than one that ignores locale collation.
+            .OrderBy(job => job.DisplayName, StringComparer.OrdinalIgnoreCase)];
     }
 
-    public async Task SetOverrideAsync(
+    public Task SetOverrideAsync(
         string jobTypeName,
         RetentionPeriod? period,
         string modifiedBy,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            await SaveOverrideAsync(jobTypeName, period, modifiedBy, cancellationToken).ConfigureAwait(false);
-        }
-        catch (DbUpdateException)
-        {
-            // Read-then-write against a unique index: two administrators saving at once — or one
-            // double-fired change event — both see no existing row and both insert. Re-reading and
-            // retrying once resolves it; the loser simply becomes an update. Only once, because a
-            // second failure is no longer a race.
-            await SaveOverrideAsync(jobTypeName, period, modifiedBy, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task SaveOverrideAsync(
-        string jobTypeName,
-        RetentionPeriod? period,
-        string modifiedBy,
-        CancellationToken cancellationToken)
-    {
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-
-        var existing = await dbContext.JobRetentionPolicies
-            .FirstOrDefaultAsync(p => p.JobTypeName == jobTypeName, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (period is null)
-        {
-            // Clearing an override means deleting the row: its absence is what lets the attribute, or
-            // failing that the default, apply again.
-            if (existing is not null)
-                dbContext.JobRetentionPolicies.Remove(existing);
-        }
-        else if (existing is null)
-        {
-            dbContext.JobRetentionPolicies.Add(new JobRetentionPolicy
-            {
-                JobTypeName = jobTypeName,
-                RetentionDays = period.Value.Days,
-                ModifiedBy = modifiedBy,
-                ModifiedAt = DateTimeOffset.UtcNow
-            });
-        }
-        else
-        {
-            existing.RetentionDays = period.Value.Days;
-            existing.ModifiedBy = modifiedBy;
-            existing.ModifiedAt = DateTimeOffset.UtcNow;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-
-        if (_logger.IsEnabled(LogLevel.Information))
-        {
-            _logger.LogInformation(
-                "ScheduledJobsInsights retention for {JobTypeName} set to {Retention} by {ModifiedBy}.",
-                jobTypeName,
-                Describe(period),
-                modifiedBy);
-        }
-    }
+        CancellationToken cancellationToken = default) =>
+        _policies.SaveAsync(jobTypeName, period, modifiedBy, cancellationToken);
 
     public async Task<IReadOnlyDictionary<string, RetentionPeriod>> GetEffectiveOverridesAsync(
         CancellationToken cancellationToken = default)
     {
-        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-
+        // Built from the same records the screen shows, resolved by the same JobRetention.Resolve.
+        // This used to walk attributes and then override rows itself — a second expression of the
+        // precedence order, and the one the cleanup job actually acted on, so the copy that governed
+        // deletion was not the copy the tests and the documentation pointed at. They agreed; nothing
+        // made them agree.
+        var jobs = await GetAllAsync(cancellationToken).ConfigureAwait(false);
         var effective = new Dictionary<string, RetentionPeriod>(StringComparer.Ordinal);
 
-        // Attributes first, so a stored override written afterwards takes precedence.
-        foreach (var jobTypeName in _jobTypes.LoggedJobTypeNames)
+        foreach (var job in jobs)
         {
-            if (_jobTypes.FindAttribute(jobTypeName) is { } attribute && RetentionPeriod.FromAttribute(attribute) is { } declared)
-                effective[jobTypeName] = declared;
-        }
+            var (period, source) = job.Resolve(DefaultPeriod);
 
-        var overrides = await dbContext.JobRetentionPolicies
-            .AsNoTracking()
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        foreach (var policy in overrides)
-        {
-            if (RetentionPeriod.FromStoredValue(policy.RetentionDays) is { } stored)
-            {
-                effective[policy.JobTypeName] = stored;
-                continue;
-            }
-
-            // Left to the attribute or the default rather than obeyed. A stored zero or negative
-            // resolves to a cutoff of now-or-later, which would delete the very history the row was
-            // written to govern — including the run in progress.
-            _logger.LogWarning(
-                "ScheduledJobsInsights is ignoring the stored retention of {RetentionDays} day(s) for {JobTypeName}: it must be a positive number of days, or null for indefinite. The job falls back to its attribute or the installation default until the row is corrected.",
-                policy.RetentionDays,
-                policy.JobTypeName);
+            // Only jobs with a rule of their own belong here. The cleanup job takes everything else
+            // in its default sweep, and listing them would exclude every job from that sweep instead.
+            if (source is not RetentionSource.Default)
+                effective[job.JobTypeName] = period;
         }
 
         return effective;
@@ -247,7 +173,7 @@ internal sealed class JobRetentionService : IJobRetentionService
 
         return new JobRetention(
             JobTypeName: jobTypeName,
-            DisplayName: isRegistered ? registeredName! : ShortNameOf(jobTypeName),
+            DisplayName: isRegistered ? registeredName! : RegisteredJobNames.ShortNameOf(jobTypeName),
             IsRegistered: isRegistered,
             ExistsInCode: _jobTypes.Exists(jobTypeName),
             Attribute: attribute is null ? null : RetentionPeriod.FromAttribute(attribute),
@@ -258,42 +184,5 @@ internal sealed class JobRetentionService : IJobRetentionService
             ModifiedBy: policy?.ModifiedBy,
             ModifiedAt: policy?.ModifiedAt,
             ExecutionCount: history.GetValueOrDefault(jobTypeName));
-    }
-
-    /// <summary>Job type name to display name, for everything the CMS currently has registered.</summary>
-    private Dictionary<string, string> GetRegisteredJobs()
-    {
-        try
-        {
-            // Duplicate type names are possible in a misconfigured installation; the first wins rather
-            // than throwing, since a duplicate must not take the whole screen down.
-            var registered = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var job in _scheduledJobRepository.List().Where(job => !string.IsNullOrEmpty(job.TypeName)))
-                registered.TryAdd(job.TypeName, string.IsNullOrEmpty(job.Name) ? ShortNameOf(job.TypeName) : job.Name);
-
-            return registered;
-        }
-        catch (Exception ex)
-        {
-            // Same reasoning as LoggedScheduledJobBase's job-name lookup: the repository is
-            // best-effort. Losing it costs display names and the registered flag, not the screen.
-            _logger.LogWarning(ex, "ScheduledJobsInsights could not list registered scheduled jobs; the retention screen will show job type names instead of display names.");
-            return [];
-        }
-    }
-
-    /// <summary>How a retention change reads in the audit log line.</summary>
-    private static string Describe(RetentionPeriod? period)
-    {
-        if (period is not { } set)
-            return "the inherited default";
-
-        return set.IsIndefinite ? "indefinite" : $"{set.Days} day(s)";
-    }
-
-    private static string ShortNameOf(string jobTypeName)
-    {
-        var lastDot = jobTypeName.LastIndexOf('.');
-        return lastDot >= 0 && lastDot < jobTypeName.Length - 1 ? jobTypeName[(lastDot + 1)..] : jobTypeName;
     }
 }

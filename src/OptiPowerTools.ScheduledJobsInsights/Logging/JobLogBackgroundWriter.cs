@@ -147,8 +147,17 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             if (remaining <= TimeSpan.Zero)
                 break;
 
-            var readTask = reader.WaitToReadAsync(stoppingToken).AsTask();
-            var completedTask = await Task.WhenAny(readTask, Task.Delay(remaining, stoppingToken)).ConfigureAwait(false);
+            // Linked source cancelled in the finally: whichever of the two loses the race is
+            // otherwise left running — a timer and a channel waiter abandoned on every iteration, for
+            // the life of the process.
+            using var deadlineSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+
+            var readTask = reader.WaitToReadAsync(deadlineSource.Token).AsTask();
+            var delayTask = Task.Delay(remaining, deadlineSource.Token);
+            var completedTask = await Task.WhenAny(readTask, delayTask).ConfigureAwait(false);
+
+            await deadlineSource.CancelAsync().ConfigureAwait(false);
+
             if (completedTask != readTask)
                 break; // flush interval elapsed before more data arrived
 

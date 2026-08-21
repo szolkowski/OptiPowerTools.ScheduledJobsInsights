@@ -3,9 +3,21 @@ name: Publish NuGet
 # Tagging is the release. The tag is the single source of the version — the csproj's <Version> is
 # only what a local `dotnet pack` produces, and shipping that by accident is how v1.0.0 would have
 # published a package stamped 0.9.5.
+#
+# A dry run (Actions → Publish NuGet → Run workflow) does everything except the two irreversible
+# steps. It exists because nuget.org packages cannot be deleted — only unlisted — so the first real
+# tag should not also be the first test of this pipeline. The OIDC exchange *is* exercised: getting a
+# temporary key back proves the trusted publishing policy, the NUGET_USER secret and the id-token
+# permission are all correct, which is the only part that cannot be checked locally.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (dry run only, e.g. 1.0.0-rc.1)'
+        required: true
+        default: '1.0.0-rc.1'
 
 env:
   PROJECT: src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
@@ -45,16 +57,25 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Resolve version from tag
+      - name: Resolve version
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' is not a SemVer version tag (expected vMAJOR.MINOR.PATCH[-prerelease])."
+            echo "::error::'$VERSION' is not a SemVer version (expected MAJOR.MINOR.PATCH[-prerelease])."
             exit 1
           fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing version $VERSION"
+          echo "Version $VERSION"
 
       # A tag can point at any commit, including one that never passed CI — build.yml runs on
       # pushes and pull requests to main, not on tags. Gating here is what stops a red build
@@ -71,7 +92,12 @@ jobs:
       # DDL rights. Idempotent, so it is safe to re-run against a database at any migration level.
       - name: Generate idempotent migration script
         run: |
+          set -euo pipefail
+          # A globally installed tool is not on PATH in a fresh shell; without this `dotnet ef` below
+          # is "command not found". build.yml does the same.
+          export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet tool install --global dotnet-ef
+
           SCRIPT="./nupkg/scheduled-jobs-insights-${{ steps.version.outputs.version }}.sql"
           dotnet ef migrations script --idempotent \
             --project ${{ env.PROJECT }} \
@@ -120,13 +146,29 @@ jobs:
 
       # Deliberately the last step before the push: the temporary key is valid for one hour, and one
       # OIDC token buys exactly one key. Requesting it earlier risks it expiring behind a slow build.
+      # Runs in a dry run too — obtaining a key is exactly the proof that the policy is correct, and
+      # an unused key simply expires after its hour.
       - name: NuGet login (OIDC to short-lived key)
         uses: NuGet/login@v1
         id: nuget-login
         with:
           user: ${{ secrets.NUGET_USER }}
 
+      # Everything above this line runs identically in a dry run. Everything below is irreversible:
+      # a pushed version can be unlisted but never deleted, and a release is public the moment it
+      # exists.
+      - name: Dry run — stopping before publish
+        if: steps.version.outputs.dry_run == 'true'
+        run: |
+          echo "### Dry run passed :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version \`${{ steps.version.outputs.version }}\` packed, the migration script verified against SQL Server, and a short-lived NuGet key obtained over OIDC." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Nothing was pushed. Tag the commit to publish for real." >> "$GITHUB_STEP_SUMMARY"
+          ls -la ./nupkg
+
       - name: Push to NuGet.org
+        if: steps.version.outputs.dry_run == 'false'
         run: >
           dotnet nuget push "./nupkg/*.nupkg"
           --source https://api.nuget.org/v3/index.json
@@ -134,6 +176,7 @@ jobs:
           --skip-duplicate
 
       - name: Create GitHub Release
+        if: steps.version.outputs.dry_run == 'false'
         run: |
           PRERELEASE=""
           if [[ "${{ steps.version.outputs.version }}" == *-* ]]; then

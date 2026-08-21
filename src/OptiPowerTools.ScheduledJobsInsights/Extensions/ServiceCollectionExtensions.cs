@@ -128,6 +128,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IJobRetentionPolicySource>(provider => provider.GetRequiredService<IJobRetentionService>());
 
         services.AddSingleton<IJobExecutionWriter, JobExecutionWriter>();
+
+        // What every logged job takes in its constructor. Transient rather than singleton so it
+        // inherits whatever lifetime the host gives IScheduledJobRepository — the same constraint
+        // jobs were already under when they took that repository directly.
+        services.AddTransient<JobLoggingContext>();
         services.AddSingleton<IJobExecutionQueryService, JobExecutionQueryService>();
         services.AddSingleton<ICleanupRepository, CleanupRepository>();
         services.AddHostedService<JobLogBackgroundWriter>();

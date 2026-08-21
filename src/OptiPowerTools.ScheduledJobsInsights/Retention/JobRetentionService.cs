@@ -171,6 +171,18 @@ internal sealed class JobRetentionService : IJobRetentionService
 
         var storedOverride = policy is null ? null : RetentionPeriod.FromStoredValue(policy.RetentionDays);
 
+        if (policy is not null && storedOverride is null)
+        {
+            // Reported here rather than only flagged in the screen: the row is being ignored, and the
+            // person who needs to know may never open that page. A non-positive stored value resolves
+            // to a cutoff of now-or-later, which would delete the very history it was written to
+            // govern — so the job falls back to its attribute or the default until it is corrected.
+            _logger.LogWarning(
+                "ScheduledJobsInsights is ignoring the stored retention of {RetentionDays} day(s) for {JobTypeName}: it must be a positive number of days, or null for indefinite.",
+                policy.RetentionDays,
+                jobTypeName);
+        }
+
         return new JobRetention(
             JobTypeName: jobTypeName,
             DisplayName: isRegistered ? registeredName! : RegisteredJobNames.ShortNameOf(jobTypeName),

@@ -1,5 +1,6 @@
 using EPiServer.DataAbstraction;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -36,13 +37,14 @@ public class JobRetentionServiceTests
         IDbContextFactory<ScheduledJobsInsightsDbContext> factory,
         IScheduledJobRepository repository,
         int defaultDays = 30,
-        TimeProvider? timeProvider = null) =>
+        TimeProvider? timeProvider = null,
+        ILogger<JobRetentionService>? logger = null) =>
         new(factory,
             new JobRetentionPolicyStore(factory, NullLogger<JobRetentionPolicyStore>.Instance),
             new RegisteredJobNames(repository, NullLogger<RegisteredJobNames>.Instance),
             new LoggedJobTypeIndex(),
             Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { RetentionDays = defaultDays }),
-            NullLogger<JobRetentionService>.Instance,
+            logger ?? NullLogger<JobRetentionService>.Instance,
             timeProvider);
 
     private static void SeedExecutions(SqliteDbContextFactory factory, string jobTypeName, int count)
@@ -244,12 +246,17 @@ public class JobRetentionServiceTests
             });
             dbContext.SaveChanges();
         }
-        var service = CreateService(factory);
+        var logger = new RecordingLogger<JobRetentionService>();
+        var service = CreateService(factory, Substitute.For<IScheduledJobRepository>(), logger: logger);
 
         var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == ChattyType);
 
         Assert.Null(job.Override);
         Assert.True(job.HasInvalidOverride);
+        // Reported, not merely flagged in a screen the administrator may never open.
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Level == LogLevel.Warning && entry.Message.Contains(ChattyType, StringComparison.Ordinal));
         // Falls back to the attribute, exactly as though the row were absent.
         Assert.Equal(RetentionSource.Attribute, job.Resolve(RetentionPeriod.OfDays(30)).Source);
     }

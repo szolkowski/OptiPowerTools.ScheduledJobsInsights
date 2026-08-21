@@ -57,7 +57,7 @@ public class DetailPollingTests : ComponentTestBase
     }
 
     [Fact]
-    public void WhenTheRunFinishes_ThePageShowsTheOutcomeAndStopsPolling()
+    public async Task WhenTheRunFinishes_ThePageShowsTheOutcomeAndStopsPolling()
     {
         var running = AnExecution(status: ExecutionStatus.Running, completedAt: null);
         var finished = AnExecution(status: ExecutionStatus.Succeeded, resultMessage: "Imported 12 items.");
@@ -71,12 +71,12 @@ public class DetailPollingTests : ComponentTestBase
 
         // Wait past the trailing read (LogFlushInterval + 500ms) before snapshotting, or this
         // measures the race against that one deliberate extra read rather than the poll loop.
-        Thread.Sleep(Options.LogFlushInterval + TimeSpan.FromMilliseconds(800));
+        await Task.Delay(Options.LogFlushInterval + TimeSpan.FromMilliseconds(800));
         var settled = QueryService.ReceivedCalls().Count();
 
         // Several poll intervals' worth of nothing: the loop really has stopped, rather than merely
-        // being between ticks.
-        Thread.Sleep(200);
+        // being between ticks. Proving an absence needs elapsed time — there is no event to await.
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
         Assert.Equal(settled, QueryService.ReceivedCalls().Count());
     }
 
@@ -110,14 +110,17 @@ public class DetailPollingTests : ComponentTestBase
     }
 
     [Fact]
-    public void AnExecutionThatWasAlreadyFinished_IsNeverPolled()
+    public async Task AnExecutionThatWasAlreadyFinished_IsNeverPolled()
     {
         QueryService.GetExecutionAsync(1, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<JobExecution?>(AnExecution(status: ExecutionStatus.Succeeded)));
 
         RenderDetail();
-        Thread.Sleep(150);
 
-        QueryService.Received(1).GetExecutionAsync(1, Arg.Any<CancellationToken>());
+        // Several poll intervals: if a loop had started, the count would have climbed by now.
+        await Task.Delay(TimeSpan.FromMilliseconds(150));
+
+        // Discarded, not awaited: the assertion is the call itself.
+        _ = QueryService.Received(1).GetExecutionAsync(1, Arg.Any<CancellationToken>());
     }
 }

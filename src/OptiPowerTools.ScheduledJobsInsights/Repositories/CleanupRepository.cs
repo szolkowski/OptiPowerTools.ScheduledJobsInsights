@@ -48,22 +48,6 @@ internal sealed class CleanupRepository : ICleanupRepository
         return query.Take(batchSize).ExecuteDelete();
     }
 
-    public int MarkInterruptedExecutions(DateTimeOffset cutoff, CancellationToken cancellationToken = default)
-    {
-        if (cancellationToken.IsCancellationRequested)
-            return 0;
-
-        using var dbContext = _dbContextFactory.CreateDbContext();
-
-        // CompletedAt is left null on purpose: nothing is known about when the run actually ended,
-        // and inventing a completion time would make the duration column lie.
-        return dbContext.JobExecutions
-            .Where(e => e.Status == ExecutionStatus.Running && e.StartedAt < cutoff)
-            .ExecuteUpdate(setters => setters
-                .SetProperty(e => e.Status, ExecutionStatus.Interrupted)
-                .SetProperty(e => e.ResultMessage, "No outcome was recorded; the process is presumed to have stopped mid-run."));
-    }
-
     public int DeleteExecutionsOlderThan(
         string jobTypeName,
         DateTimeOffset cutoff,
@@ -81,5 +65,21 @@ internal sealed class CleanupRepository : ICleanupRepository
             .Where(e => e.JobTypeName == jobTypeName && e.StartedAt < cutoff)
             .Take(batchSize)
             .ExecuteDelete();
+    }
+
+    public int MarkInterruptedExecutions(DateTimeOffset cutoff, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return 0;
+
+        using var dbContext = _dbContextFactory.CreateDbContext();
+
+        // CompletedAt is left null on purpose: nothing is known about when the run actually ended,
+        // and inventing a completion time would make the duration column lie.
+        return dbContext.JobExecutions
+            .Where(e => e.Status == ExecutionStatus.Running && e.StartedAt < cutoff)
+            .ExecuteUpdate(setters => setters
+                .SetProperty(e => e.Status, ExecutionStatus.Interrupted)
+                .SetProperty(e => e.ResultMessage, "No outcome was recorded; the process is presumed to have stopped mid-run."));
     }
 }

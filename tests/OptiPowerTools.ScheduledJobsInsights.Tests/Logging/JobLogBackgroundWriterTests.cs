@@ -48,6 +48,68 @@ public class JobLogBackgroundWriterTests
     }
 
     [Fact]
+    public async Task StopAsync_DoesNotDrainConcurrentlyWithTheCollector()
+    {
+        // base.StopAsync returns when *either* ExecuteAsync completes or the host's shutdown timeout
+        // fires. On the timeout path it abandons a slow drain rather than awaiting it, and StopAsync
+        // then starts a second one over the same List<JobRecord> — two threads mutating one list,
+        // inside a hosted service whose whole design rule is "must not throw".
+        using var sqlite = new SqliteDbContextFactory();
+        var executionId = await SeedExecutionAsync(sqlite);
+
+        using var factory = new GatedDbContextFactory(sqlite);
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            LogBatchSize = 10,
+            LogFlushInterval = TimeSpan.FromMilliseconds(10)
+        });
+
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "first", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 2, LogSeverity.Info, "second", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+
+        var backgroundWriter = new JobLogBackgroundWriter(channel, factory, options, NullLogger<JobLogBackgroundWriter>.Instance);
+        await backgroundWriter.StartAsync(CancellationToken.None);
+
+        // A write is now in flight and held open, with the records already out of the channel.
+        await factory.FirstCallEntered.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // An already-cancelled token is the shutdown-timeout path: base.StopAsync gives up waiting
+        // for ExecuteAsync straight away.
+        using var expired = new CancellationTokenSource();
+        await expired.CancelAsync();
+        var stopping = backgroundWriter.StopAsync(expired.Token);
+
+        // Give the second drain every chance to barge in before the first one finishes.
+        await Task.Delay(100);
+        Assert.Equal(1, factory.Calls);
+
+        factory.Release();
+        await stopping;
+
+        await using var verifyContext = sqlite.CreateDbContext();
+        Assert.Equal(2, verifyContext.JobLogEntries.Count(e => e.JobExecutionId == executionId));
+    }
+
+    /// <summary>Inserts a parent execution for log rows to hang off.</summary>
+    private static async Task<long> SeedExecutionAsync(SqliteDbContextFactory factory)
+    {
+        await using var dbContext = factory.CreateDbContext();
+        var execution = new JobExecution
+        {
+            ScheduledJobId = Guid.NewGuid(),
+            JobName = "Job",
+            JobTypeName = "Job",
+            StartedAt = DateTimeOffset.UtcNow,
+            Status = ExecutionStatus.Running,
+            MachineName = "test"
+        };
+        dbContext.JobExecutions.Add(execution);
+        await dbContext.SaveChangesAsync();
+        return execution.Id;
+    }
+
+    [Fact]
     public async Task AFailingFlush_IsRetriedAndSurvived_RatherThanStoppingTheHost()
     {
         // The important one. Since .NET 6 an unhandled exception in a BackgroundService stops the

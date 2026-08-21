@@ -32,10 +32,20 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     /// <summary>
     /// Records taken out of the channel but not yet written. A field rather than a local because
     /// both <see cref="ExecuteAsync"/> and <see cref="StopAsync"/> have to be able to flush it, and
-    /// only one of them is guaranteed to run. Never touched concurrently: <see cref="StopAsync"/>
-    /// only reaches it after <c>base.StopAsync</c> has awaited <see cref="ExecuteAsync"/> to a stop.
+    /// only one of them is guaranteed to run.
     /// </summary>
+    /// <remarks>
+    /// Guarded by <see cref="_drainGate"/>. The two drains genuinely can overlap:
+    /// <c>base.StopAsync</c> returns when <em>either</em> <see cref="ExecuteAsync"/> completes or the
+    /// host's shutdown timeout fires, so a drain that is taking its time is abandoned rather than
+    /// awaited — and <see cref="StopAsync"/> then starts a second one over the same list. Two threads
+    /// mutating a <see cref="List{T}"/> corrupts it, and an <see cref="IndexOutOfRangeException"/> out
+    /// of a hosted service on shutdown is exactly the kind of noise this class exists to avoid.
+    /// </remarks>
     private readonly List<JobRecord> _pending = [];
+
+    /// <summary>Serialises the two drain paths; see <see cref="_pending"/>.</summary>
+    private readonly SemaphoreSlim _drainGate = new(1, 1);
 
     private readonly Channel<JobRecord> _channel;
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
@@ -62,14 +72,26 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
         {
             while (await reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
             {
-                // _pending rather than a local: collecting takes records *out* of the channel, so a
-                // batch abandoned mid-collect is gone — a drain that only reads the channel finds
-                // nothing. Shutdown cancels while the collector is typically parked waiting for more.
-                await CollectBatchAsync(reader, _pending, stoppingToken).ConfigureAwait(false);
-                if (_pending.Count > 0)
-                    await FlushAsync(_pending, stoppingToken).ConfigureAwait(false);
+                // Under the gate for the same reason the shutdown drain is: once the host's shutdown
+                // timeout fires, StopAsync stops waiting for this loop and drains _pending itself,
+                // while this iteration may still be filling it. Uncontended in normal operation.
+                await _drainGate.WaitAsync(stoppingToken).ConfigureAwait(false);
 
-                _pending.Clear();
+                try
+                {
+                    // _pending rather than a local: collecting takes records *out* of the channel, so
+                    // a batch abandoned mid-collect is gone — a drain that only reads the channel
+                    // finds nothing. Shutdown cancels while the collector is typically parked waiting.
+                    await CollectBatchAsync(reader, _pending, stoppingToken).ConfigureAwait(false);
+                    if (_pending.Count > 0)
+                        await FlushAsync(_pending, stoppingToken).ConfigureAwait(false);
+
+                    _pending.Clear();
+                }
+                finally
+                {
+                    _drainGate.Release();
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -147,14 +169,32 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     /// </remarks>
     private async Task DrainRemainingAsync()
     {
-        while (_channel.Reader.TryRead(out var item))
-            _pending.Add(item);
+        // Not WaitAsync(token): a drain that skipped itself because the other one held the gate would
+        // lose exactly the records this method exists to save.
+        await _drainGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-        if (_pending.Count == 0)
-            return;
+        try
+        {
+            while (_channel.Reader.TryRead(out var item))
+                _pending.Add(item);
 
-        await FlushAsync(_pending, CancellationToken.None).ConfigureAwait(false);
-        _pending.Clear();
+            if (_pending.Count == 0)
+                return;
+
+            await FlushAsync(_pending, CancellationToken.None).ConfigureAwait(false);
+            _pending.Clear();
+        }
+        finally
+        {
+            _drainGate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public override void Dispose()
+    {
+        _drainGate.Dispose();
+        base.Dispose();
     }
 
     /// <summary>

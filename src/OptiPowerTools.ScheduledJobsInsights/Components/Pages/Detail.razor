@@ -106,7 +106,7 @@ else
     <div class="log-header">
         <h2>
             Log
-            @if (_logEntries.Count > 0)
+            @if (_log.Entries.Count > 0)
             {
                 <span class="log-count">@LogCountLabel</span>
             }
@@ -115,7 +115,7 @@ else
                 <span class="live-indicator" role="status">live</span>
             }
         </h2>
-        @if (_logEntries.Count > 0)
+        @if (_log.Entries.Count > 0)
         {
             @* Only useful once the circuit is up, since jumping needs JS interop. *@
             <div class="log-actions">
@@ -125,14 +125,14 @@ else
         }
     </div>
     <div class="console" @ref="_consoleElement">
-        @if (_logEntries.Count == 0)
+        @if (_log.Entries.Count == 0)
         {
             <p role="status">No log lines recorded.</p>
         }
         else
         {
             @* Virtualize renders only the visible slice — a chatty job can log thousands of lines. *@
-            <Virtualize TItem="JobLogEntry" Items="_logEntries" Context="entry">
+            <Virtualize TItem="JobLogEntry" Items="_log.Entries" Context="entry">
                 <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
                     <span class="console-timestamp">@_clock.TimeOfDay(entry.Timestamp)</span>
                     <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
@@ -157,7 +157,7 @@ else
     /// </summary>
     private const int SummaryAutoCollapseLines = 200;
 
-    private readonly List<JobLogEntry> _logEntries = [];
+    private readonly LogEntryBuffer _log = new();
     private readonly CancellationTokenSource _disposalCts = new();
 
     private ViewerClock _clock = ViewerClock.Utc;
@@ -185,7 +185,7 @@ else
     public string? ViewerTimeZone { get; set; }
 
     /// <summary>Line count beside the Log heading.</summary>
-    private string LogCountLabel => DisplayFormat.LineCount(_logEntries.Count);
+    private string LogCountLabel => DisplayFormat.LineCount(_log.Entries.Count);
 
     protected override async Task OnInitializedAsync()
     {
@@ -270,12 +270,17 @@ else
 
         _metrics = await QueryService.GetMetricsAsync(Id, cancellationToken);
 
-        var lastSequence = _logEntries.Count > 0 ? _logEntries[^1].Sequence : 0;
-        var newEntries = await QueryService.GetLogEntriesAsync(Id, lastSequence, cancellationToken);
-        _logEntries.AddRange(newEntries);
+        await LoadLogEntriesAsync(cancellationToken);
 
         UpdateSummaryState(_execution.ResultSummary);
     }
+
+    /// <summary>
+    /// Fetches log lines written since the last poll. <see cref="LogEntryBuffer"/> decides where to
+    /// resume from and holds the reasoning for why that is not simply the highest line seen.
+    /// </summary>
+    private async Task LoadLogEntriesAsync(CancellationToken cancellationToken) =>
+        _log.Merge(await QueryService.GetLogEntriesAsync(Id, _log.ResumeFrom, cancellationToken));
 
     /// <summary>
     /// Refreshes the summary's header badge and, the first time a summary appears, decides whether

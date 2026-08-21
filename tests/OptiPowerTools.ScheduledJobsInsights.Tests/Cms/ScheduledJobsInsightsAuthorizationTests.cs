@@ -11,7 +11,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
 public class ScheduledJobsInsightsAuthorizationTests
 {
     /// <summary>Builds a provider with the package registered, plus any host policies.</summary>
-    private static IServiceProvider Host(
+    private static ServiceProvider Host(
         Action<OptiPowerToolScheduledJobsInsightsOptions> configure,
         Action<AuthorizationOptions>? hostPolicies = null)
     {
@@ -32,7 +32,7 @@ public class ScheduledJobsInsightsAuthorizationTests
         return services.BuildServiceProvider();
     }
 
-    private static AuthorizationPolicy PolicyFrom(IServiceProvider provider) =>
+    private static AuthorizationPolicy PolicyFrom(ServiceProvider provider) =>
         provider.GetRequiredService<IOptions<AuthorizationOptions>>()
             .Value
             .GetPolicy(ScheduledJobsInsightsAuthorization.PolicyName)!;

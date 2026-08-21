@@ -299,7 +299,7 @@ public class LoggedScheduledJobBaseTests
         var job = new TestLoggedJob(writer);
         job.Execute();
 
-        job.Stop();
+        Assert.Null(Record.Exception(job.Stop));
     }
 
     [Fact]

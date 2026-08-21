@@ -22,7 +22,15 @@ namespace OptiPowerTools.ScheduledJobsInsights.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>Marks the registration as done, so a second call is a no-op rather than a duplicate.</summary>
-    private sealed class RegistrationMarker;
+    private sealed class RegistrationMarker
+    {
+        /// <summary>The one instance ever needed; registered directly so DI never constructs it.</summary>
+        public static readonly RegistrationMarker Instance = new();
+
+        private RegistrationMarker()
+        {
+        }
+    }
 
     /// <summary>
     /// Adds ScheduledJobsInsights services configured for Optimizely CMS with default options.
@@ -57,7 +65,7 @@ public static class ServiceCollectionExtensions
         if (services.Any(descriptor => descriptor.ServiceType == typeof(RegistrationMarker)))
             return services;
 
-        services.AddSingleton<RegistrationMarker>();
+        services.AddSingleton(RegistrationMarker.Instance);
 
         services.AddOptions<OptiPowerToolScheduledJobsInsightsOptions>()
             .Configure<IConfiguration>((options, configuration) =>

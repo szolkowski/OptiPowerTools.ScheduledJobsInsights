@@ -309,6 +309,9 @@ Code overrides configuration when both are used.
 | ------ | ---- | ------- | ----------- |
 | `ConnectionString` | `string` | `""` | **Required.** SQL Server connection string for job execution/log/metric storage. |
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
+| `MaxLogMessageLength` | `int` | `4000` | Longest log message stored; longer ones are truncated with an ellipsis. The column itself is unbounded, so this is what stops a job that logs a response body per iteration writing megabytes per row. |
+| `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer. |
+| `InterruptedExecutionThreshold` | `TimeSpan` | `24:00:00` | How long a run may sit unfinished before the cleanup job records it as **Interrupted**. `TimeSpan.Zero` disables the sweep. |
 | `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
 | `LogChannelCapacity` | `int` | `10000` | Capacity of the in-memory buffer for log/metric writes before falling back to a synchronous insert. |
@@ -486,8 +489,12 @@ Changes take effect on the next run of the cleanup job. Nothing is deleted at th
 
 `ScheduledJobsInsightsCleanupJob` is auto-discovered into the CMS's own Scheduled Jobs admin list, like any other native job. It deletes executions (and their cascade-deleted logs/metrics) in batches of `CleanupBatchSize`, and reports what it removed as its execution message.
 
-Each run does two passes:
+Each run does three passes:
 
+0. **Give up on abandoned runs.** Executions still `Running` since longer ago than
+   `InterruptedExecutionThreshold` are recorded as **Interrupted**. A process recycled mid-run writes
+   nothing further, so nothing else would ever finish those rows — and until they are resolved, every
+   count and status filter is wrong. `CompletedAt` stays empty: the end time is genuinely unknown.
 1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
 2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
 

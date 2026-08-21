@@ -16,7 +16,8 @@ public class ScheduledJobsInsightsCleanupJobTests
         ICleanupRepository repository,
         IJobRetentionPolicySource retention,
         int retentionDays = 30,
-        int batchSize = 500)
+        int batchSize = 500,
+        TimeSpan? interruptedThreshold = null)
     {
         var writer = Substitute.For<IJobExecutionWriter>();
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
@@ -28,7 +29,8 @@ public class ScheduledJobsInsightsCleanupJobTests
             Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
             {
                 RetentionDays = retentionDays,
-                CleanupBatchSize = batchSize
+                CleanupBatchSize = batchSize,
+                InterruptedExecutionThreshold = interruptedThreshold ?? TimeSpan.FromHours(24)
             }));
     }
 
@@ -203,6 +205,39 @@ public class ScheduledJobsInsightsCleanupJobTests
         CreateJob(repository, retention).Execute();
 
         retention.Received(1).GetEffectiveOverridesAsync(Arg.Is<CancellationToken>(token => token.CanBeCanceled));
+    }
+
+    [Fact]
+    public void Execute_GivesUpOnExecutionsLeftHangingByADeadProcess()
+    {
+        var repository = Substitute.For<ICleanupRepository>();
+        repository.DeleteExecutionsOlderThan(
+                Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(0);
+        repository.MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(3);
+        var expectedCutoff = DateTimeOffset.UtcNow.AddHours(-24);
+
+        var result = CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30))).Execute();
+
+        repository.Received(1).MarkInterruptedExecutions(
+            Arg.Is<DateTimeOffset>(cutoff => cutoff >= expectedCutoff.AddMinutes(-1) && cutoff <= expectedCutoff.AddMinutes(1)),
+            Arg.Any<CancellationToken>());
+        Assert.Contains("0 job execution(s)", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Execute_WithTheThresholdDisabled_LeavesUnfinishedExecutionsAlone()
+    {
+        // An installation running jobs that legitimately take days can switch the sweep off rather
+        // than have a working job reported as interrupted underneath it.
+        var repository = Substitute.For<ICleanupRepository>();
+        repository.DeleteExecutionsOlderThan(
+                Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
+            .Returns(0);
+
+        CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30)), interruptedThreshold: TimeSpan.Zero).Execute();
+
+        repository.DidNotReceive().MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

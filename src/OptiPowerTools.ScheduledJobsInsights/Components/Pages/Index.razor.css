@@ -62,3 +62,9 @@
     gap: 0.5rem;
     margin-top: 1rem;
 }
+
+.load-error {
+    /* Shown when the insights database cannot be read — an accepted state for this package, but one
+       the reader should see as a message rather than as a dead circuit. */
+    color: #EF5350;
+}

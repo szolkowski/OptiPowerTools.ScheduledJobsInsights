@@ -68,7 +68,16 @@ else
                                retention is still worth managing — so it is flagged, not hidden. Keyed
                                on the code being gone rather than on CMS registration: those are
                                different questions, and a job can exist without being registered yet. *@
-                            <span class="tag tag-orphan" title="No job of this type exists in the application any more; only its history remains.">history only</span>
+                            @if (job.ExecutionCount > 0)
+                            {
+                                <span class="tag tag-orphan" title="No job of this type exists in the application any more; only its history remains.">history only</span>
+                            }
+                            else
+                            {
+                                @* Neither code nor history: a setting for a job that is entirely gone,
+                                   which "history only" would misdescribe — there is none left to keep. *@
+                                <span class="tag tag-orphan" title="Neither a job of this type nor any execution history for it remains. This setting no longer applies to anything; choose Inherit to remove it.">setting only</span>
+                            }
                         }
                     </td>
                     <td class="numeric">@DisplayFormat.Number(job.ExecutionCount)</td>
@@ -103,11 +112,11 @@ else
                     <td>
                         <select value="@ChoiceFor(job)"
                                 @onchange="args => OnOverrideChangedAsync(job, args)"
-                                disabled="@(_savingJobTypeName is not null)">
+                                disabled="@(_savingJobTypeName == job.JobTypeName)">
                             <option value="@InheritChoice">Inherit</option>
                             @foreach (var days in DayChoicesFor(job))
                             {
-                                <option value="@days">@days days</option>
+                                <option value="@days">@DisplayFormat.Days(days)</option>
                             }
                             <option value="@IndefiniteChoice">Keep forever</option>
                         </select>
@@ -306,7 +315,7 @@ else
             : PresetDays;
 
     private static string Describe(RetentionPeriod period) =>
-        period.Days is { } days ? $"{DisplayFormat.Number(days)} days" : "Keep forever";
+        period.Days is { } days ? DisplayFormat.Days(days) : "Keep forever";
 
     private static string SourceLabel(RetentionSource source) => source switch
     {

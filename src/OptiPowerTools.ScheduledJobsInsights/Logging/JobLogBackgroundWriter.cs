@@ -218,11 +218,20 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
             {
                 if (attempt == MaxFlushAttempts)
                 {
+                    // Retrying could not save the batch, so before giving up on all of it, try each
+                    // record on its own. A batch mixes records from *different* executions, and it
+                    // takes only one poisoned row — a duplicate (JobExecutionId, Sequence) from a
+                    // direct IJobExecutionWriter.Log caller, or a row whose parent execution the
+                    // cleanup job has just deleted — to fail the SaveChanges for all hundred.
+                    var salvaged = await SalvageIndividuallyAsync(batch, stoppingToken).ConfigureAwait(false);
+
                     _logger.LogError(
                         ex,
-                        "ScheduledJobsInsights dropped {RecordCount} buffered log/metric record(s) after {AttemptCount} failed write attempts. Job execution history is incomplete for this period; the writer is still running.",
+                        "ScheduledJobsInsights could not write a batch of {RecordCount} buffered log/metric record(s) after {AttemptCount} attempts. {SalvagedCount} were then written individually and {DroppedCount} dropped. Job execution history is incomplete for this period; the writer is still running.",
                         batch.Count,
-                        MaxFlushAttempts);
+                        MaxFlushAttempts,
+                        salvaged,
+                        batch.Count - salvaged);
                     return;
                 }
 
@@ -237,6 +246,43 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
                 await Task.Delay(RetryBackoff * attempt, stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Writes each record separately after a batch has failed, so one bad row costs one row.
+    /// </summary>
+    /// <returns>How many records were written.</returns>
+    /// <remarks>
+    /// Only reached once a batch has already failed three times, so the cost of a write per record
+    /// is irrelevant next to the alternative — losing the log lines of every job that happened to be
+    /// running at the same moment as the one that produced the bad row.
+    /// </remarks>
+    private async Task<int> SalvageIndividuallyAsync(List<JobRecord> batch, CancellationToken cancellationToken)
+    {
+        var salvaged = 0;
+        var single = new List<JobRecord>(1);
+
+        foreach (var record in batch)
+        {
+            single.Clear();
+            single.Add(record);
+
+            try
+            {
+                await WriteBatchAsync(single, cancellationToken).ConfigureAwait(false);
+                salvaged++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break; // Shutting down; the rest are lost either way.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "ScheduledJobsInsights dropped one unwritable log/metric record.");
+            }
+        }
+
+        return salvaged;
     }
 
     private async Task WriteBatchAsync(List<JobRecord> batch, CancellationToken cancellationToken)

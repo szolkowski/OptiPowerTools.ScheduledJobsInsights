@@ -91,6 +91,42 @@ public class JobLogBackgroundWriterTests
         Assert.Equal(2, verifyContext.JobLogEntries.Count(e => e.JobExecutionId == executionId));
     }
 
+    [Fact]
+    public async Task OnePoisonedRecord_DoesNotCostTheWholeBatch()
+    {
+        // A batch mixes records from different executions. One unwritable row — here a log line whose
+        // parent execution no longer exists, which happens when a job outlives its own retention —
+        // fails the SaveChanges for all of them, so every other job running at that moment loses its
+        // log lines too.
+        using var factory = new SqliteDbContextFactory();
+        var executionId = await SeedExecutionAsync(factory);
+
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        {
+            LogBatchSize = 10,
+            LogFlushInterval = TimeSpan.FromMilliseconds(10)
+        });
+
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "before", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+        // No such execution: violates the foreign key and fails the batch it travels in.
+        channel.Writer.TryWrite(new LogRecordItem(9999, 1, LogSeverity.Info, "poison", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+        channel.Writer.TryWrite(new LogRecordItem(executionId, 2, LogSeverity.Info, "after", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
+
+        var backgroundWriter = new JobLogBackgroundWriter(channel, factory, options, NullLogger<JobLogBackgroundWriter>.Instance);
+        await backgroundWriter.StartAsync(CancellationToken.None);
+        await backgroundWriter.StopAsync(CancellationToken.None);
+
+        await using var verifyContext = factory.CreateDbContext();
+        var written = verifyContext.JobLogEntries
+            .Where(e => e.JobExecutionId == executionId)
+            .Select(e => e.Message)
+            .OrderBy(m => m)
+            .ToList();
+
+        Assert.Equal(["after", "before"], written);
+    }
+
     /// <summary>Inserts a parent execution for log rows to hang off.</summary>
     private static async Task<long> SeedExecutionAsync(SqliteDbContextFactory factory)
     {

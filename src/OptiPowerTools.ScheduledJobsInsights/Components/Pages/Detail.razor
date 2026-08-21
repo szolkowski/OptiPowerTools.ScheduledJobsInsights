@@ -14,7 +14,11 @@
 
 <p><a href="@Options.Value.CmsShellPath">&larr; Back to executions</a></p>
 
-@if (_execution is null)
+@if (_loadError is not null)
+{
+    <p class="load-error" role="alert">Could not read execution #@Id: @_loadError</p>
+}
+else if (_execution is null)
 {
     @* Distinguishing these two matters: without it a bad id sits on "Loading…" forever. *@
     <p role="status">@(_loaded ? $"Execution #{Id} was not found." : "Loading…")</p>
@@ -131,8 +135,15 @@ else
         }
         else
         {
-            @* Virtualize renders only the visible slice — a chatty job can log thousands of lines. *@
-            <Virtualize TItem="JobLogEntry" Items="_log.Entries" Context="entry">
+            @* Virtualize renders only the visible slice — a chatty job can log thousands of lines.
+               ItemSize must be given: it defaults to 50px, while a console line is about 22, so the
+               scroll range came out more than twice the real content height — dead space at the
+               bottom, and "Jump to end" landing nowhere near the last line. The line-height in the
+               scoped CSS is explicit for the same reason: it makes the row height a known quantity
+               rather than whatever the platform's default monospace metrics happen to produce.
+               A line long enough to wrap is still taller than the estimate, which costs a little
+               scrollbar accuracy and nothing else. *@
+            <Virtualize TItem="JobLogEntry" Items="_log.Entries" Context="entry" ItemSize="22">
                 <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
                     <span class="console-timestamp">@_clock.TimeOfDay(entry.Timestamp)</span>
                     <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
@@ -184,6 +195,9 @@ else
     [Parameter]
     public string? ViewerTimeZone { get; set; }
 
+    /// <summary>Set when a read failed, so the page can say so instead of faulting the circuit.</summary>
+    private string? _loadError;
+
     /// <summary>Line count beside the Log heading.</summary>
     private string LogCountLabel => DisplayFormat.LineCount(_log.Entries.Count);
 
@@ -192,7 +206,20 @@ else
         // Resolved once from a parameter rather than looked up per render: the zone cannot change
         // without a new request, and TimeZoneInfo lookups are not free.
         _clock = ViewerClock.ForZone(ViewerTimeZone);
-        await LoadAsync(_disposalCts.Token);
+
+        try
+        {
+            await LoadAsync(_disposalCts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The insights database being down is an accepted state — this package must never take
+            // the CMS with it — but the *shape* of that failure matters. Unhandled here it faults the
+            // circuit, and the reader gets the framework's yellow bar over the CMS chrome with no
+            // message and no way back. An error panel says what happened and leaves the page usable.
+            _loadError = ex.Message;
+            _loaded = true;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -203,8 +230,18 @@ else
         if (!firstRender)
             return;
 
-        _interop = await JS.InvokeAsync<IJSObjectReference>(
-            "import", "./_content/OptiPowerTools.ScheduledJobsInsights/js/detail-interop.js");
+        try
+        {
+            _interop = await JS.InvokeAsync<IJSObjectReference>(
+                "import", "./_content/OptiPowerTools.ScheduledJobsInsights/js/detail-interop.js");
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+        {
+            // Navigated away or lost the socket mid-import. Unhandled, this tears the circuit down
+            // and drops the framework's yellow error bar over the CMS chrome; the page itself is
+            // perfectly usable without the module, minus the jump and copy buttons.
+            _interop = null;
+        }
 
         if (_execution?.Status == ExecutionStatus.Running)
         {
@@ -217,16 +254,30 @@ else
         StateHasChanged();
     }
 
-    private async Task ScrollToTopAsync()
-    {
-        if (_interop is not null)
-            await _interop.InvokeVoidAsync("scrollToTop", _consoleElement);
-    }
+    private Task ScrollToTopAsync() => InvokeInteropAsync("scrollToTop");
 
-    private async Task ScrollToEndAsync()
+    private Task ScrollToEndAsync() => InvokeInteropAsync("scrollToEnd");
+
+    /// <summary>
+    /// Calls a scroll helper, tolerating a circuit that has gone away underneath it.
+    /// </summary>
+    /// <remarks>
+    /// A user can always click a button and then navigate before the round trip returns, and an
+    /// unhandled <see cref="JSDisconnectedException"/> from an event handler tears the circuit down.
+    /// </remarks>
+    private async Task InvokeInteropAsync(string function)
     {
-        if (_interop is not null)
-            await _interop.InvokeVoidAsync("scrollToEnd", _consoleElement);
+        if (_interop is null)
+            return;
+
+        try
+        {
+            await _interop.InvokeVoidAsync(function, _consoleElement);
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+        {
+            // The page is gone; there is nothing left to scroll.
+        }
     }
 
     /// <summary>
@@ -239,7 +290,17 @@ else
         if (_interop is null || string.IsNullOrEmpty(_execution?.ResultSummary))
             return;
 
-        var copied = await _interop.InvokeAsync<bool>("copyText", _execution.ResultSummary);
+        bool copied;
+
+        try
+        {
+            copied = await _interop.InvokeAsync<bool>("copyText", _execution.ResultSummary);
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or TaskCanceledException)
+        {
+            return; // Nobody is left to read the label.
+        }
+
         _copyLabel = copied ? "Copied" : "Copy unavailable";
         StateHasChanged();
 
@@ -334,6 +395,14 @@ else
         catch (OperationCanceledException)
         {
             // Expected: the component was disposed while the execution was still running.
+        }
+        catch (Exception ex)
+        {
+            // Anything else would fault _pollingTask, which DisposeAsync awaits — rethrowing it in
+            // the middle of circuit teardown, where nothing can handle it.
+            _isPolling = false;
+            _loadError = ex.Message;
+            await InvokeAsync(StateHasChanged);
         }
     }
 

@@ -143,6 +143,63 @@ public class CleanupRepositoryTests
         Assert.Equal(2, dbContext.JobExecutions.Count());
     }
 
+    [Fact]
+    public void MarkInterruptedExecutions_ResolvesOnlyRunsLeftHangingByADeadProcess()
+    {
+        // A process recycled mid-run records nothing further, so nothing else ever finishes its row.
+        // Left alone they accumulate and every count, filter and "is it still running?" is wrong.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+        SeedWithStatus(factory,
+            ("Contoso.Jobs.Abandoned", cutoff.AddHours(-1), ExecutionStatus.Running),   // old and unfinished
+            ("Contoso.Jobs.StillGoing", cutoff.AddHours(1), ExecutionStatus.Running),   // unfinished but recent
+            ("Contoso.Jobs.Finished", cutoff.AddHours(-1), ExecutionStatus.Succeeded)); // old but done
+
+        var marked = new CleanupRepository(factory).MarkInterruptedExecutions(cutoff);
+
+        Assert.Equal(1, marked);
+        using var dbContext = factory.CreateDbContext();
+        Assert.Equal(ExecutionStatus.Interrupted, dbContext.JobExecutions.Single(e => e.JobTypeName == "Contoso.Jobs.Abandoned").Status);
+        Assert.Equal(ExecutionStatus.Running, dbContext.JobExecutions.Single(e => e.JobTypeName == "Contoso.Jobs.StillGoing").Status);
+        Assert.Equal(ExecutionStatus.Succeeded, dbContext.JobExecutions.Single(e => e.JobTypeName == "Contoso.Jobs.Finished").Status);
+    }
+
+    [Fact]
+    public void MarkInterruptedExecutions_LeavesCompletedAtNull()
+    {
+        // Nothing is known about when the run actually ended, and inventing a completion time would
+        // make the duration column lie.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+        SeedWithStatus(factory, ("Contoso.Jobs.Abandoned", cutoff.AddHours(-1), ExecutionStatus.Running));
+
+        new CleanupRepository(factory).MarkInterruptedExecutions(cutoff);
+
+        using var dbContext = factory.CreateDbContext();
+        Assert.Null(dbContext.JobExecutions.Single().CompletedAt);
+    }
+
+    private static void SeedWithStatus(
+        SqliteDbContextFactory factory,
+        params (string JobTypeName, DateTimeOffset StartedAt, ExecutionStatus Status)[] executions)
+    {
+        using var dbContext = factory.CreateDbContext();
+        foreach (var (jobTypeName, startedAt, status) in executions)
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = jobTypeName,
+                JobTypeName = jobTypeName,
+                StartedAt = startedAt,
+                CompletedAt = status == ExecutionStatus.Running ? null : startedAt.AddSeconds(1),
+                Status = status,
+                MachineName = "test"
+            });
+        }
+        dbContext.SaveChanges();
+    }
+
     private static void Seed(SqliteDbContextFactory factory, params (string JobTypeName, DateTimeOffset StartedAt)[] executions)
     {
         using var dbContext = factory.CreateDbContext();

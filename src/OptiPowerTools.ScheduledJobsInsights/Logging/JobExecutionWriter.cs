@@ -28,6 +28,16 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     private readonly ChannelWriter<JobRecord> _channelWriter;
     private readonly ILogger<JobExecutionWriter> _logger;
     private readonly int _maxResultSummaryLength;
+    private readonly int _maxLogMessageLength;
+
+    /// <summary>Matches <c>JobMetric.Name</c>'s column width.</summary>
+    private const int MaxMetricNameLength = 200;
+
+    /// <summary>Matches <c>JobMetric.Unit</c>'s column width.</summary>
+    private const int MaxMetricUnitLength = 50;
+
+    /// <summary>Marks a value that was cut to fit.</summary>
+    private const string Ellipsis = "…";
 
     /// <summary>Set once the first channel-full fallback has been reported, to keep the log readable.</summary>
     private int _backpressureReported;
@@ -46,6 +56,11 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         // quietly using the default bound.
         var configured = options.Value.MaxResultSummaryLength;
         _maxResultSummaryLength = configured > 0 ? configured : JobResultSummary.DefaultMaxLength;
+
+        var configuredLogLength = options.Value.MaxLogMessageLength;
+        _maxLogMessageLength = configuredLogLength > 0
+            ? configuredLogLength
+            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogMessageLength;
     }
 
     public long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)
@@ -114,6 +129,12 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     }
 
     /// <summary>
+    /// Truncates a value to fit its column, marking it so a reader can tell it was cut.
+    /// </summary>
+    private static string Clamp(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..(maxLength - Ellipsis.Length)] + Ellipsis;
+
+    /// <summary>
     /// Bounds a summary written directly through <see cref="SetResultSummary"/>, which
     /// <see cref="JobResultSummary"/>'s own bound does not cover. Ends with the same notice the
     /// summary type uses, so a truncated value never looks merely short, and never splits a
@@ -155,7 +176,8 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
 
     public void Log(long executionId, int sequence, LogSeverity severity, string message, LogEntrySource source)
     {
-        var record = new LogRecordItem(executionId, sequence, severity, message, source, DateTimeOffset.UtcNow);
+        var record = new LogRecordItem(
+            executionId, sequence, severity, Clamp(message, _maxLogMessageLength), source, DateTimeOffset.UtcNow);
         if (_channelWriter.TryWrite(record))
             return;
 
@@ -173,6 +195,11 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
 
     public void RecordMetric(long executionId, string name, double value, string? unit)
     {
+        // Clamped to the column widths rather than left to fail at SaveChanges. A metric name over
+        // 200 characters would not just lose itself — it fails the whole batch it travels in, which
+        // carries the log lines of every other job running at that moment.
+        name = Clamp(name, MaxMetricNameLength);
+        unit = unit is null ? null : Clamp(unit, MaxMetricUnitLength);
         var record = new MetricRecordItem(executionId, name, value, unit, DateTimeOffset.UtcNow);
         if (_channelWriter.TryWrite(record))
             return;

@@ -117,8 +117,11 @@ public static class ServiceCollectionExtensions
         // TryAdd: the host may already have registered one (a test host with a fake clock, say).
         services.TryAddSingleton(TimeProvider.System);
 
-        // Singleton: the type scan is process-lifetime data, since base types and attributes are compiled in.
-        services.AddSingleton<LoggedJobTypeIndex>();
+        // Singleton: the type scan is process-lifetime data, since base types and attributes are
+        // compiled in. GetService rather than a constructor dependency, because Optimizely's scanner
+        // is absent in a host that has not initialised the platform, and the index has a fallback.
+        services.AddSingleton(provider => new LoggedJobTypeIndex(
+            provider.GetService<EPiServer.Framework.TypeScanner.ITypeScannerLookup>()));
         services.AddSingleton<IJobRetentionService, JobRetentionService>();
 
         // The same instance under its public, cleanup-facing face.

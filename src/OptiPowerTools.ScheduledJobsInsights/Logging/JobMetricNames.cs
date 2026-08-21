@@ -14,4 +14,7 @@ internal static class JobMetricNames
 
     /// <summary>Recorded by the cleanup job for the number of executions it removed.</summary>
     public const string ExecutionsDeleted = "ExecutionsDeleted";
+
+    /// <summary>Recorded by the cleanup job for unfinished executions it gave up on.</summary>
+    public const string ExecutionsMarkedInterrupted = "ExecutionsMarkedInterrupted";
 }

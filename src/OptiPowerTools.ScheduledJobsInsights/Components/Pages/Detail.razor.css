@@ -181,6 +181,10 @@
        and indentation in the Razor source, and pre-wrap renders that whitespace, breaking every entry
        across three indented lines. Only the message itself needs to preserve its own formatting. */
     white-space: normal;
+    /* Explicit so the row height is a known quantity: Virtualize is told ItemSize="22", and without
+       this the real height depends on the platform's default monospace line metrics.
+       0.85rem * 1.35 + 0.2rem of padding ≈ 22px. */
+    line-height: 1.35;
 }
 
 .console-message {
@@ -196,4 +200,10 @@
 .console-severity {
     margin-right: 0.5rem;
     font-weight: 600;
+}
+
+.load-error {
+    /* The insights database being unavailable is an accepted state; this is what the reader sees
+       instead of the framework's yellow circuit-error bar over the CMS chrome. */
+    color: #EF5350;
 }

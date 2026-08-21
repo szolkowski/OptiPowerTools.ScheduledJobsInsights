@@ -7,6 +7,86 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Repositories;
 
 public class JobExecutionQueryServiceTests
 {
+    /// <summary>Seeds executions all sharing one <c>StartedAt</c>, and returns their ids in insert order.</summary>
+    private static async Task<List<long>> SeedSimultaneousAsync(SqliteDbContextFactory factory, DateTimeOffset startedAt, int count)
+    {
+        await using var dbContext = factory.CreateDbContext();
+        var executions = new List<JobExecution>();
+
+        for (var i = 0; i < count; i++)
+        {
+            var execution = new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = $"Job {i}",
+                JobTypeName = "Test.Job",
+                StartedAt = startedAt,
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "test"
+            };
+            dbContext.JobExecutions.Add(execution);
+            executions.Add(execution);
+        }
+
+        await dbContext.SaveChangesAsync();
+        return [.. executions.Select(e => e.Id)];
+    }
+
+    [Fact]
+    public async Task GetExecutionsAsync_PagesCleanlyWhenEveryRowSharesAStartTime()
+    {
+        // Routine, not exotic: BeginExecution stamps UtcNow and the CMS scheduler fires several jobs
+        // on one tick. Without the Id half of the cursor a page boundary landing inside a group of
+        // equal timestamps either repeats rows for ever or skips them — and every existing test seeds
+        // distinct timestamps, so the tie-break was unverified.
+        using var factory = new SqliteDbContextFactory();
+        var sameInstant = new DateTimeOffset(DateTime.UtcNow.Date) + TimeSpan.FromHours(12);
+        var ids = await SeedSimultaneousAsync(factory, sameInstant, 5);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
+
+        var seen = new List<long>();
+        ExecutionCursor? cursor = null;
+
+        for (var page = 0; page < 5; page++)
+        {
+            var result = await queryService.GetExecutionsAsync(new ExecutionFilter(), cursor, pageSize: 2);
+            seen.AddRange(result.Items.Select(item => item.Id));
+
+            if (!result.HasMore)
+                break;
+
+            cursor = result.NextCursor;
+        }
+
+        // Every row exactly once, newest id first — the only stable order available when the
+        // timestamps are identical.
+        //
+        // What this pins is the cursor *predicate*: deleting the `e.Id < after.Id` half fails it.
+        // It does not pin the matching `ThenByDescending(e => e.Id)`, because Sqlite returns tied
+        // rows in rowid order regardless, so removing that clause still passes here. The descending
+        // index keys that make the real ordering work on SQL Server are asserted separately, by
+        // .github/sql/verify-schema.sql against a real server.
+        Assert.Equal(ids.OrderByDescending(id => id), seen);
+    }
+
+    [Fact]
+    public async Task GetExecutionsAsync_WithAFullFinalPage_DoesNotClaimThereIsMore()
+    {
+        // The boundary an off-by-one hides in: the last page is exactly pageSize, so "did we read
+        // one extra?" is the only thing distinguishing a full page from a full page plus more.
+        using var factory = new SqliteDbContextFactory();
+        var sameInstant = new DateTimeOffset(DateTime.UtcNow.Date) + TimeSpan.FromHours(12);
+        await SeedSimultaneousAsync(factory, sameInstant, 4);
+        var queryService = new JobExecutionQueryService(factory, TimeProvider.System);
+
+        var first = await queryService.GetExecutionsAsync(new ExecutionFilter(), after: null, pageSize: 2);
+        var second = await queryService.GetExecutionsAsync(new ExecutionFilter(), first.NextCursor, pageSize: 2);
+
+        Assert.Equal(2, second.Items.Count);
+        Assert.False(second.HasMore);
+        Assert.Null(second.NextCursor);
+    }
+
     [Fact]
     public async Task GetExecutionsAsync_PagesByKeyset_NewestFirst()
     {

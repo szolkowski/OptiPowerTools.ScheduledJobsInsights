@@ -265,6 +265,32 @@ public class JobRetentionServiceTests
     }
 
     [Fact]
+    public async Task SetOverrideAsync_RecoversFromALostRaceOnTheUniqueIndex()
+    {
+        // Read-then-write against a unique index: two administrators saving at once both see no
+        // existing row, both insert, and the loser hits the constraint — which surfaced as a red
+        // banner on the retention screen. Re-reading and retrying once turns the loser into an
+        // update. The conflict is injected rather than raced for: against Sqlite on one connection
+        // two real callers simply serialise, so a "both at once" test passes with or without the fix.
+        using var sqlite = new SqliteDbContextFactory();
+        var factory = new ConflictOnFirstSaveDbContextFactory(sqlite);
+        var service = new JobRetentionService(
+            factory,
+            Substitute.For<IScheduledJobRepository>(),
+            new LoggedJobTypeIndex(),
+            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions()),
+            NullLogger<JobRetentionService>.Instance);
+
+        await service.SetOverrideAsync("Contoso.Jobs.Contended", RetentionPeriod.OfDays(90), "bob");
+
+        Assert.Equal(2, factory.Attempts);
+        using var dbContext = sqlite.CreateDbContext();
+        var stored = Assert.Single(dbContext.JobRetentionPolicies.Where(p => p.JobTypeName == "Contoso.Jobs.Contended"));
+        Assert.Equal(90, stored.RetentionDays);
+        Assert.Equal("bob", stored.ModifiedBy);
+    }
+
+    [Fact]
     public async Task GetEffectiveOverridesAsync_ResolvesAttributesAndOverridesForTheCleanupJob()
     {
         using var factory = new SqliteDbContextFactory();
@@ -279,6 +305,37 @@ public class JobRetentionServiceTests
         Assert.True(effective[ForeverType].IsIndefinite);
         // An unusable attribute contributes nothing, so the job falls to the default.
         Assert.DoesNotContain(InvalidType, effective.Keys);
+    }
+
+    [Fact]
+    public async Task TheExecutionCount_IsCachedAcrossTheRenderAndTheCircuit()
+    {
+        // The screen loads twice per view — once prerendered, once when the circuit connects — and
+        // this GROUP BY over every execution row is the only query here that scales with history.
+        // Uncached it was the most expensive query in the UI, paid twice for every visit.
+        using var sqlite = new SqliteDbContextFactory();
+        SeedExecutions(sqlite, "Contoso.Jobs.Thing", 3);
+        var clock = new AdjustableTimeProvider();
+        var service = new JobRetentionService(
+            sqlite,
+            Substitute.For<IScheduledJobRepository>(),
+            new LoggedJobTypeIndex(),
+            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions()),
+            NullLogger<JobRetentionService>.Instance,
+            clock);
+
+        var first = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        // Another execution lands, but within the cache window the screen keeps the count it had.
+        SeedExecutions(sqlite, "Contoso.Jobs.Thing", 1);
+        var cached = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        clock.Advance(TimeSpan.FromSeconds(61));
+        var refreshed = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
+
+        Assert.Equal(3, first.ExecutionCount);
+        Assert.Equal(3, cached.ExecutionCount);
+        Assert.Equal(4, refreshed.ExecutionCount);
     }
 
     [Fact]

@@ -108,9 +108,43 @@ public class RetentionPageTests : ComponentTestBase
     [Fact]
     public void AJobWhoseCodeIsGone_IsMarkedAsHistoryOnly()
     {
-        GivenJobs(AJob(isRegistered: false, existsInCode: false));
+        GivenJobs(AJob(isRegistered: false, existsInCode: false, executionCount: 12));
 
         Assert.Contains("history only", RenderPage().Find(".tag-orphan").TextContent);
+    }
+
+    [Fact]
+    public void AStaleSettingWithNoHistoryLeft_IsNotCalledHistoryOnly()
+    {
+        // Neither code nor executions: "only its history remains" describes history that does not
+        // exist. The row is still worth showing — the setting is there and can be cleared — but not
+        // under a label that misstates why.
+        GivenJobs(AJob(isRegistered: false, existsInCode: false, executionCount: 0, overridden: RetentionPeriod.OfDays(90)));
+
+        var tag = RenderPage().Find(".tag-orphan");
+
+        Assert.Contains("setting only", tag.TextContent);
+        Assert.DoesNotContain("history only", tag.TextContent);
+    }
+
+    [Fact]
+    public void ASingleDay_ReadsAsOneDay()
+    {
+        GivenJobs(AJob(overridden: RetentionPeriod.OfDays(1)));
+
+        Assert.Contains("1 day", RenderPage().Find(".effective").TextContent);
+        Assert.DoesNotContain("1 days", RenderPage().Find(".effective").TextContent);
+    }
+
+    [Fact]
+    public void SavingOneRow_LeavesTheOtherRowsUsable()
+    {
+        // The whole table used to go inert while one save was in flight, which on a slow database
+        // reads as the screen having frozen.
+        GivenJobs(AJob(jobTypeName: "Contoso.Jobs.First"), AJob(jobTypeName: "Contoso.Jobs.Second"));
+        var page = RenderPage();
+
+        Assert.All(page.FindAll("tbody select"), select => Assert.False(select.HasAttribute("disabled")));
     }
 
     [Fact]
@@ -147,6 +181,39 @@ public class RetentionPageTests : ComponentTestBase
 
         _retention.Received(1).SetOverrideAsync(
             Arg.Any<string>(), RetentionPeriod.OfDays(42), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(null, "inherit")]
+    [InlineData(90, "90")]
+    public void TheDropdown_ShowsWhateverIsStored(int? overriddenDays, string expected)
+    {
+        // Nothing covered the read side of the select. It uses a bare value= attribute rather than
+        // @bind, which is exactly the construct that silently fails to apply — a page whose every
+        // dropdown was stuck on "Inherit" passed the whole of this file.
+        GivenJobs(AJob(overridden: overriddenDays is { } days ? RetentionPeriod.OfDays(days) : null));
+
+        Assert.Equal(expected, RenderPage().Find("tbody select").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void TheDropdown_ShowsKeepForeverForAnIndefiniteOverride()
+    {
+        GivenJobs(AJob(overridden: RetentionPeriod.Indefinite));
+
+        Assert.Equal("indefinite", RenderPage().Find("tbody select").GetAttribute("value"));
+    }
+
+    [Fact]
+    public void TheDropdown_ShowsANonPresetOverrideAsTheSelectedValue()
+    {
+        // Someone may have set 42 days directly in the database; the row offers it *and* selects it.
+        GivenJobs(AJob(overridden: RetentionPeriod.OfDays(42)));
+
+        var select = RenderPage().Find("tbody select");
+
+        Assert.Equal("42", select.GetAttribute("value"));
+        Assert.Contains("42", select.InnerHtml, StringComparison.Ordinal);
     }
 
     [Fact]

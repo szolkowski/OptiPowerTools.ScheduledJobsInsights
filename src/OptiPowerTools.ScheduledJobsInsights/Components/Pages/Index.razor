@@ -44,6 +44,7 @@
             <option value="@ExecutionStatus.Succeeded">Succeeded</option>
             <option value="@ExecutionStatus.Failed">Failed</option>
             <option value="@ExecutionStatus.Stopped">Stopped</option>
+            <option value="@ExecutionStatus.Interrupted">Interrupted</option>
         </select>
     </label>
 </div>
@@ -52,7 +53,11 @@
    zone is known these are UTC, and a reader must never have to guess which they are looking at. *@
 <p class="timezone-note">Times shown in @_clock.Label</p>
 
-@if (_page is null)
+@if (_loadError is not null)
+{
+    <p class="load-error" role="alert">Could not read the execution history: @_loadError</p>
+}
+else if (_page is null)
 {
     <p role="status">Loading…</p>
 }
@@ -131,12 +136,26 @@ else
     private ExecutionCursor? _cursor;
     private bool _isLoading;
 
+    /// <summary>Set when a read failed, so the page can say so instead of faulting the circuit.</summary>
+    private string? _loadError;
+
     private bool HasFilter => !string.IsNullOrEmpty(_jobNameFilter) || !string.IsNullOrEmpty(_statusFilter);
 
     protected override async Task OnInitializedAsync()
     {
         _clock = ViewerClock.ForZone(ViewerTimeZone);
-        _jobNames = await QueryService.GetDistinctJobNamesAsync(_disposalCts.Token);
+
+        try
+        {
+            _jobNames = await QueryService.GetDistinctJobNamesAsync(_disposalCts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Only the filter dropdown; the list itself may still load.
+            _jobNames = [];
+            _loadError = ex.Message;
+        }
+
         await LoadPageAsync();
     }
 
@@ -185,6 +204,13 @@ else
         catch (OperationCanceledException)
         {
             // The component was disposed mid-query; nothing left to render into.
+        }
+        catch (Exception ex)
+        {
+            // An unreachable insights database is an accepted state — but unhandled here it faults
+            // the circuit, and the reader gets the framework's yellow bar over the CMS chrome with no
+            // message and no way back. Say what happened and leave the page usable.
+            _loadError = ex.Message;
         }
         finally
         {

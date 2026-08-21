@@ -75,6 +75,10 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
             JobsWithOwnRetention = perJob.ToDictionary(x => x.Key, x => Describe(x.Value))
         });
 
+        // Before deleting anything: a row left at Running by a recycled process is never finished by
+        // anything else, and until it is resolved every count and status filter is wrong.
+        var interrupted = MarkInterruptedExecutions(now, cancellationToken);
+
         var totalDeleted = 0;
 
         // Jobs with their own rule are excluded from the default sweep whether or not that rule is
@@ -111,10 +115,14 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         }
 
         RecordMetric(JobMetricNames.ExecutionsDeleted, totalDeleted);
+        RecordMetric(JobMetricNames.ExecutionsMarkedInterrupted, interrupted);
 
         Summary.AppendLine($"Default retention: {Describe(defaultPeriod)}");
         Summary.AppendLine($"Jobs with their own retention: {perJob.Count}");
         Summary.AppendLine($"Executions deleted: {totalDeleted:N0}");
+
+        if (interrupted > 0)
+            Summary.AppendLine($"Unfinished executions marked interrupted: {interrupted:N0}");
 
         if (cancellationToken.IsCancellationRequested)
         {
@@ -123,6 +131,26 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         }
 
         return $"Deleted {totalDeleted} job execution(s).";
+    }
+
+    /// <summary>
+    /// Gives up on executions that have sat unfinished past the configured threshold.
+    /// </summary>
+    private int MarkInterruptedExecutions(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (_options.InterruptedExecutionThreshold <= TimeSpan.Zero)
+            return 0;
+
+        var cutoff = now - _options.InterruptedExecutionThreshold;
+        var marked = _cleanupRepository.MarkInterruptedExecutions(cutoff, cancellationToken);
+
+        if (marked > 0)
+        {
+            Log($"Marked {marked} execution(s) still running since before {cutoff:u} as interrupted.",
+                LogSeverity.Warning);
+        }
+
+        return marked;
     }
 
     /// <summary>

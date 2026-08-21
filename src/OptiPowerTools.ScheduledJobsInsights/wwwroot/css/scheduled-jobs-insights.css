@@ -6,7 +6,12 @@
  * styling. This file only adds what the shell has no opinion about: the content well's spacing and a
  * few affordances for the console log viewer.
  *
- * Everything is scoped under .sji-content so nothing here can leak into the surrounding chrome.
+ * Everything is scoped under .sji-content so nothing here can leak into the surrounding chrome —
+ * with two deliberate exceptions, #episerver-resources-container and .epi-pn-navigation--fixed-adjust
+ * below. Those are the shell's own layout ancestors of our content well, so they cannot be reached
+ * from inside it by definition; sizing them is the whole point. Both are commented where they appear.
+ * The blast radius is bounded because this sheet is linked only from our own view.
+ *
  * Per-component rules live in the Razor scoped CSS (Index.razor.css / Detail.razor.css).
  *
  * Served at /_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css

@@ -282,9 +282,9 @@ Everything above is flat in table size — re-measured at both 10,000 and 100,00
 path moved by more than 2 logical reads. Only two queries scale linearly, and both must: the
 `DISTINCT JobName` behind the filter dropdown (below), and the retention screen's `GROUP BY
 JobTypeName` execution count, which grows 104 → 980 reads across that same range. The dropdown is
-cached; **the retention count is not**, which makes it the most expensive query in the UI. Deliberate
-for now — that screen is opened rarely, unlike the list — but it is the first thing to cache if an
-installation ever passes a few hundred thousand executions.
+cached; **the retention count is cached too**, on the same 60-second expiry (`JobRetentionService`),
+because it is the most expensive query in the UI and prerendering ran it twice per page view. What
+remains uncached on that screen is the `JobRetentionPolicies` read, which is a small indexed lookup.
 
 `GetDistinctJobNamesAsync` is **cached for 60 seconds** (`JobExecutionQueryService`, a singleton, so
 process-wide). No index can help it — producing a distinct list means looking at every row, 681 reads
@@ -467,8 +467,11 @@ group is Optimizely's, so only the leaf is contributed. `ShowRetentionMenuItem` 
 a third leaf beside it for the retention screen, pointing at `CmsShellPath?view=retention` — the menu
 *path* has its own segment (`.../scheduledjobsinsightsretention`) so the shell can highlight it, while
 the *URL* stays on the one mapped route, since an extra path segment there would break the shell's
-navigation resolution (see above). All three entries are gated on `EnableCmsMenu` and on
-`AuthorizedRoles`.
+navigation resolution (see above). All three entries are gated on `EnableCmsMenu` and on the same
+authorization policy the pages themselves use — `ScheduledJobsInsightsAuthorization.PolicyName`,
+which resolves from `AuthorizationPolicy`, `AllowAnyAuthenticatedUser` or `AuthorizedRoles` in that
+order. Asking the same question the endpoint asks is the point: a menu that decided for itself could
+show an entry leading to a 403, or hide one the reader is entitled to.
 
 ### Retention
 
@@ -555,13 +558,14 @@ collapse threshold, reverting the detail link to a path segment, reverting times
 cover them. Worth repeating that exercise when adding to them — a component test that renders
 successfully but asserts nothing meaningful is easy to write by accident.
 
-What bUnit covers is rendering and interaction. Polling, the trailing read after an execution
-finishes, and the incremental log fetch across ticks are **deliberately untested** — a decision, not
-an oversight. All three need a second poll tick, and `PollInterval` is a hard-coded two seconds, so
-covering them would mean either second-long tests or promoting that interval to an option purely for
-testability. Judged not worth it. If you change `PollUntilFinishedAsync` or `LoadTrailingWritesAsync`,
-verify by hand against a running job — `SlowMigrationJob` exists for exactly that. Nor does it cover any of the five
-CMS-shell constraints above; those are host-integration failures only a real browser catches.
+What bUnit covers is rendering and interaction. Polling, the trailing read after an execution finishes
+and the incremental log fetch across ticks **are** covered, in `DetailPollingTests`: they were once
+left out because all three need a second poll tick against a hard-coded two-second interval, and the
+alternative was a static test seam. The interval is now the `DetailPollInterval` option — a legitimate
+thing for an installation to tune, which happens to make these tests cheap — so the trade went away
+rather than being accepted. `SlowMigrationJob` is still the way to check the behaviour by hand against
+a real running job. What the suite does **not** cover is any of the five CMS-shell constraints above;
+those are host-integration failures only a real browser catches.
 
 These Sqlite tests validate the C#-side query/repository/cascade logic only — they do not validate the
 literal SQL Server migration SQL. **CI covers that separately**: the Build & Test workflow runs a real

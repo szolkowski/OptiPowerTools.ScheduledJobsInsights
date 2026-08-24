@@ -27,41 +27,92 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns
                  AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1 AND is_nullable = 1)
 BEGIN PRINT 'FAIL: JobExecutions.ResultSummary is not a nullable nvarchar(max)'; SET @failures += 1; END
 
--- The JobName index, added by AddJobNameIndex. Key order and the descending flags are the whole
--- point of it: leading with JobName makes the filtered list a seek, and StartedAt/Id descending
--- make the keyset page need no sort. Sqlite never sees this DDL.
-;WITH keys AS (
-    SELECT c.name, ic.key_ordinal, ic.is_descending_key
+-- ---------------------------------------------------------------------------
+-- Index key assertions.
+--
+-- Each key is checked individually and named on failure. The two composite checks here used to
+-- accumulate into @failures with no PRINT, so a CI failure reported a count and left you unable to
+-- tell which index, which column or which direction -- from the only script that checks any of this
+-- DDL at all.
+-- ---------------------------------------------------------------------------
+DECLARE @idx sysname, @col sysname, @ord int, @desc bit;
+
+DECLARE @expected TABLE (idx sysname, col sysname, ord int, is_desc bit, keys int);
+
+-- Leading with JobName makes the filtered list a seek; StartedAt/Id descending make the keyset page
+-- need no sort.
+INSERT @expected VALUES
+    ('IX_JobExecutions_JobName_StartedAt_Id', 'JobName',   1, 0, 3),
+    ('IX_JobExecutions_JobName_StartedAt_Id', 'StartedAt', 2, 1, 3),
+    ('IX_JobExecutions_JobName_StartedAt_Id', 'Id',        3, 1, 3),
+-- Status first for the same reason. Measured at 100,000 executions, "Running" with nothing running
+-- cost 35,208 logical reads without this index against 3 with it.
+    ('IX_JobExecutions_Status_StartedAt_Id',  'Status',    1, 0, 3),
+    ('IX_JobExecutions_Status_StartedAt_Id',  'StartedAt', 2, 1, 3),
+    ('IX_JobExecutions_Status_StartedAt_Id',  'Id',        3, 1, 3),
+-- The unfiltered list page -- the single hottest query in the UI. This one was previously checked for
+-- existence only, and it is the one index whose migration uses EF's "all descending" shorthand
+-- (descending: new bool[0]), so its flags are the least obvious from reading the migration and the
+-- most valuable to assert.
+    ('IX_JobExecutions_StartedAt_Id',         'StartedAt', 1, 1, 2),
+    ('IX_JobExecutions_StartedAt_Id',         'Id',        2, 1, 2),
+-- Serves the cleanup job's per-job-type delete and its NOT IN exclusion form.
+    ('IX_JobExecutions_JobTypeName_StartedAt', 'JobTypeName', 1, 0, 2),
+    ('IX_JobExecutions_JobTypeName_StartedAt', 'StartedAt',   2, 0, 2);
+
+DECLARE keyCheck CURSOR LOCAL FAST_FORWARD FOR SELECT idx, col, ord, is_desc FROM @expected;
+OPEN keyCheck;
+FETCH NEXT FROM keyCheck INTO @idx, @col, @ord, @desc;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM sys.indexes i
+        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+        WHERE i.object_id = OBJECT_ID(@tbl) AND i.name = @idx
+          AND c.name = @col AND ic.key_ordinal = @ord AND ic.is_descending_key = @desc)
+    BEGIN
+        PRINT 'FAIL: ' + @idx + ' key ' + CAST(@ord AS varchar(2)) + ' should be '
+            + @col + CASE WHEN @desc = 1 THEN ' DESC' ELSE ' ASC' END;
+        SET @failures += 1;
+    END
+
+    FETCH NEXT FROM keyCheck INTO @idx, @col, @ord, @desc;
+END
+CLOSE keyCheck;
+DEALLOCATE keyCheck;
+
+-- And no extra keys: an index that gained a column would still satisfy every check above.
+IF EXISTS (
+    SELECT i.name
     FROM sys.indexes i
     JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
-    WHERE i.object_id = OBJECT_ID(@tbl) AND i.name = 'IX_JobExecutions_JobName_StartedAt_Id'
-)
-SELECT @failures = @failures
-    + CASE WHEN (SELECT COUNT(*) FROM keys) = 3 THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM keys WHERE name='JobName'   AND key_ordinal=1 AND is_descending_key=0) THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM keys WHERE name='StartedAt' AND key_ordinal=2 AND is_descending_key=1) THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM keys WHERE name='Id'        AND key_ordinal=3 AND is_descending_key=1) THEN 0 ELSE 1 END;
+    WHERE i.object_id = OBJECT_ID(@tbl) AND i.name IN (SELECT DISTINCT idx FROM @expected)
+      AND ic.key_ordinal > 0
+    GROUP BY i.name
+    HAVING COUNT(*) <> (SELECT MAX(keys) FROM @expected e WHERE e.idx = i.name))
+BEGIN PRINT 'FAIL: one of the JobExecutions indexes has an unexpected number of key columns'; SET @failures += 1; END
 
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(@tbl) AND name = 'IX_JobExecutions_StartedAt_Id')
-BEGIN PRINT 'FAIL: IX_JobExecutions_StartedAt_Id missing'; SET @failures += 1; END
+-- The other two unbounded columns. Neither was asserted, and both are read back into a Blazor
+-- circuit, so their type is not incidental.
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'InputDataJson'
+                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1)
+BEGIN PRINT 'FAIL: JobExecutions.InputDataJson is not an nvarchar(max)'; SET @failures += 1; END
 
--- The status index, added by AddStatusIndex. Without it, filtering the list by status scans the whole
--- table: measured at 100,000 executions, "Running" with nothing running cost 35,208 logical reads
--- against 3 with the index. The descending flags matter for the same reason as above -- they are what
--- lets the keyset page come back already ordered.
-;WITH statusKeys AS (
-    SELECT c.name, ic.key_ordinal, ic.is_descending_key
-    FROM sys.indexes i
-    JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
-    WHERE i.object_id = OBJECT_ID(@tbl) AND i.name = 'IX_JobExecutions_Status_StartedAt_Id'
-)
-SELECT @failures = @failures
-    + CASE WHEN (SELECT COUNT(*) FROM statusKeys) = 3 THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='Status'    AND key_ordinal=1 AND is_descending_key=0) THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='StartedAt' AND key_ordinal=2 AND is_descending_key=1) THEN 0 ELSE 1 END
-    + CASE WHEN EXISTS (SELECT 1 FROM statusKeys WHERE name='Id'        AND key_ordinal=3 AND is_descending_key=1) THEN 0 ELSE 1 END;
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'ExceptionStackTrace'
+                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1)
+BEGIN PRINT 'FAIL: JobExecutions.ExceptionStackTrace is not an nvarchar(max)'; SET @failures += 1; END
+
+-- JobName's width is the documented tuning lever: it is the leading key of a composite index, so
+-- narrowing it is what you reach for if insert cost ever outweighs list latency. max_length is in
+-- bytes for nvarchar, so 400 characters is 800.
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'JobName'
+                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = 800)
+BEGIN PRINT 'FAIL: JobExecutions.JobName is not nvarchar(400)'; SET @failures += 1; END
 
 -- Child rows must cascade with their parent execution; the cleanup job relies on it.
 IF (SELECT COUNT(*) FROM sys.foreign_keys
@@ -88,10 +139,6 @@ BEGIN
                      AND i.is_unique = 1 AND c.name = 'JobTypeName')
     BEGIN PRINT 'FAIL: JobRetentionPolicies.JobTypeName is not uniquely indexed'; SET @failures += 1; END
 END
-
--- Per-job retention deletes filter by job type within an age range; without this they scan.
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(@tbl) AND name = 'IX_JobExecutions_JobTypeName_StartedAt')
-BEGIN PRINT 'FAIL: IX_JobExecutions_JobTypeName_StartedAt missing'; SET @failures += 1; END
 
 IF @failures > 0
     RAISERROR('Schema verification failed with %d problem(s).', 16, 1, @failures);

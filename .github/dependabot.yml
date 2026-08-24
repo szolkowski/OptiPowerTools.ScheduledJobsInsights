@@ -1,0 +1,34 @@
+# Keeps the two things this repository can actually act on up to date.
+#
+# NuGet matters because the package's own audit is now at the default `all`: an advisory in a
+# transitive dependency shows up as a build error, and the fix is usually a version bump somebody has
+# to notice. Waiting for a maintainer to run a manual probe is how the MailKit and SQLitePCLRaw
+# advisories went unseen.
+#
+# GitHub Actions matters because every action is SHA-pinned. Pins are the right default in a workflow
+# that can publish to nuget.org, but they do not update themselves, so without this they rot.
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for the framework's own packages: they version in lockstep, and separate
+      # PRs for each would neither build nor be reviewable.
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+          - "System.*"
+    ignore:
+      # Pinned to the CMS's major version on purpose — see the nuspec ranges. A major bump is a
+      # deliberate compatibility decision, not a dependency update.
+      - dependency-name: "EPiServer.*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

@@ -202,12 +202,28 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     /// Runs an immediate write, swallowing and logging any failure. Every one of these happens while
     /// a job is executing, so none of them may throw into it.
     /// </summary>
-    private void Write(long executionId, string operation, Action<ScheduledJobsInsightsDbContext> write)
+    /// <remarks>
+    /// The delegate returns the affected-row count rather than nothing, so that a write which
+    /// succeeds against a row that no longer exists can be reported. That case is silent otherwise:
+    /// <c>ExecuteUpdate</c> matching zero rows is not an error.
+    /// </remarks>
+    private void Write(long executionId, string operation, Func<ScheduledJobsInsightsDbContext, int> write)
     {
         try
         {
             using var dbContext = _dbContextFactory.CreateDbContext();
-            write(dbContext);
+
+            if (write(dbContext) == 0)
+            {
+                // The row this run is writing to is gone — deleted by hand, lost to a restored
+                // backup, or taken by a retention sweep that ran while the job was still going. The
+                // count is the only evidence there is, so discarding it left an execution that
+                // vanished mid-run looking exactly like one that recorded correctly.
+                _logger.LogWarning(
+                    "ScheduledJobsInsights recorded {Operation} for execution {ExecutionId}, but no row with that id exists. Its history was removed while the job was still running; the job itself is unaffected.",
+                    operation,
+                    executionId);
+            }
         }
         catch (Exception ex)
         {

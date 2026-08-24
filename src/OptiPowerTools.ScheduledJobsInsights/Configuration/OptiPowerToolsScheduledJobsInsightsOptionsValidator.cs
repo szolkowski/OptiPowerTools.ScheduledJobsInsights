@@ -69,14 +69,9 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
                  + "menu URL and the base for the UI's own links at the same time.");
         }
 
-        if (!options.AllowAnyAuthenticatedUser
-            && string.IsNullOrWhiteSpace(options.AuthorizationPolicy)
-            && options.AuthorizedRoles.Count == 0)
-        {
-            failures.Add("AuthorizedRoles is empty, so nobody could reach the UI. Name at least one role, set "
-                 + "AuthorizationPolicy to a policy of your own, or set AllowAnyAuthenticatedUser if "
-                 + "access is already restricted elsewhere.");
-        }
+        // AuthorizedRoles being empty is no longer a misconfiguration: it is the default, and it
+        // resolves to the built-in role set. Nobody can lock themselves out by leaving it unset, and a
+        // host that wants a narrower rule than "one of these roles" names a policy instead.
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

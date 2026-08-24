@@ -129,13 +129,34 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
 
     /// <summary>
     /// The Optimizely/EPiServer roles authorized to access the page and the retention screen.
-    /// Defaults to Administrators, CmsAdmins, and WebAdmins.
+    /// Leave empty — the default — to authorize the built-in set: Administrators, CmsAdmins and
+    /// WebAdmins.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Naming any role here <em>replaces</em> the built-in set rather than adding to it, from
+    /// <c>appsettings.json</c> and from code alike.
+    /// </para>
+    /// <para>
+    /// The property starts empty for that reason, rather than carrying the built-in roles as its
+    /// default value: <c>ConfigurationBinder</c> adds into an existing collection instead of clearing
+    /// it, so a non-empty default cannot be replaced from configuration at all. Written the other way,
+    /// <c>"AuthorizedRoles": [ "SecOps" ]</c> authorized four roles rather than one — silently
+    /// widening access for an administrator who was trying to narrow it.
+    /// </para>
+    /// <para>
     /// Ignored when <see cref="AuthorizationPolicy"/> names a policy of your own, or when
     /// <see cref="AllowAnyAuthenticatedUser"/> is set.
+    /// </para>
     /// </remarks>
-    public IList<string> AuthorizedRoles { get; set; } = ["Administrators", "CmsAdmins", "WebAdmins"];
+    public IList<string> AuthorizedRoles { get; set; } = [];
+
+    /// <summary>
+    /// The roles authorized when <see cref="AuthorizedRoles"/> is left empty. Not an option in its own
+    /// right — it is the value <see cref="AuthorizedRoles"/> documents as its default, held separately
+    /// so that configuration replaces it rather than appending to it.
+    /// </summary>
+    internal static readonly string[] DefaultAuthorizedRoles = ["Administrators", "CmsAdmins", "WebAdmins"];
 
     /// <summary>
     /// Name of an authorization policy registered by the host, used instead of the built-in role

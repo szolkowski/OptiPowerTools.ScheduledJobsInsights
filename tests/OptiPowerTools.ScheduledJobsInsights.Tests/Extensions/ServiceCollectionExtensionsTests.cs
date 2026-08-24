@@ -205,4 +205,34 @@ public class ServiceCollectionExtensionsTests
 
         Assert.Single(services, d => d.ImplementationType == typeof(JobLogBackgroundWriter));
     }
+
+    [Fact]
+    public void AddBlazorServicesFalse_IsHonouredWhenItComesFromFactoryRegisteredConfiguration()
+    {
+        // The shape every real host uses, and the one shape this was never tested against.
+        // WebApplicationBuilder, HostApplicationBuilder and HostBuilder all register IConfiguration
+        // through a factory rather than an instance — so an instance-only read came back null, the
+        // section was never bound, and AddServerSideBlazor plus AddCascadingAuthenticationState were
+        // grafted into a host that had asked in configuration for neither. Silently: the value binds
+        // into IOptions correctly, so nothing downstream disagreed.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OptiPowerTools:ScheduledJobsInsights:AddBlazorServices"] = "false"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(_ => configuration);
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
+            options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;");
+
+        Assert.DoesNotContain(services, IsBlazorServerRegistration);
+        Assert.DoesNotContain(services, IsCascadingAuthenticationStateRegistration);
+
+        // And the option really did bind, so the registration decision and IOptions agree.
+        var provider = services.BuildServiceProvider();
+        Assert.False(provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value.AddBlazorServices);
+    }
 }

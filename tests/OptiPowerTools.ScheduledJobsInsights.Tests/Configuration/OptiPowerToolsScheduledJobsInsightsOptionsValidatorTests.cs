@@ -112,13 +112,11 @@ public class OptiPowerToolsScheduledJobsInsightsOptionsValidatorTests
         Assert.True(Validate(options => options.CmsShellPath = path).Succeeded);
 
     [Fact]
-    public void NoRolesAndNoPolicy_Fails()
+    public void NoRolesAndNoPolicy_Passes_BecauseEmptyMeansTheBuiltInRoles()
     {
-        // Nobody could open the page, which is a misconfiguration rather than a security posture.
-        var result = Validate(options => options.AuthorizedRoles = []);
-
-        Assert.True(result.Failed);
-        Assert.Contains("AuthorizedRoles", result.FailureMessage, StringComparison.Ordinal);
+        // Empty is the default and resolves to the built-in role set, so it cannot lock anyone out.
+        // It used to be rejected here, back when the option carried its roles as a default value.
+        Assert.True(Validate(options => options.AuthorizedRoles = []).Succeeded);
     }
 
     [Fact]

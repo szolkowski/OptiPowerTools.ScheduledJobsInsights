@@ -16,9 +16,11 @@ namespace OptiPowerTools.ScheduledJobsInsights.Repositories;
 /// legitimately run for longer than its own retention — a 25-hour import under a one-day rule — and
 /// deleting the row underneath it loses the run's whole history: the still-buffered log lines then
 /// violate the foreign key, which poisons the batch they travel in and takes other jobs' lines with
-/// them, while <c>Complete</c> updates nothing and reports nothing. Age alone cannot distinguish
-/// "stranded" from "still working"; that is what <see cref="MarkInterruptedExecutions"/> is for, and
-/// it runs first.
+/// them, while <c>Complete</c> updates nothing. Age alone cannot distinguish "stranded" from "still
+/// working"; that is what <see cref="MarkInterruptedExecutions"/> is for, and it runs <em>last</em>,
+/// after both deletes. Marking a row moves it out of <see cref="ExecutionStatus.Running"/>, which
+/// strips it of the protection above — so a pass that marked first handed the sweep exactly the rows
+/// the guard exists to keep.
 /// </para>
 /// <para>
 /// Cancellation is checked before a batch is issued rather than passed to EF Core. The synchronous

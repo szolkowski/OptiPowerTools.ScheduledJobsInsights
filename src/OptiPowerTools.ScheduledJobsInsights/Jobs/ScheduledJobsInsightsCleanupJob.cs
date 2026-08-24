@@ -75,10 +75,6 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
             JobsWithOwnRetention = perJob.ToDictionary(x => x.Key, x => Describe(x.Value))
         });
 
-        // Before deleting anything: a row left at Running by a recycled process is never finished by
-        // anything else, and until it is resolved every count and status filter is wrong.
-        var interrupted = MarkInterruptedExecutions(now, cancellationToken);
-
         var totalDeleted = 0;
 
         // Jobs with their own rule are excluded from the default sweep whether or not that rule is
@@ -113,6 +109,20 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
                 batch => _cleanupRepository.DeleteExecutionsOlderThan(jobTypeName, cutoff, batch, cancellationToken),
                 cancellationToken);
         }
+
+        // After the deletes, never before. Marking a row Interrupted makes it deletable — Interrupted
+        // is a finished state, and only Running is protected — so a pass that marked first stripped
+        // the guard off the very rows the guard exists for, and the sweep that followed deleted the
+        // history of a job that was still working. A job may legitimately outlive its own retention
+        // (a 25-hour import under a one-day rule), and age alone cannot tell "stranded" from "still
+        // working". Resolving stranded rows last costs them one extra interval before they age out,
+        // which is the cheap side of this trade: the alternative loses a live run's history outright.
+        //
+        // Skipped entirely when the run was stopped: nothing here is urgent, and a half-applied sweep
+        // followed by a status rewrite is a worse thing to leave behind than an unresolved row.
+        var interrupted = cancellationToken.IsCancellationRequested
+            ? 0
+            : MarkInterruptedExecutions(now, cancellationToken);
 
         RecordMetric(JobMetricNames.ExecutionsDeleted, totalDeleted);
         RecordMetric(JobMetricNames.ExecutionsMarkedInterrupted, interrupted);

@@ -129,6 +129,8 @@ internal sealed class UnserializableInputJob : LoggedScheduledJobBase
 /// </remarks>
 internal sealed class ThrowingGetterNode
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static",
+        Justification = "Must stay an instance property: System.Text.Json only visits instance properties, so as a static member the getter would never be called and the test would silently stop exercising the throwing-getter path it exists for.")]
     public string Name => throw new ObjectDisposedException("SomeDbContext");
 }
 
@@ -156,6 +158,8 @@ internal sealed class HostileException : Exception
 /// <summary>A node whose getter throws a <see cref="HostileException"/>.</summary>
 internal sealed class HostileNode
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static",
+        Justification = "Must stay an instance property: System.Text.Json only visits instance properties, so as a static member the getter would never be called and the test would silently stop exercising the throwing-getter path it exists for.")]
     public string Name => throw new HostileException();
 }
 

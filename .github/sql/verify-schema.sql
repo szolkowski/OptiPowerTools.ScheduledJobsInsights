@@ -21,10 +21,14 @@ DECLARE @policies nvarchar(200) = 'scheduled_jobs_insights.JobRetentionPolicies'
 IF SCHEMA_ID('scheduled_jobs_insights') IS NULL
 BEGIN PRINT 'FAIL: schema scheduled_jobs_insights missing'; SET @failures += 1; END
 
+-- Named once and reused by every column assertion below: max_length -1 is nvarchar(max), and a
+-- width in bytes is twice the character count.
+DECLARE @nvarchar int = TYPE_ID('nvarchar');
+
 -- The result summary column, added by AddResultSummary. max_length -1 is nvarchar(max).
 IF NOT EXISTS (SELECT 1 FROM sys.columns
                WHERE object_id = OBJECT_ID(@tbl) AND name = 'ResultSummary'
-                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1 AND is_nullable = 1)
+                 AND system_type_id = @nvarchar AND max_length = -1 AND is_nullable = 1)
 BEGIN PRINT 'FAIL: JobExecutions.ResultSummary is not a nullable nvarchar(max)'; SET @failures += 1; END
 
 -- ---------------------------------------------------------------------------
@@ -39,26 +43,36 @@ DECLARE @idx sysname, @col sysname, @ord int, @desc bit;
 
 DECLARE @expected TABLE (idx sysname, col sysname, ord int, is_desc bit, keys int);
 
+-- Each index is named once. Repeating the literal per key row invited a typo in one of three rows,
+-- where the check would then look for an index nobody meant to assert.
+DECLARE
+    @ixJobName   sysname = 'IX_JobExecutions_JobName_StartedAt_Id',
+    @ixStatus    sysname = 'IX_JobExecutions_Status_StartedAt_Id',
+    @ixStartedAt sysname = 'IX_JobExecutions_StartedAt_Id',
+    @ixJobType   sysname = 'IX_JobExecutions_JobTypeName_StartedAt',
+    @colStartedAt sysname = 'StartedAt',
+    @colId        sysname = 'Id';
+
+INSERT @expected VALUES
 -- Leading with JobName makes the filtered list a seek; StartedAt/Id descending make the keyset page
 -- need no sort.
-INSERT @expected VALUES
-    ('IX_JobExecutions_JobName_StartedAt_Id', 'JobName',   1, 0, 3),
-    ('IX_JobExecutions_JobName_StartedAt_Id', 'StartedAt', 2, 1, 3),
-    ('IX_JobExecutions_JobName_StartedAt_Id', 'Id',        3, 1, 3),
+    (@ixJobName,   'JobName',      1, 0, 3),
+    (@ixJobName,   @colStartedAt,  2, 1, 3),
+    (@ixJobName,   @colId,         3, 1, 3),
 -- Status first for the same reason. Measured at 100,000 executions, "Running" with nothing running
 -- cost 35,208 logical reads without this index against 3 with it.
-    ('IX_JobExecutions_Status_StartedAt_Id',  'Status',    1, 0, 3),
-    ('IX_JobExecutions_Status_StartedAt_Id',  'StartedAt', 2, 1, 3),
-    ('IX_JobExecutions_Status_StartedAt_Id',  'Id',        3, 1, 3),
+    (@ixStatus,    'Status',       1, 0, 3),
+    (@ixStatus,    @colStartedAt,  2, 1, 3),
+    (@ixStatus,    @colId,         3, 1, 3),
 -- The unfiltered list page -- the single hottest query in the UI. This one was previously checked for
 -- existence only, and it is the one index whose migration uses EF's "all descending" shorthand
 -- (descending: new bool[0]), so its flags are the least obvious from reading the migration and the
 -- most valuable to assert.
-    ('IX_JobExecutions_StartedAt_Id',         'StartedAt', 1, 1, 2),
-    ('IX_JobExecutions_StartedAt_Id',         'Id',        2, 1, 2),
+    (@ixStartedAt, @colStartedAt,  1, 1, 2),
+    (@ixStartedAt, @colId,         2, 1, 2),
 -- Serves the cleanup job's per-job-type delete and its NOT IN exclusion form.
-    ('IX_JobExecutions_JobTypeName_StartedAt', 'JobTypeName', 1, 0, 2),
-    ('IX_JobExecutions_JobTypeName_StartedAt', 'StartedAt',   2, 0, 2);
+    (@ixJobType,   'JobTypeName',  1, 0, 2),
+    (@ixJobType,   @colStartedAt,  2, 0, 2);
 
 DECLARE keyCheck CURSOR LOCAL FAST_FORWARD FOR SELECT idx, col, ord, is_desc FROM @expected;
 OPEN keyCheck;
@@ -98,12 +112,12 @@ BEGIN PRINT 'FAIL: one of the JobExecutions indexes has an unexpected number of 
 -- circuit, so their type is not incidental.
 IF NOT EXISTS (SELECT 1 FROM sys.columns
                WHERE object_id = OBJECT_ID(@tbl) AND name = 'InputDataJson'
-                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1)
+                 AND system_type_id = @nvarchar AND max_length = -1)
 BEGIN PRINT 'FAIL: JobExecutions.InputDataJson is not an nvarchar(max)'; SET @failures += 1; END
 
 IF NOT EXISTS (SELECT 1 FROM sys.columns
                WHERE object_id = OBJECT_ID(@tbl) AND name = 'ExceptionStackTrace'
-                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = -1)
+                 AND system_type_id = @nvarchar AND max_length = -1)
 BEGIN PRINT 'FAIL: JobExecutions.ExceptionStackTrace is not an nvarchar(max)'; SET @failures += 1; END
 
 -- JobName's width is the documented tuning lever: it is the leading key of a composite index, so
@@ -111,7 +125,7 @@ BEGIN PRINT 'FAIL: JobExecutions.ExceptionStackTrace is not an nvarchar(max)'; S
 -- bytes for nvarchar, so 400 characters is 800.
 IF NOT EXISTS (SELECT 1 FROM sys.columns
                WHERE object_id = OBJECT_ID(@tbl) AND name = 'JobName'
-                 AND system_type_id = TYPE_ID('nvarchar') AND max_length = 800)
+                 AND system_type_id = @nvarchar AND max_length = 800)
 BEGIN PRINT 'FAIL: JobExecutions.JobName is not nvarchar(400)'; SET @failures += 1; END
 
 -- Child rows must cascade with their parent execution; the cleanup job relies on it.

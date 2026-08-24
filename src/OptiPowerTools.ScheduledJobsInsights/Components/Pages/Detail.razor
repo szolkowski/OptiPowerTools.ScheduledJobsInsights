@@ -201,10 +201,17 @@ else
     private const int SummaryAutoCollapseLines = 200;
 
     /// <summary>
-    /// Built in <c>OnInitializedAsync</c> rather than initialised here, because its bound comes from
-    /// the injected options and property injection has not run when field initialisers do.
+    /// Replaced in <c>OnInitializedAsync</c> with one bounded by the configured
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.MaxLogEntriesPerExecution"/>.
     /// </summary>
-    private LogEntryBuffer _log = default!;
+    /// <remarks>
+    /// Initialised to the default bound rather than left null, because the configured value comes from
+    /// injected options and property injection has not run when field initialisers do. Seeding it with
+    /// the default keeps the field non-null without a null-forgiving operator, and the instance is
+    /// replaced before anything reads it — <c>OnInitializedAsync</c> runs before the first render.
+    /// </remarks>
+    private LogEntryBuffer _log =
+        new(OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution);
     private readonly CancellationTokenSource _disposalCts = new();
 
     private ViewerClock _clock = ViewerClock.Utc;

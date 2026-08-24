@@ -33,7 +33,7 @@ public static class ScheduledJobsInsightsAuthorization
 /// Post-configure rather than configure: a policy the host registered with its own
 /// <c>AddAuthorization(...)</c> call has to already exist before it can be adopted here.
 /// </remarks>
-internal sealed class ConfigureScheduledJobsInsightsAuthorization : IPostConfigureOptions<AuthorizationOptions>
+internal sealed partial class ConfigureScheduledJobsInsightsAuthorization : IPostConfigureOptions<AuthorizationOptions>
 {
     private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
     private readonly ILogger<ConfigureScheduledJobsInsightsAuthorization> _logger;
@@ -53,9 +53,12 @@ internal sealed class ConfigureScheduledJobsInsightsAuthorization : IPostConfigu
 
     private AuthorizationPolicy Resolve(AuthorizationOptions options)
     {
-        if (!string.IsNullOrWhiteSpace(_options.AuthorizationPolicy))
+        // Read once into a local: it is used three times below.
+        var policyName = _options.AuthorizationPolicy;
+
+        if (!string.IsNullOrWhiteSpace(policyName))
         {
-            var configured = options.GetPolicy(_options.AuthorizationPolicy);
+            var configured = options.GetPolicy(policyName);
             if (configured is not null)
                 return configured;
 
@@ -65,9 +68,7 @@ internal sealed class ConfigureScheduledJobsInsightsAuthorization : IPostConfigu
             // mistyped option string took down every [Authorize] endpoint in the host, not just ours.
             // Denying access to our own endpoints is the honest failure: the misconfiguration is
             // reported at Critical, and nothing is silently left open.
-            _logger.LogCritical(
-                "ScheduledJobsInsights is configured to use the authorization policy '{PolicyName}', but no policy with that name is registered. Access to the insights pages is denied until this is fixed. Register the policy with AddAuthorization(options => options.AddPolicy(...)), or clear AuthorizationPolicy to authorize on AuthorizedRoles instead.",
-                _options.AuthorizationPolicy);
+            LogUnregisteredPolicy(_logger, policyName);
 
             return new AuthorizationPolicyBuilder()
                 .RequireAssertion(_ => false)
@@ -81,4 +82,18 @@ internal sealed class ConfigureScheduledJobsInsightsAuthorization : IPostConfigu
 
         return builder.Build();
     }
+
+    /// <summary>
+    /// Source-generated so the call allocates nothing — no <c>params object?[]</c> for the arguments,
+    /// which is what <c>CA1873</c> objects to in the plain <c>LogCritical</c> form.
+    /// </summary>
+    /// <remarks>
+    /// The alternative the rule suggests — wrapping the call in <c>IsEnabled(LogLevel.Critical)</c> —
+    /// would be the wrong shape here: this is the one message an operator must not miss, and guarding
+    /// it to save an allocation on a once-per-startup path optimises the wrong thing.
+    /// </remarks>
+    [LoggerMessage(
+        Level = LogLevel.Critical,
+        Message = "ScheduledJobsInsights is configured to use the authorization policy '{PolicyName}', but no policy with that name is registered. Access to the insights pages is denied until this is fixed. Register the policy with AddAuthorization(options => options.AddPolicy(...)), or clear AuthorizationPolicy to authorize on AuthorizedRoles instead.")]
+    private static partial void LogUnregisteredPolicy(ILogger logger, string? policyName);
 }

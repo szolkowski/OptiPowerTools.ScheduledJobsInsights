@@ -75,8 +75,8 @@ internal sealed class LoggedJobTypeIndex
             }
             catch (Exception)
             {
-                // Skip it. Routine in a CMS hosting third-party plugins.
-                continue;
+                // Skipped. Routine in a CMS hosting third-party plugins, and one unreadable type
+                // should cost that type and nothing else.
             }
         }
 

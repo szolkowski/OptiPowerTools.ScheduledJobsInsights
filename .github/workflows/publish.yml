@@ -125,6 +125,32 @@ jobs:
       - name: Test
         run: dotnet test "$TESTS" -c Release
 
+      # The API-compatibility baseline cannot be armed until there is a published release to compare
+      # against, so 1.0.0 necessarily ships without it — PublicSurfaceTests covers that one release.
+      # Every version after it has no such excuse, and forgetting the property is silent: the pack
+      # simply performs no API comparison and nobody finds out until a consumer's build breaks.
+      - name: Require an API baseline for post-1.0.0 releases
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PROJECT_FILE: src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
+        run: |
+          set -euo pipefail
+
+          # Only the 1.0.0 line is exempt, prereleases of it included.
+          case "$VERSION" in
+            1.0.0|1.0.0-*)
+              echo "Version $VERSION establishes the baseline; no comparison possible yet."
+              exit 0
+              ;;
+          esac
+
+          if ! grep -qE '^[^<]*<PackageValidationBaselineVersion>' "$PROJECT_FILE"; then
+            echo "::error::$VERSION is past 1.0.0 but PackageValidationBaselineVersion is not set in $PROJECT_FILE, so this package ships with no API-compatibility check. Uncomment it and set it to the previous released version."
+            exit 1
+          fi
+
+          echo "API baseline: $(grep -oE '<PackageValidationBaselineVersion>[^<]+' "$PROJECT_FILE" | cut -d'>' -f2)"
+
       # nuget.org renders the packed README on its own, with no repository around it: a relative
       # `images/...` path resolves to nothing and every screenshot becomes a broken-image icon, on the
       # one page most people will ever see. The images are not in the package either — only the icon

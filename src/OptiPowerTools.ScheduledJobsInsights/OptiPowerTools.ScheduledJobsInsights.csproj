@@ -34,6 +34,13 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
     <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- Arm this in the first commit AFTER 1.0.0 is published, not in the commit that tags it.
+         The baseline is a package that has to be downloadable: with 1.0.0 unpublished, the property
+         either fails to restore or, worse and observed on this machine, silently resolves a
+         stale 1.0.0 left in the local NuGet cache by an old local `dotnet pack`, and reports API
+         errors against a surface nobody ever shipped.
+         Until then, PublicSurfaceTests pins the exported surface instead, and it keeps doing so
+         afterwards without needing a baseline package at all. -->
     <!-- <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion> -->
   </PropertyGroup>
 

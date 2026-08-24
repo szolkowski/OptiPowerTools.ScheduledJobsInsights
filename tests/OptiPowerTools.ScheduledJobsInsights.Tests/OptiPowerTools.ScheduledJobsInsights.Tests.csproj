@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="bunit" Version="2.9.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <PrivateAssets>all</PrivateAssets>
@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <!-- Pinned above what EntityFrameworkCore.Sqlite drags in (2.1.11), which carries a high-severity
          advisory: GHSA-2m69-gcr7-jv3q. Test-only — the shipped package uses the SQL Server provider and
          its graph is clean — but a known-vulnerable native library is worth not building against, and

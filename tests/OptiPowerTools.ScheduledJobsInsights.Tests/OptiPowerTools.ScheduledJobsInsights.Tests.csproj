@@ -30,7 +30,7 @@
          advisory: GHSA-2m69-gcr7-jv3q. Test-only — the shipped package uses the SQL Server provider and
          its graph is clean — but a known-vulnerable native library is worth not building against, and
          pinning it is cheaper than suppressing the warning that found it. -->
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.13" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
   </ItemGroup>
 
   <ItemGroup>

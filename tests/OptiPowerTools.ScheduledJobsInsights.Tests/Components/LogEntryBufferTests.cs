@@ -195,4 +195,53 @@ public class LogEntryBufferTests
         Assert.False(buffer.Truncated);
         Assert.Equal(3, buffer.Entries.Count);
     }
+
+    [Fact]
+    public void TheCharacterBudget_StopsTheBufferBeforeTheLineCountDoes()
+    {
+        // A line count is only a proxy for memory: multiplied by MaxLogMessageLength it permits far
+        // more than it appears to, and the product is what a Blazor circuit holds per viewer.
+        var buffer = new LogEntryBuffer(maxEntries: 1_000, maxCharacters: 20);
+
+        buffer.Merge(Lines(1, 2, 3, 4, 5, 6));
+
+        Assert.True(buffer.Truncated);
+        Assert.True(buffer.IsFull);
+        Assert.True(buffer.Entries.Sum(e => e.Message.Length) <= 20);
+        Assert.True(buffer.Entries.Count < 6);
+    }
+
+    [Fact]
+    public void AnOversizedFirstLine_IsKeptRatherThanLeavingTheLogEmpty()
+    {
+        // Refusing it would render a truncation notice above nothing at all, which reads as a bug.
+        var buffer = new LogEntryBuffer(maxEntries: 1_000, maxCharacters: 1);
+
+        Assert.True(buffer.Merge(Lines(1)));
+        Assert.Single(buffer.Entries);
+    }
+
+    [Fact]
+    public void OutOfOrderLines_AreStillSorted()
+    {
+        // Guards the skip-the-sort optimisation: the common tick arrives ordered and appends at the
+        // tail, but the writer's channel-full fallback writes one record synchronously while earlier
+        // ones are still buffered, so 100 can land before 95.
+        var buffer = Unbounded();
+
+        buffer.Merge(Lines(3, 1, 2));
+
+        Assert.Equal([1, 2, 3], SequencesOf(buffer));
+    }
+
+    [Fact]
+    public void OutOfOrderLines_AcrossTwoFetches_AreStillSorted()
+    {
+        var buffer = Unbounded();
+
+        buffer.Merge(Lines(5, 4));
+        buffer.Merge(Lines(1));
+
+        Assert.Equal([1, 4, 5], SequencesOf(buffer));
+    }
 }

@@ -158,9 +158,8 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     /// interface documented as never throwing.
     /// </para>
     /// <para>
-    /// Surrogate-safe, like <see cref="Truncate"/>: cutting between a high and low surrogate stores
-    /// half a code point, which renders as a replacement glyph. The two used to disagree about this,
-    /// in the same file.
+    /// Surrogate-safe via <see cref="TextBounds.CutAt"/>, which every truncation in this package now
+    /// shares.
     /// </para>
     /// </remarks>
     private static string Clamp(string? value, int maxLength)
@@ -171,10 +170,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         if (value.Length <= maxLength)
             return value;
 
-        var budget = Math.Max(1, maxLength - Ellipsis.Length);
-
-        if (budget < value.Length && char.IsHighSurrogate(value[budget - 1]))
-            budget--;
+        var budget = TextBounds.CutAt(value, Math.Max(1, maxLength - Ellipsis.Length));
 
         return value[..budget] + Ellipsis;
     }
@@ -190,10 +186,9 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         if (summary.Length <= maxLength)
             return summary;
 
-        var budget = Math.Max(1, maxLength - (Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length));
-
-        if (budget < summary.Length && char.IsHighSurrogate(summary[budget - 1]))
-            budget--;
+        var budget = TextBounds.CutAt(
+            summary,
+            Math.Max(1, maxLength - (Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length)));
 
         return summary[..budget] + Environment.NewLine + JobResultSummary.TruncationNotice;
     }
@@ -261,6 +256,22 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         // carries the log lines of every other job running at that moment.
         name = Clamp(name, MaxMetricNameLength);
         unit = unit is null ? null : Clamp(unit, MaxMetricUnitLength);
+
+        // Same reasoning as the clamps above, for the same reason. SQL Server's float is IEEE-754
+        // finite-only, so NaN and infinity fail the INSERT — and not just their own row: they fail the
+        // whole batch they travel in, which carries the log lines of every other job running at that
+        // moment. The batch is then retried, dropped, and salvaged one row at a time. A rate computed
+        // over an elapsed time that rounds to zero is the ordinary way to produce one, so this is a
+        // mistake a correct-looking job makes rather than an exotic input.
+        if (!double.IsFinite(value))
+        {
+            _logger.LogDebug(
+                "ScheduledJobsInsights discarded metric {MetricName} for execution {ExecutionId} because its value was not a finite number.",
+                name,
+                executionId);
+            return;
+        }
+
         var record = new MetricRecordItem(executionId, name, value, unit, DateTimeOffset.UtcNow);
         if (_channelWriter.TryWrite(record))
             return;

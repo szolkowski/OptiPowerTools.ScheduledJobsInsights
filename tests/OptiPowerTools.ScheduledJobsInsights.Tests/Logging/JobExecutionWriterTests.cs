@@ -306,4 +306,37 @@ public class JobExecutionWriterTests
         // Reaching here at all is the assertion; the count just confirms each one genuinely tried.
         Assert.Equal(3, factory.Attempts);
     }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void RecordMetric_DiscardsANonFiniteValue(double value)
+    {
+        // SQL Server's float is IEEE-754 finite-only, so these fail the INSERT — and they do not fail
+        // alone: the batch they travel in carries the log lines of every other job running at that
+        // moment. A rate over an elapsed time that rounds to zero is the ordinary way to produce one.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        writer.RecordMetric(executionId, "RowsPerSecond", value, "rows/s");
+
+        Assert.Equal(0, channel.Reader.Count);
+    }
+
+    [Fact]
+    public void RecordMetric_KeepsAnOrdinaryValue()
+    {
+        // The other half of the guard: it rejects only what the column cannot hold.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        writer.RecordMetric(executionId, "RowsPerSecond", 12.5, "rows/s");
+
+        Assert.Equal(1, channel.Reader.Count);
+    }
 }

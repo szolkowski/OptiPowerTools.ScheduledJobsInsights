@@ -204,8 +204,10 @@ public sealed class JobResultSummary
         }
 
         // Keep whatever still fits rather than dropping the whole append — a partial last line reads
-        // better than a summary that stops one character short of the limit.
-        _builder.Append(text, 0, Math.Max(0, remaining));
+        // better than a summary that stops one character short of the limit. Cut through TextBounds
+        // so the partial line cannot end in half a surrogate pair; this is the site that truncates on
+        // the normal path, since the writer only sees text this type has already bounded.
+        _builder.Append(text, 0, TextBounds.CutAt(text, Math.Max(0, remaining)));
         _truncated = true;
     }
 }

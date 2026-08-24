@@ -2,6 +2,7 @@ using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
@@ -138,10 +139,10 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 
         Summary.AppendLine($"Default retention: {Describe(defaultPeriod)}");
         Summary.AppendLine($"Jobs with their own retention: {perJob.Count}");
-        Summary.AppendLine($"Executions deleted: {totalDeleted:N0}");
+        Summary.AppendLine($"Executions deleted: {DisplayFormat.Number(totalDeleted)}");
 
         if (interrupted > 0)
-            Summary.AppendLine($"Unfinished executions marked interrupted: {interrupted:N0}");
+            Summary.AppendLine($"Unfinished executions marked interrupted: {DisplayFormat.Number(interrupted)}");
 
         if (cancellationToken.IsCancellationRequested)
         {
@@ -199,7 +200,7 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         } while (deletedThisBatch > 0);
 
         if (deletedForThisRule > 0)
-            Summary.AppendLine($"  {what}: {deletedForThisRule:N0} deleted");
+            Summary.AppendLine($"  {what}: {DisplayFormat.Number(deletedForThisRule)} deleted");
 
         return deletedForThisRule;
     }

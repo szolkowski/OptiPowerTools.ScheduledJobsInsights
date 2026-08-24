@@ -584,4 +584,26 @@ public class LoggedScheduledJobBaseTests
 
         Assert.Same(thrown, Assert.Throws<InvalidOperationException>(() => job.Execute()));
     }
+
+    [Fact]
+    public void Stop_WhenAStopTokenCallbackThrows_DoesNotThrowIntoTheCaller()
+    {
+        // Cancel() runs registered callbacks synchronously on the calling thread, so a job that
+        // registered something like () => client.CancelPendingRequests() on a disposed client raises
+        // AggregateException out of Stop() — on the CMS's thread, skipping base.Stop() on the way.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
+
+        var job = new TestLoggedJob(writer)
+        {
+            RegisterThrowingStopCallback = true,
+            StopMidRun = true
+        };
+
+        var result = job.Execute();
+
+        Assert.Equal("done", result);
+        Assert.True(job.SawStopRequest);
+        writer.Received().Complete(1L, ExecutionStatus.Stopped, Arg.Any<string>(), Arg.Any<Exception>());
+    }
 }

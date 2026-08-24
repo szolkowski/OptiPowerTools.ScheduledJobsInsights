@@ -69,15 +69,38 @@ internal sealed class LogEntryBuffer
     /// </summary>
     public List<JobLogEntry> Entries => _entries;
 
+    /// <summary>Whether the entries are already in sequence order.</summary>
+    private bool IsSorted()
+    {
+        for (var i = 1; i < _entries.Count; i++)
+        {
+            if (_entries[i - 1].Sequence > _entries[i].Sequence)
+                return false;
+        }
+
+        return true;
+    }
+
     /// <summary>Highest sequence with no gap below it — where the next fetch resumes.</summary>
     public int ResumeFrom { get; private set; }
 
-    /// <summary>Whether the bound has been reached, so no further line can be held.</summary>
+    /// <summary>Whether the bound has been reached, so no further line will be held.</summary>
     /// <remarks>
+    /// <para>
     /// The caller checks this to stop fetching altogether. Without that it would keep issuing the
     /// same capped query every poll tick and discarding every row it returned.
+    /// </para>
+    /// <para>
+    /// True once either bound has forced a line to be refused. The character budget is why this is
+    /// expressed through <see cref="Truncated"/> rather than by comparing the running total: a
+    /// budget with room for a short line but not the one that arrived has stopped the log just as
+    /// surely, and a buffer that reported itself not-full there would have the page re-fetching and
+    /// re-discarding on every tick — the exact waste this exists to prevent. A later, shorter line
+    /// might technically have fit; the log is already truncated and says so, and predictable beats
+    /// marginal here.
+    /// </para>
     /// </remarks>
-    public bool IsFull => _entries.Count >= _maxEntries || _characters >= _maxCharacters;
+    public bool IsFull => _entries.Count >= _maxEntries || Truncated;
 
     /// <summary>Whether at least one line was dropped because the bound was reached.</summary>
     /// <remarks>
@@ -127,7 +150,13 @@ internal sealed class LogEntryBuffer
         if (!added)
             return false;
 
-        _entries.Sort(static (left, right) => left.Sequence.CompareTo(right.Sequence));
+        // Only sort when something actually landed out of order. A fetch arrives ordered and appends
+        // at the tail, so the common tick is already sorted and a full O(n log n) pass over as many as
+        // MaxLogEntriesPerExecution rows — every tick, per circuit — bought nothing. Out-of-order does
+        // happen: the writer's channel-full fallback writes one record synchronously while earlier
+        // ones are still buffered, so 100 can land before 95.
+        if (!IsSorted())
+            _entries.Sort(static (left, right) => left.Sequence.CompareTo(right.Sequence));
 
         while (_seen.Contains(ResumeFrom + 1))
             ResumeFrom++;

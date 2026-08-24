@@ -94,6 +94,14 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
             // Stop arrived just as the run finished. Nothing to cancel, and certainly nothing worth
             // throwing over — this is called by the CMS, not by the job.
         }
+        catch (Exception ex)
+        {
+            // Cancel() runs every callback the job registered on StopToken, synchronously, on this
+            // thread — so a throwing registration surfaces here as an AggregateException and would
+            // escape into the CMS, skipping base.Stop() on the way out. Exactly the exposure the
+            // OnStopRequested wrapper below exists to close, three lines further up.
+            Log($"A StopToken callback threw while cancelling: {ex.Message}", LogSeverity.Warning);
+        }
 
         try
         {

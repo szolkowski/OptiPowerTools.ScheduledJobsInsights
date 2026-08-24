@@ -1,5 +1,10 @@
 # Contributing to OptiPowerTools.ScheduledJobsInsights
 
+
+By taking part — issues, pull requests, review — you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security vulnerabilities go through the private channel in
+[SECURITY.md](SECURITY.md), never a public issue.
+
 Thank you for your interest in contributing! This guide will help you get started.
 
 ## Getting Started

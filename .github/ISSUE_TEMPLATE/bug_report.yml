@@ -1,0 +1,78 @@
+name: Bug report
+description: Something the package does that it should not, or fails to do.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here — see [SECURITY.md](../blob/main/SECURITY.md)
+        for the private channel.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The smallest set of steps that shows it. A job class that reproduces it is worth more than a
+        description of one.
+      placeholder: |
+        1. A job deriving from LoggedScheduledJobBase that …
+        2. Run it from the CMS Scheduled Jobs screen
+        3. Open the execution in Scheduled Jobs Insights
+    validations:
+      required: true
+
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: cms-version
+    attributes:
+      label: Optimizely CMS version
+      placeholder: "13.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Recording (a run is missing, or recorded wrongly)
+        - The admin UI (list, detail or retention screen)
+        - Retention and cleanup
+        - Startup, configuration or DI
+        - Database or migrations
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >
+        This package logs its own failures rather than throwing them into your jobs, so the log is
+        usually where the explanation is. Look for entries from `OptiPowerTools.ScheduledJobsInsights`.
+      render: text
+
+  - type: checkboxes
+    id: sanity
+    attributes:
+      label: Before submitting
+      options:
+        - label: The job derives from `LoggedScheduledJobBase` and implements `ExecuteJob()`, not `Execute()`.
+        - label: If the UI is blank or not interactive, the hosting application sets `RequiresAspNetWebAssets`.

@@ -22,6 +22,11 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
 
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- The Razor SDK generates a runtimeconfig.json and packs it into lib/. It describes how to
+         *host* an application, which a class library never is, so it is a build artefact with no
+         meaning to a consumer sitting in the one folder they do consume. -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
     <RepositoryUrl>https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

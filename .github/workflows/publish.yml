@@ -174,13 +174,20 @@ jobs:
           sed -i "s|](LICENSE.txt)|]($BLOB/LICENSE.txt)|g" README.md
           sed -i "s|](CONTRIBUTING.md)|]($BLOB/CONTRIBUTING.md)|g" README.md
           sed -i "s|](CHANGELOG.md)|]($BLOB/CHANGELOG.md)|g" README.md
+          sed -i "s|](CODE_OF_CONDUCT.md)|]($BLOB/CODE_OF_CONDUCT.md)|g" README.md
+          sed -i "s|](SECURITY.md)|]($BLOB/SECURITY.md)|g" README.md
 
           echo "Rewritten link targets:"
           grep -nE "!\[|\]\(https://github.com/$REPO/blob/" README.md || true
 
           # Fail loudly rather than shipping a page with a broken image on it.
-          if grep -qE "\]\((images/|LICENSE\.txt\)|CONTRIBUTING\.md\)|CHANGELOG\.md\))" README.md; then
-            echo "::error::A relative link survived the rewrite; it would render broken on nuget.org."
+          #
+          # Deliberately generic: anything that is not an absolute URL, an in-page anchor or a mailto
+          # is relative, and relative resolves to nothing on nuget.org. Listing the known filenames
+          # instead — as this did — silently stopped covering the page the moment somebody linked a
+          # file nobody had thought to add to the list.
+          if grep -nP '\]\((?!https?://|#|mailto:)' README.md; then
+            echo "::error::The links printed above are relative and would render broken on nuget.org. Add a rewrite rule for them in this step."
             exit 1
           fi
 

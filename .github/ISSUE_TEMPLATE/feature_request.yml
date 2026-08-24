@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a capability or a change in behaviour.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The public API is frozen at 1.0, so anything that changes it is a 2.0 conversation. That does
+        not make it unwelcome — it makes the reasoning worth writing down now.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the package makes hard or impossible?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. A rough shape is fine; the problem above matters more.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >
+        Including anything that nearly worked. A workaround that is merely awkward is useful evidence
+        about where the real gap is.
+
+  - type: checkboxes
+    id: breaking
+    attributes:
+      label: Compatibility
+      options:
+        - label: As far as I can tell, this would not change the existing public API or database schema.

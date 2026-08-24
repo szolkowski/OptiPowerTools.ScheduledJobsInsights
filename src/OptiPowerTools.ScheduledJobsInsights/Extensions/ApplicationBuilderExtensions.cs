@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
@@ -120,6 +121,7 @@ public static class ApplicationBuilderExtensions
         ResolveAuthorizationPolicyEarly(app.ApplicationServices);
         ReportResolvedRetention(app.ApplicationServices, options);
         ReportMissingWebAssets(app.ApplicationServices);
+        ReportDuplicateEndpointsWhenStarted(app.ApplicationServices, options);
 
         app.UseEndpoints(endpoints => endpoints.MapOptiPowerToolsScheduledJobsInsights());
 
@@ -154,6 +156,90 @@ public static class ApplicationBuilderExtensions
                 .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
                 .LogCritical(ex, "ScheduledJobsInsights could not resolve its authorization policy at startup. Access to the insights pages may be denied.");
         }
+    }
+
+    /// <summary>
+    /// Warns, once the application has started, if this package's endpoints resolve more than once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Duplicate endpoints surface as <c>AmbiguousMatchException</c> at request time, from
+    /// <c>DefaultEndpointSelector</c>, naming two identical-looking candidates and nothing else. The
+    /// exception arrives during endpoint <em>matching</em> — before authentication — so it is not
+    /// even necessarily a logged-in administrator who finds it, and nothing in it points at this
+    /// package or at the wiring that caused it.
+    /// </para>
+    /// <para>
+    /// Two wirings are known to cause it on an Optimizely host, and both were reported from a real
+    /// site. Calling <c>UseOptiPowerToolsScheduledJobsInsights()</c> <em>before</em> the host's own
+    /// <c>UseEndpoints(...)</c> publishes the hub, and <c>MapContent()</c> then consolidates the
+    /// already-published source into its own snapshot — so the hub is registered twice. Separately,
+    /// on some stacks (Commerce was the reported one) <c>MapContent()</c> already maps attribute-routed
+    /// controllers, and an additional <c>MapControllers()</c> duplicates every one of them, this
+    /// package's page included. Neither is detectable while <c>Configure</c> is still running, which
+    /// is why this waits for <c>ApplicationStarted</c>.
+    /// </para>
+    /// <para>
+    /// Reported rather than thrown. The endpoints belong to the host, this package only observes,
+    /// and a site that is limping is better than a site that will not boot — the same rule the write
+    /// path follows. Everything here is best-effort: no data source, no message.
+    /// </para>
+    /// </remarks>
+    private static void ReportDuplicateEndpointsWhenStarted(
+        IServiceProvider services,
+        OptiPowerToolsScheduledJobsInsightsOptions options)
+    {
+        var lifetime = services.GetService<IHostApplicationLifetime>();
+
+        if (lifetime is null)
+            return;
+
+        lifetime.ApplicationStarted.Register(() =>
+        {
+            try
+            {
+                var endpoints = services.GetService<EndpointDataSource>()?.Endpoints;
+
+                if (endpoints is null)
+                    return;
+
+                if (services.GetService<ILoggerFactory>()?.CreateLogger("OptiPowerTools.ScheduledJobsInsights") is not { } logger)
+                    return;
+
+                var page = endpoints
+                    .OfType<RouteEndpoint>()
+                    .Count(endpoint => string.Equals(
+                        "/" + endpoint.RoutePattern.RawText?.TrimStart('/'),
+                        "/" + options.CmsShellPath.TrimStart('/'),
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (page > 1)
+                {
+                    logger.LogError(
+                        "ScheduledJobsInsights' page is registered {Count} times at {Path}, so every request to it fails with AmbiguousMatchException. The usual cause is calling both MapContent() and MapControllers(): on some Optimizely stacks MapContent() already maps attribute-routed controllers, and the second call duplicates all of them. Remove MapControllers() if your host is one of those — but check first, because on a plain CMS host it is required and removing it makes this page return 404 instead.",
+                        page,
+                        options.CmsShellPath);
+                }
+
+                var hub = endpoints
+                    .OfType<RouteEndpoint>()
+                    .Count(endpoint => endpoint.RoutePattern.RawText?.Equals("_blazor", StringComparison.OrdinalIgnoreCase) == true
+                        || endpoint.RoutePattern.RawText?.Equals("/_blazor", StringComparison.OrdinalIgnoreCase) == true);
+
+                if (hub > 1)
+                {
+                    logger.LogError(
+                        "The Blazor hub is registered {Count} times at /_blazor, so every Blazor request in this application fails with AmbiguousMatchException — not only this package's pages. Map the hub inside the host's own UseEndpoints(...) block with endpoints.MapOptiPowerToolsScheduledJobsInsights(), placed before MapContent(), and keep UseOptiPowerToolsScheduledJobsInsights() after that block for migrations. If the host maps its own hub, set MapBlazorHub to false.",
+                        hub);
+                }
+            }
+            catch (Exception ex)
+            {
+                services.GetService<ILoggerFactory>()?
+                    .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
+                    .LogDebug(ex, "ScheduledJobsInsights could not inspect the application's endpoints for duplicates.");
+            }
+        });
     }
 
     /// <summary>

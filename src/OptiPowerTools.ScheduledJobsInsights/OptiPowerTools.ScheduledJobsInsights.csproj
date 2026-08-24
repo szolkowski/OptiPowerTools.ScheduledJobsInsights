@@ -7,6 +7,16 @@
     <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
          value here is only what a local `dotnet pack` produces. -->
     <Version>1.0.0-rc.3</Version>
+
+    <!-- A local `dotnet pack` must not produce a package claiming a real version string. NuGet keys
+         its global cache on id+version and never re-checks, so a local build that lands there under a
+         published version is restored forever on that machine while CI restores the real one: the same
+         version resolving to different assemblies on different machines, with a CS1061 that points
+         nowhere near the cause. Reported from a consuming site, where a cached local build shadowed the
+         published 1.0.0-rc.2.
+         CI sets CI=true, and the publish workflow passes -p:Version explicitly, so releases are
+         unaffected. Pass -p:PackRealVersion=true to opt out deliberately. -->
+    <PackageVersion Condition="'$(CI)' != 'true' AND '$(PackRealVersion)' != 'true'">$(Version)-local</PackageVersion>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>

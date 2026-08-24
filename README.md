@@ -90,24 +90,36 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
 });
 
 // ... then in the middleware pipeline, after UseAuthorization()
-// and BEFORE your own UseEndpoints(...) / MapXxx calls
-app.UseOptiPowerToolsScheduledJobsInsights();
-
 app.UseEndpoints(endpoints =>
 {
+    // Map the hub on your own route builder, ahead of MapContent().
+    endpoints.MapOptiPowerToolsScheduledJobsInsights();
+
     endpoints.MapContent();
     endpoints.MapControllers();
 });
+
+// Migrations and startup diagnostics. The hub is already mapped, so this does not map it again.
+app.UseOptiPowerToolsScheduledJobsInsights();
 ```
 
 Connection string can point to the same database as Optimizely or to a separate one — there is no fallback, it must be set explicitly.
 
-> `UseOptiPowerToolsScheduledJobsInsights()` applies pending migrations and maps the Blazor Server hub
-> the UI connects over. Call it after `UseAuthorization()`; placing it ahead of your own
-> `UseEndpoints(...)` keeps the hub registered alongside everything else. It deliberately does **not**
-> call `MapControllers()` — your application already does, and mapping controllers from two separate
-> `UseEndpoints(...)` blocks registers every action twice, which fails at request time with
-> `AmbiguousMatchException`.
+> **Why the hub is mapped inside your own `UseEndpoints(...)` block.**
+> `UseOptiPowerToolsScheduledJobsInsights()` can map the hub itself, and on a simple host that is
+> fine. On an Optimizely host it is not always: called before your `UseEndpoints(...)`, it publishes
+> the hub through a `UseEndpoints` call of its own, and `MapContent()` then consolidates that
+> already-published data source into its own snapshot — so the hub ends up registered twice and
+> *every* Blazor request in the application fails with `AmbiguousMatchException`, this package's pages
+> and the host's alike. This was reported from a real CMS 13 + Commerce 15 site. Mapping it on your
+> route builder, before `MapContent()`, avoids the whole question.
+>
+> `UseOptiPowerToolsScheduledJobsInsights()` is still needed — it applies migrations and runs the
+> startup diagnostics — and it detects that the hub is already mapped, so calling both is safe and is
+> the recommended shape above.
+>
+> It deliberately does **not** call `MapControllers()`. See the note below on that, which is less
+> obvious than it looks.
 
 On a minimal-hosting app (`WebApplication`) there is also
 `app.MapOptiPowerToolsScheduledJobsInsights()`, which maps the hub *without* applying migrations —
@@ -115,6 +127,31 @@ On a minimal-hosting app (`WebApplication`) there is also
 into your own hands (`AutoMigrateDatabase = false` plus the shipped script); otherwise call `Use…`, or
 you get a working UI over an empty database with nothing anywhere saying why. Calling both is safe:
 the hub is mapped at most once per application.
+
+### If you get `AmbiguousMatchException`
+
+Endpoint matching runs *before* authentication, so this reproduces on an anonymous request and does
+not need a CMS login to diagnose. The package logs a named error at startup when it can see the
+duplication itself, which is usually faster than reading the exception.
+
+There are two independent causes, and they need opposite fixes.
+
+**The hub is registered twice.** Every Blazor request in the application fails, not only this
+package's pages. Cause: `UseOptiPowerToolsScheduledJobsInsights()` ran before your own
+`UseEndpoints(...)` on a host whose `MapContent()` consolidates already-published endpoints. Fix: use
+the wiring at the top of this section — `MapOptiPowerToolsScheduledJobsInsights()` inside your block,
+before `MapContent()`. If your host maps its own hub, set `MapBlazorHub` to `false`.
+
+**Every attribute-routed action is registered twice**, this package's page among them, along with
+Optimizely's and Commerce's own. Cause: on some stacks `MapContent()` already maps attribute-routed
+controllers, and an additional `MapControllers()` maps them a second time. This was reported on
+CMS 13 + Commerce 15.
+
+> **Do not simply delete `MapControllers()`.** Whether `MapContent()` maps controllers depends on the
+> stack, and getting it wrong fails in the other direction. Measured on a plain CMS 13 Alloy site with
+> no Commerce: removing `MapControllers()` leaves `MapContent()` alone, and this package's page then
+> returns **404** — the site still starts and nothing is logged, so the page has simply vanished.
+> Change one thing, restart, and check that the page still answers before you keep the change.
 
 ### Writing a logged job
 

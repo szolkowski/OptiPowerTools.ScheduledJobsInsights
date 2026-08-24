@@ -66,6 +66,11 @@ public interface ICleanupRepository
     /// <see cref="Configuration.ExecutionStatus.Interrupted"/>.
     /// </summary>
     /// <param name="cutoff">Runs started before this and still unfinished are given up on.</param>
+    /// <param name="batchSize">
+    /// Maximum executions marked per statement. Batched for the same reason as the deletes: a single
+    /// unbounded update takes locks across the table for as long as it runs, which on a first sweep
+    /// through a backlog of stranded rows blocks every job that starts meanwhile.
+    /// </param>
     /// <param name="cancellationToken">Cancelled when an administrator stops the cleanup job.</param>
     /// <returns>How many executions were marked.</returns>
     /// <remarks>
@@ -73,5 +78,5 @@ public interface ICleanupRepository
     /// these rows. Left alone they accumulate, and every count, filter and "is it still running?"
     /// question is wrong for as long as they sit there.
     /// </remarks>
-    int MarkInterruptedExecutions(DateTimeOffset cutoff, CancellationToken cancellationToken = default);
+    int MarkInterruptedExecutions(DateTimeOffset cutoff, int batchSize, CancellationToken cancellationToken = default);
 }

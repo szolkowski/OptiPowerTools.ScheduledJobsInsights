@@ -96,17 +96,21 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void RegisteringTwice_KeepsTheFirstCallsOptions()
+    public void RegisteringTwice_LetsTheLaterCallConfigure()
     {
-        // A second call is a no-op in full: it must not silently re-apply defaults over the values
-        // the first one set.
+        // Reversed deliberately. This used to assert that the second call's options were discarded,
+        // which encoded the defect rather than a decision: a consumer configuring the package after a
+        // shared library had already made a bare call got no configuration and no error. The guard is
+        // there to stop a second background writer draining a single-reader channel — which
+        // RegisteringTwice_RegistersOneBackgroundWriter still pins — not to ignore the caller.
+        // Configure is additive and ordered, so the later call has the last word.
         var services = Registered(options => options.PageTitle = "From the first call");
         services.AddOptiPowerToolsScheduledJobsInsights(options => options.PageTitle = "From the second");
 
         var provider = services.BuildServiceProvider();
 
         Assert.Equal(
-            "From the first call",
+            "From the second",
             provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value.PageTitle);
     }
 
@@ -176,4 +180,29 @@ public class ServiceCollectionExtensionsTests
     /// <summary>Whether a descriptor came from <c>AddCascadingAuthenticationState</c>.</summary>
     private static bool IsCascadingAuthenticationStateRegistration(ServiceDescriptor descriptor) =>
         descriptor.ImplementationType?.FullName?.Contains("CascadingAuthenticationState", StringComparison.Ordinal) == true;
+
+    [Fact]
+    public void ASecondCall_DoesNotUndoTheFirstCallsOtherValues()
+    {
+        // Additive, not replacing: the later call sets what it names and leaves the rest alone.
+        var services = Registered(options => options.ConnectionString = "first");
+        services.AddOptiPowerToolsScheduledJobsInsights(options => options.PageTitle = "Second Call");
+
+        var resolved = services.BuildServiceProvider()
+            .GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
+
+        Assert.Equal("Second Call", resolved.PageTitle);
+        Assert.Equal("first", resolved.ConnectionString);
+    }
+
+    [Fact]
+    public void ASecondCall_StillRegistersOnlyOneBackgroundWriter()
+    {
+        // The half the guard is actually for: two writers draining a channel created with
+        // SingleReader = true is undefined behaviour.
+        var services = Registered();
+        services.AddOptiPowerToolsScheduledJobsInsights(_ => { });
+
+        Assert.Single(services, d => d.ImplementationType == typeof(JobLogBackgroundWriter));
+    }
 }

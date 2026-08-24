@@ -36,9 +36,13 @@ internal sealed class JobRetentionService : IJobRetentionService
         LoggedJobTypeIndex jobTypes,
         IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         ILogger<JobRetentionService> logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider timeProvider)
     {
-        _timeProvider = timeProvider ?? TimeProvider.System;
+        // Required, not an optional parameter defaulting to TimeProvider.System. TimeProvider is
+        // registered in the container and every other collaborator here takes it as a dependency; an
+        // optional one with a static fallback is a service locator in disguise, and it silently
+        // bypasses a host's test clock for whoever forgets to pass it.
+        _timeProvider = timeProvider;
         _dbContextFactory = dbContextFactory;
         _policies = policies;
         _registeredJobs = registeredJobs;

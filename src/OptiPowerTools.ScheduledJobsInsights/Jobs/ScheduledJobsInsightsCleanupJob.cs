@@ -142,7 +142,7 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
             return 0;
 
         var cutoff = now - _options.InterruptedExecutionThreshold;
-        var marked = _cleanupRepository.MarkInterruptedExecutions(cutoff, cancellationToken);
+        var marked = _cleanupRepository.MarkInterruptedExecutions(cutoff, _options.CleanupBatchSize, cancellationToken);
 
         if (marked > 0)
         {

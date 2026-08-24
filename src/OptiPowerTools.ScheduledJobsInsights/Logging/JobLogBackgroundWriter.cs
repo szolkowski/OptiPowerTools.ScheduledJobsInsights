@@ -27,6 +27,16 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     /// <summary>Attempts per batch. Covers a transient blip without holding the drain loop for long.</summary>
     private const int MaxFlushAttempts = 3;
 
+    /// <summary>
+    /// How long the shutdown drain waits for the steady-state collector to release the gate.
+    /// </summary>
+    /// <remarks>
+    /// Generous relative to a flush, short relative to a host's shutdown timeout (5 seconds by
+    /// default). The point is to be bounded at all: blocking here indefinitely turns a few lost log
+    /// lines into a process that will not exit.
+    /// </remarks>
+    private static readonly TimeSpan DrainGateTimeout = TimeSpan.FromSeconds(2);
+
     private static readonly TimeSpan RetryBackoff = TimeSpan.FromMilliseconds(200);
 
     /// <summary>
@@ -179,8 +189,21 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
     private async Task DrainRemainingAsync()
     {
         // Not WaitAsync(token): a drain that skipped itself because the other one held the gate would
-        // lose exactly the records this method exists to save.
-        await _drainGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        // lose exactly the records this method exists to save. But *bounded*, because an unbounded wait
+        // here is worse than the loss it prevents — on the shutdown-timeout path base.StopAsync has
+        // already stopped waiting for the collector, so this could block past the host's shutdown
+        // timeout, leaving Task.WhenAll over the hosted services never completing and the process
+        // eventually killed outright. Worse still, if the host did reach Dispose(), the gate would be
+        // disposed with a waiter still on it.
+        if (!await _drainGate.WaitAsync(DrainGateTimeout, CancellationToken.None).ConfigureAwait(false))
+        {
+            // The collector still holds it, which means it is mid-flush and writing these records
+            // itself. Skipping is then the right answer rather than a loss.
+            _logger.LogWarning(
+                "ScheduledJobsInsights did not get to drain its buffered log records on shutdown: the background flush was still running after {Timeout}. Some log lines and metrics from the last moments before shutdown may be missing.",
+                DrainGateTimeout);
+            return;
+        }
 
         try
         {

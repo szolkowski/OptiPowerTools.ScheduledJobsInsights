@@ -65,7 +65,16 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(setupAction);
 
         if (services.Any(descriptor => descriptor.ServiceType == typeof(RegistrationMarker)))
+        {
+            // The guard covers the registrations that must not be duplicated — a second background
+            // writer draining a single-reader channel, most of all — but the caller's options are not
+            // one of them. Dropping them silently meant a consumer who called this after a shared
+            // library had already made a bare call got no configuration and no error: the connection
+            // string they set was simply ignored. Configure is additive and ordered, so appending it
+            // here gives the later caller the last word, which is what they would expect.
+            services.Configure(setupAction);
             return services;
+        }
 
         services.AddSingleton(RegistrationMarker.Instance);
 
@@ -113,6 +122,13 @@ public static class ServiceCollectionExtensions
         {
             var insightsOptions = provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
             optionsBuilder.UseSqlServer(insightsOptions.ConnectionString);
+
+            // The escape hatch for everything this package cannot decide for a host: retry-on-failure,
+            // a command timeout, a managed-identity token provider. Applied last so it can override
+            // what is set above. For a package whose premise is that its own database may be
+            // unreachable, refusing consumers the ability to configure resilience was the wrong
+            // default.
+            insightsOptions.ConfigureDbContext?.Invoke(optionsBuilder);
         });
 
         services.AddSingleton(provider =>

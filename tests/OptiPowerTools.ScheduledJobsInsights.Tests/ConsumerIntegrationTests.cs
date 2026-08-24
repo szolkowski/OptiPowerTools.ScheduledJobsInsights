@@ -66,7 +66,12 @@ public class ConsumerIntegrationTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
-        services.AddSingleton(Substitute.For<IScheduledJobRepository>());
+        // Scoped, deliberately, and this is what makes the test able to fail. Optimizely registers this
+        // repository imperatively, so nothing guarantees it is a singleton — and registering the
+        // substitute as one made every captive-dependency bug in this package invisible to the scope
+        // validation below, which is the one check that would catch it. The menu provider shipped
+        // exactly that bug once.
+        services.AddScoped(_ => Substitute.For<IScheduledJobRepository>());
         services.AddSingleton<IGreetingService, GreetingService>();
 
         services.AddOptiPowerToolsScheduledJobsInsights(options =>
@@ -96,7 +101,11 @@ public class ConsumerIntegrationTests
 
         // Exactly how EPiServer.Scheduler.Internal.DefaultScheduledJobFactory constructs a job: no
         // registration of the job type itself, just the container plus its constructor.
-        var job = ActivatorUtilities.GetServiceOrCreateInstance<ConsumerJob>(provider);
+        // Inside a scope, because IScheduledJobRepository is scoped here — as it may well be in a real
+        // CMS. Resolving a scoped service from the root provider is its own error, distinct from the
+        // captive dependency ValidateScopes is here to catch, and no correct host does it.
+        using var scope = provider.CreateScope();
+        var job = ActivatorUtilities.GetServiceOrCreateInstance<ConsumerJob>(scope.ServiceProvider);
 
         var result = job.Execute();
 
@@ -137,7 +146,8 @@ public class ConsumerIntegrationTests
         using var database = new SqliteDbContextFactory();
         await using var provider = BuildConsumerHost(database);
 
-        var job = ActivatorUtilities.GetServiceOrCreateInstance<OptiPowerTools.ScheduledJobsInsights.Jobs.ScheduledJobsInsightsCleanupJob>(provider);
+        using var scope = provider.CreateScope();
+        var job = ActivatorUtilities.GetServiceOrCreateInstance<OptiPowerTools.ScheduledJobsInsights.Jobs.ScheduledJobsInsightsCleanupJob>(scope.ServiceProvider);
 
         Assert.Equal("Deleted 0 job execution(s).", job.Execute());
     }
@@ -148,10 +158,12 @@ public class ConsumerIntegrationTests
         using var database = new SqliteDbContextFactory();
         using var provider = BuildConsumerHost(database);
 
-        Assert.NotNull(provider.GetRequiredService<JobLoggingContext>());
-        Assert.NotNull(provider.GetRequiredService<IJobExecutionWriter>());
-        Assert.NotNull(provider.GetRequiredService<ICleanupRepository>());
-        Assert.NotNull(provider.GetRequiredService<IJobRetentionPolicySource>());
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<JobLoggingContext>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IJobExecutionWriter>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICleanupRepository>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IJobRetentionPolicySource>());
     }
 
     [Fact]
@@ -178,5 +190,32 @@ public class ConsumerIntegrationTests
         Assert.Same(
             provider.GetRequiredService<IJobRetentionPolicySource>(),
             provider.GetRequiredService<IJobRetentionService>());
+    }
+
+    [Fact]
+    public void TheContainerRejectsASingletonThatHoldsTheScopedJobRepository()
+    {
+        // Proves the harness can still catch the bug class, now that no production type commits it.
+        // ScheduledJobsInsightsMenuProvider shipped exactly this once — a singleton holding a scoped
+        // IAuthorizationService — and the application failed to start under Development's scope
+        // validation. This asserts the trap is armed rather than merely that today's code is clean.
+        using var database = new SqliteDbContextFactory();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped(_ => Substitute.For<IScheduledJobRepository>());
+        services.AddSingleton<CaptiveHolder>();
+
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        Assert.Throws<InvalidOperationException>(() => provider.GetRequiredService<CaptiveHolder>());
+    }
+
+    /// <summary>A singleton that holds a scoped service — the shape scope validation exists to reject.</summary>
+    private sealed class CaptiveHolder
+    {
+        public CaptiveHolder(IScheduledJobRepository scheduledJobRepository) =>
+            Repository = scheduledJobRepository;
+
+        public IScheduledJobRepository Repository { get; }
     }
 }

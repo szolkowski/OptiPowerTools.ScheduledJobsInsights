@@ -59,10 +59,24 @@ internal sealed class LoggedJobTypeIndex
 
         foreach (var type in CandidateTypes())
         {
-            if (type is { IsAbstract: false, FullName: { } fullName }
-                && typeof(LoggedScheduledJobBase).IsAssignableFrom(type))
+            // Guarded per type, because the inspection itself can throw for reasons that have nothing
+            // to do with this package: IsAssignableFrom loads the type's base chain, and
+            // GetCustomAttribute loads the attribute's assembly — either can raise TypeLoadException
+            // or FileNotFoundException for a plugin whose dependencies are not all present. Unguarded,
+            // that escaped the Lazy and took down both the retention screen and the cleanup job. One
+            // unreadable type should cost that type, nothing more.
+            try
             {
-                found.TryAdd(fullName, type.GetCustomAttribute<JobRetentionAttribute>(inherit: false));
+                if (type is { IsAbstract: false, FullName: { } fullName }
+                    && typeof(LoggedScheduledJobBase).IsAssignableFrom(type))
+                {
+                    found.TryAdd(fullName, type.GetCustomAttribute<JobRetentionAttribute>(inherit: false));
+                }
+            }
+            catch (Exception)
+            {
+                // Skip it. Routine in a CMS hosting third-party plugins.
+                continue;
             }
         }
 
@@ -84,11 +98,7 @@ internal sealed class LoggedJobTypeIndex
     private IEnumerable<Type> CandidateTypes()
     {
         if (_typeScanner is null)
-        {
-            return AppDomain.CurrentDomain.GetAssemblies()
-                .Where(assembly => !assembly.IsDynamic)
-                .SelectMany(SafeGetTypes);
-        }
+            return LoadedAssemblyTypes();
 
         try
         {
@@ -104,10 +114,22 @@ internal sealed class LoggedJobTypeIndex
         }
         catch (Exception)
         {
-            // Same reasoning, for a scanner that fails some other way.
-            return [];
+            // Same reasoning, but it cannot end in an empty index: this class's whole purpose is
+            // surviving a failed scan, and empty is the *harmful* answer here rather than the safe one
+            // — the cleanup job's list of job types to leave alone comes from this index, so losing it
+            // lets the default sweep delete history a [JobRetention(Indefinite)] asked to keep for
+            // ever. Note EPiServer.Framework raises its own TypeScannerReflectionException rather than
+            // ReflectionTypeLoadException, so this is the branch a real scanner failure lands in.
+            // Falling back to the loaded assemblies is weaker (see the remarks above) and still far
+            // better than nothing.
+            return LoadedAssemblyTypes();
         }
     }
+
+    private static IEnumerable<Type> LoadedAssemblyTypes() =>
+        AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => !assembly.IsDynamic)
+            .SelectMany(SafeGetTypes);
 
     private static IEnumerable<Type> SafeGetTypes(Assembly assembly)
     {

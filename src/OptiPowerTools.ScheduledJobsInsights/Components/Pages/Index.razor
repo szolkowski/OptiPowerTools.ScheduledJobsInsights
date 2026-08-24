@@ -225,7 +225,14 @@ else
         {
             var filter = new ExecutionFilter(
                 JobName: string.IsNullOrEmpty(_jobNameFilter) ? null : _jobNameFilter,
-                Status: Enum.TryParse<ExecutionStatus>(_statusFilter, out var status) ? status : null);
+                // IsDefined as well as TryParse: TryParse happily accepts "999" off the wire and
+                // yields (ExecutionStatus)999, which then matches nothing and renders a permanently
+                // empty list. Harmless as a read, but the retention dropdown got an explicit
+                // offered-value check for exactly this and this did not.
+                Status: Enum.TryParse<ExecutionStatus>(_statusFilter, out var status)
+                    && Enum.IsDefined(status)
+                        ? status
+                        : null);
 
             _page = await QueryService.GetExecutionsAsync(filter, _cursor, Options.Value.PageSize, _disposalCts.Token);
         }

@@ -129,8 +129,24 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// A run that finished after a stop request completed early, whatever it returned — so it is
     /// recorded as stopped rather than as a clean outcome.
     /// </summary>
-    private ExecutionStatus Outcome(ExecutionStatus natural) =>
-        _stopRequested ? ExecutionStatus.Stopped : natural;
+    /// <remarks>
+    /// A stop does <em>not</em> mask a failure. A run that was stopped and then threw for some
+    /// unrelated reason is recorded as <see cref="ExecutionStatus.Failed"/>, with its exception, so the
+    /// history agrees with the CMS admin's own <c>HasLastExecutionFailed</c> — which is set from the
+    /// rethrown exception and knows nothing about the stop. The exception being present is the
+    /// discriminator; a job that honours <c>StopToken</c> by throwing
+    /// <see cref="OperationCanceledException"/> is still recorded as stopped, because that is the stop
+    /// working rather than the job breaking.
+    /// </remarks>
+    private ExecutionStatus Outcome(ExecutionStatus natural, Exception? exception = null)
+    {
+        if (!_stopRequested)
+            return natural;
+
+        return exception is null or OperationCanceledException
+            ? ExecutionStatus.Stopped
+            : ExecutionStatus.Failed;
+    }
 
     /// <summary>
     /// Sealed so the capture wrapper always runs — implement <see cref="ExecuteJob"/> instead.
@@ -163,10 +179,25 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         {
             var result = ExecuteJob();
 
-            // Inside the try, but its own failure must not reach the catch below — a metrics error
-            // after a clean run would otherwise record the run as failed and rethrow.
+            // Both of these are inside the try, and neither may let its own failure reach the catch
+            // below: a recording error after a clean run would otherwise record that run as *failed*,
+            // rethrow a recording exception as though the job had thrown it, and duplicate the metrics
+            // on the way. The metrics call has always been guarded; this one was not, which left the
+            // package able to report a successful job as failed — the exact inversion it exists to
+            // prevent. Unreachable with the shipped writer, which swallows everything, and reachable
+            // by any host that substitutes its own IJobExecutionWriter.
             SafelyRecordAutomaticMetrics(baseline);
-            CompleteExecution(Outcome(ExecutionStatus.Succeeded), resultMessage: result, exception: null);
+
+            try
+            {
+                CompleteExecution(Outcome(ExecutionStatus.Succeeded), resultMessage: result, exception: null);
+            }
+            catch
+            {
+                // The run succeeded and that is what it returns. Losing the record of it is the lesser
+                // failure, and there is nowhere left to report this that would not corrupt the outcome.
+            }
+
             return result;
         }
         catch (Exception ex)
@@ -177,7 +208,7 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
             // and leave the row stranded at Running, with nothing to ever finish it.
             try
             {
-                CompleteExecution(Outcome(ExecutionStatus.Failed), resultMessage: null, exception: ex);
+                CompleteExecution(Outcome(ExecutionStatus.Failed, ex), resultMessage: null, exception: ex);
             }
             catch
             {
@@ -355,10 +386,10 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         {
             var elapsed = _context.TimeProvider.GetElapsedTime(baseline.Timestamp);
             RecordMetric(JobMetricNames.DurationMs, elapsed.TotalMilliseconds, "ms");
-            RecordMetric(JobMetricNames.AllocatedBytes, GC.GetAllocatedBytesForCurrentThread() - baseline.AllocatedBytes, "bytes");
+            RecordMetric(JobMetricNames.ThreadAllocatedBytes, GC.GetAllocatedBytesForCurrentThread() - baseline.AllocatedBytes, "bytes");
 
             if (ExecutionBaseline.TryReadCpuTime(out var cpuNow) && baseline.CpuTime is { } cpuStart)
-                RecordMetric(JobMetricNames.CpuTimeMs, (cpuNow - cpuStart).TotalMilliseconds, "ms");
+                RecordMetric(JobMetricNames.ProcessCpuTimeMs, (cpuNow - cpuStart).TotalMilliseconds, "ms");
 
             RecordMetric(JobMetricNames.GcGen0Collections, GC.CollectionCount(0) - baseline.Gen0);
             RecordMetric(JobMetricNames.GcGen1Collections, GC.CollectionCount(1) - baseline.Gen1);

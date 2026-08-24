@@ -274,4 +274,15 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     /// narrow projection plus whatever log lines are new, not the whole execution row.
     /// </remarks>
     public TimeSpan DetailPollInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Applied to the insights <c>DbContext</c> after its connection string, for options this package
+    /// does not decide — <c>EnableRetryOnFailure()</c>, a command timeout, a connection interceptor.
+    /// </summary>
+    /// <remarks>
+    /// Runs last, so it can override anything set before it. Set through the code-based
+    /// <c>setupAction</c>, not <c>appsettings.json</c> — it is a delegate, so configuration binding
+    /// cannot supply it.
+    /// </remarks>
+    public Action<Microsoft.EntityFrameworkCore.DbContextOptionsBuilder>? ConfigureDbContext { get; set; }
 }

@@ -48,8 +48,8 @@ public class LoggedScheduledJobBaseTests
         job.Execute();
 
         writer.Received(1).RecordMetric(1L, JobMetricNames.DurationMs, Arg.Any<double>(), "ms");
-        writer.Received(1).RecordMetric(1L, JobMetricNames.AllocatedBytes, Arg.Any<double>(), "bytes");
-        writer.Received(1).RecordMetric(1L, JobMetricNames.CpuTimeMs, Arg.Any<double>(), "ms");
+        writer.Received(1).RecordMetric(1L, JobMetricNames.ThreadAllocatedBytes, Arg.Any<double>(), "bytes");
+        writer.Received(1).RecordMetric(1L, JobMetricNames.ProcessCpuTimeMs, Arg.Any<double>(), "ms");
         writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen0Collections, Arg.Any<double>(), null);
         // All three generations: asserting only Gen0 let the Gen1/Gen2 lines be deleted silently.
         writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen1Collections, Arg.Any<double>(), null);
@@ -403,6 +403,58 @@ public class LoggedScheduledJobBaseTests
         writer.Received(1).Complete(58L, ExecutionStatus.Stopped, Arg.Any<string>(), null);
         writer.Received().Log(58L, Arg.Any<int>(), LogSeverity.Warning,
             Arg.Is<string>(m => m.Contains("OnStopRequested")), Arg.Any<LogEntrySource>());
+    }
+
+    [Fact]
+    public void Execute_WhenCompletingASuccessfulRunThrows_StillReturnsTheResult()
+    {
+        // The inversion this package exists to prevent, on the one path that was unguarded: a writer
+        // failing at Complete() used to send its own exception through the catch below, which recorded
+        // the run as Failed, re-ran the metrics, and rethrew — reporting a successful job as failed.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(60L);
+        writer.When(w => w.Complete(60L, ExecutionStatus.Succeeded, Arg.Any<string>(), null))
+            .Do(_ => throw new InvalidOperationException("sink exploded on complete"));
+        var job = new TestLoggedJob(writer) { ResultToReturn = "fine" };
+
+        var result = job.Execute();
+
+        Assert.Equal("fine", result);
+        writer.DidNotReceive().Complete(60L, ExecutionStatus.Failed, Arg.Any<string>(), Arg.Any<Exception>());
+    }
+
+    [Fact]
+    public void Execute_WhenAStoppedRunAlsoThrows_IsRecordedAsFailed()
+    {
+        // The history must not disagree with the CMS. Optimizely sets HasLastExecutionFailed from the
+        // rethrown exception and knows nothing about the stop, so recording Stopped-with-a-stack-trace
+        // showed a failed run as merely stopped in one place and failed in the other.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(61L);
+        var thrown = new InvalidOperationException("unrelated boom");
+        var job = new TestLoggedJob(writer) { StopMidRun = true, ExceptionToThrow = thrown };
+
+        Assert.Throws<InvalidOperationException>(() => job.Execute());
+
+        writer.Received(1).Complete(61L, ExecutionStatus.Failed, null, thrown);
+    }
+
+    [Fact]
+    public void Execute_WhenAStoppedRunHonoursTheTokenByThrowing_IsStillRecordedAsStopped()
+    {
+        // The other side of the same rule: OperationCanceledException is the stop working, not the job
+        // breaking, so it stays Stopped.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(62L);
+        var job = new TestLoggedJob(writer)
+        {
+            StopMidRun = true,
+            ExceptionToThrow = new OperationCanceledException("stopping")
+        };
+
+        Assert.Throws<OperationCanceledException>(() => job.Execute());
+
+        writer.Received(1).Complete(62L, ExecutionStatus.Stopped, null, Arg.Any<Exception>());
     }
 
     [Fact]

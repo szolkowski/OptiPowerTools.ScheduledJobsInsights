@@ -40,13 +40,19 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
         RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), failures);
         RequirePositive(options.MaxLogEntriesPerExecution, nameof(options.MaxLogEntriesPerExecution), failures);
 
-        // Not RequirePositive: the truncation marker has to fit inside the limit, so a limit of 1
-        // would produce a message shorter than the ellipsis replacing it.
         if (options.InterruptedExecutionThreshold < TimeSpan.Zero)
             failures.Add($"InterruptedExecutionThreshold cannot be negative (was {options.InterruptedExecutionThreshold}); use TimeSpan.Zero to disable the sweep.");
 
+        // Both of these are floors rather than "must be positive": the truncation marker has to fit
+        // inside the limit. Below that, the notice appended to a cut value is longer than the value it
+        // replaced, so the stored text comes out *longer* than the configured maximum — the one thing
+        // the option is there to guarantee. (This comment used to sit above the check above, which is
+        // not what it describes.)
         if (options.MaxLogMessageLength is > 0 and < 16)
             failures.Add($"MaxLogMessageLength must be at least 16 (was {options.MaxLogMessageLength}), or zero to use the default.");
+
+        if (options.MaxResultSummaryLength > 0 && options.MaxResultSummaryLength < MinimumSummaryLength)
+            failures.Add($"MaxResultSummaryLength must be at least {MinimumSummaryLength} (was {options.MaxResultSummaryLength}), or zero to use the default — below that, the truncation notice is longer than the summary it replaces.");
 
         if (options.LogFlushInterval <= TimeSpan.Zero)
             failures.Add($"LogFlushInterval must be greater than zero (was {options.LogFlushInterval}).");
@@ -92,4 +98,14 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
         && path.Length > 1
         && path[^1] != '/'
         && path.IndexOfAny(['?', '#', ' ']) < 0;
+
+    /// <summary>
+    /// Smallest usable <c>MaxResultSummaryLength</c>: the truncation notice plus its newline, plus one
+    /// character of actual summary.
+    /// </summary>
+    /// <remarks>
+    /// Derived rather than hard-coded, so it cannot drift away from the notice it is measuring.
+    /// </remarks>
+    private static readonly int MinimumSummaryLength =
+        Environment.NewLine.Length + Logging.JobResultSummary.TruncationNotice.Length + 1;
 }

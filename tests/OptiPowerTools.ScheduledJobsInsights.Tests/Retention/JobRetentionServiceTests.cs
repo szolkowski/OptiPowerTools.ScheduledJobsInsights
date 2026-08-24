@@ -1,5 +1,6 @@
 using EPiServer.DataAbstraction;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -41,11 +42,11 @@ public class JobRetentionServiceTests
         ILogger<JobRetentionService>? logger = null) =>
         new(factory,
             new JobRetentionPolicyStore(factory, NullLogger<JobRetentionPolicyStore>.Instance),
-            new RegisteredJobNames(repository, NullLogger<RegisteredJobNames>.Instance),
+            new RegisteredJobNames(ScopeFactoryFor(repository), NullLogger<RegisteredJobNames>.Instance),
             new LoggedJobTypeIndex(),
             Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { RetentionDays = defaultDays }),
             logger ?? NullLogger<JobRetentionService>.Instance,
-            timeProvider);
+            timeProvider ?? TimeProvider.System);
 
     private static void SeedExecutions(SqliteDbContextFactory factory, string jobTypeName, int count)
     {
@@ -412,5 +413,21 @@ public class JobRetentionServiceTests
         var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == "Contoso.Jobs.Thing");
         Assert.Equal("Thing", job.DisplayName);
         Assert.False(job.IsRegistered);
+    }
+
+    /// <summary>
+    /// A scope factory handing out <paramref name="repository"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RegisteredJobNames"/> resolves the repository per call from a fresh scope rather than
+    /// holding it — it is a singleton, and Optimizely registers that repository imperatively, so
+    /// holding one would be a captive dependency. Building a real one-service provider here is simpler
+    /// and more faithful than substituting the three scope interfaces by hand.
+    /// </remarks>
+    private static IServiceScopeFactory ScopeFactoryFor(IScheduledJobRepository repository)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => repository);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     }
 }

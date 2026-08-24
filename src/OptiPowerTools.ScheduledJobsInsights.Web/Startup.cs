@@ -1,6 +1,5 @@
 using EPiServer.Scheduler;
 using EPiServer.Web.Routing;
-using OptiPowerTools.Hangfire.Extensions;
 using OptiPowerTools.ScheduledJobsInsights.Extensions;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Web;
@@ -55,8 +54,6 @@ public class Startup
         app.UseRouting();
         app.UseAuthentication();
         app.UseAuthorization();
-
-        app.UseOptiPowerToolHangfire();
 
         // Must precede the UseEndpoints below - see the remarks above.
         app.UseOptiPowerToolsScheduledJobsInsights();

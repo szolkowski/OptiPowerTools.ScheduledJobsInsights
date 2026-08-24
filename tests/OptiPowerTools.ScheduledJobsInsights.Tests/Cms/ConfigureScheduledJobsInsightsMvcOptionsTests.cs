@@ -11,7 +11,7 @@ public class ConfigureScheduledJobsInsightsMvcOptionsTests
     [Fact]
     public void Configure_AddsRouteConvention_UsingConfiguredCmsShellPath()
     {
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { CmsShellPath = "/custom/shell" });
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { CmsShellPath = "/custom/shell" });
         var configure = new ConfigureScheduledJobsInsightsMvcOptions(options);
         var mvcOptions = new MvcOptions();
 

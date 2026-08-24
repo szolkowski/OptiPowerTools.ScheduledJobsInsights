@@ -26,7 +26,7 @@ public class ScheduledJobsInsightsCleanupJobTests
             TestJobLoggingContext.For(writer),
             repository,
             retention,
-            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+            Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
             {
                 RetentionDays = retentionDays,
                 CleanupBatchSize = batchSize,
@@ -215,13 +215,14 @@ public class ScheduledJobsInsightsCleanupJobTests
         repository.DeleteExecutionsOlderThan(
                 Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>())
             .Returns(0);
-        repository.MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(3);
+        repository.MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(3);
         var expectedCutoff = DateTimeOffset.UtcNow.AddHours(-24);
 
         var result = CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30))).Execute();
 
         repository.Received(1).MarkInterruptedExecutions(
             Arg.Is<DateTimeOffset>(cutoff => cutoff >= expectedCutoff.AddMinutes(-1) && cutoff <= expectedCutoff.AddMinutes(1)),
+            Arg.Any<int>(),
             Arg.Any<CancellationToken>());
         Assert.Contains("0 job execution(s)", result, StringComparison.Ordinal);
     }
@@ -238,7 +239,7 @@ public class ScheduledJobsInsightsCleanupJobTests
 
         CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30)), interruptedThreshold: TimeSpan.Zero).Execute();
 
-        repository.DidNotReceive().MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        repository.DidNotReceive().MarkInterruptedExecutions(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

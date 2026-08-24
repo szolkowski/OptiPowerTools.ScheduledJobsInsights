@@ -12,15 +12,18 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// discover it, so every type in its constructor must be public too.
 /// </para>
 /// <para>
-/// Intended to be consumed rather than implemented. Members may be added in a future minor version,
-/// which would break an outside implementation.
+/// <b>Not an extension point.</b> Resolve it from DI; do not implement it in consuming code. Members
+/// may be added in a minor version — which is precisely why implementing it is unsupported, and why
+/// no <c>[Obsolete]</c> shim or default implementation will be provided for one. If you need a
+/// different sink or a different rule source, the supported route is to replace this package's
+/// registration for the concrete service, not to implement the interface and hope its shape holds.
 /// </para>
 /// </remarks>
 public interface IJobRetentionPolicySource
 {
     /// <summary>
     /// The installation-wide fallback, from
-    /// <see cref="Configuration.OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/>. Applies
+    /// <see cref="Configuration.OptiPowerToolsScheduledJobsInsightsOptions.RetentionDays"/>. Applies
     /// to every job with no rule of its own.
     /// </summary>
     RetentionPeriod DefaultPeriod { get; }

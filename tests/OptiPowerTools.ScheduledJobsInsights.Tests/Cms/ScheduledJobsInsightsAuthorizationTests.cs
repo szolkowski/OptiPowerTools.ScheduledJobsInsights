@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -12,18 +13,20 @@ public class ScheduledJobsInsightsAuthorizationTests
 {
     /// <summary>Builds a provider with the package registered, plus any host policies.</summary>
     private static ServiceProvider Host(
-        Action<OptiPowerToolScheduledJobsInsightsOptions> configure,
-        Action<AuthorizationOptions>? hostPolicies = null)
+        Action<OptiPowerToolsScheduledJobsInsightsOptions> configure,
+        Action<AuthorizationOptions>? hostPolicies = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        configureServices?.Invoke(services);
         services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
             new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
         if (hostPolicies is not null)
             services.AddAuthorization(hostPolicies);
 
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = "Server=.;Database=x;Trusted_Connection=True;";
             configure(options);
@@ -89,14 +92,45 @@ public class ScheduledJobsInsightsAuthorizationTests
     }
 
     [Fact]
-    public void AMisspelledHostPolicy_FailsLoudly()
+    public async Task AMisspelledHostPolicy_DeniesAccess_RatherThanFallingBackToTheBuiltInCheck()
     {
-        // Falling back to the built-in check would look like it worked while enforcing something the
-        // host never asked for — the worst possible failure mode for an authorization setting.
+        // Falling back to the built-in role check would look like it worked while enforcing something
+        // the host never asked for — the worst possible failure mode for an authorization setting. So
+        // the policy resolves to deny-all: closed, not open, and not quietly something else.
         var provider = Host(options => options.AuthorizationPolicy = "NoSuchPolicy");
 
-        var exception = Assert.Throws<InvalidOperationException>(() => PolicyFrom(provider));
+        var authorizationService = provider.GetRequiredService<IAuthorizationService>();
+        var result = await authorizationService.AuthorizeAsync(
+            User("Administrators"), null, ScheduledJobsInsightsAuthorization.PolicyName);
 
-        Assert.Contains("NoSuchPolicy", exception.Message, StringComparison.Ordinal);
+        Assert.False(result.Succeeded);
+    }
+
+    [Fact]
+    public void AMisspelledHostPolicy_DoesNotThrow()
+    {
+        // It used to throw from PostConfigure. AuthorizationOptions is a single shared instance built
+        // lazily at the first authorization decision *anywhere in the application*, so one mistyped
+        // option string took down every [Authorize] endpoint in the CMS — not just this package's.
+        var provider = Host(options => options.AuthorizationPolicy = "NoSuchPolicy");
+
+        Assert.Null(Record.Exception(() => PolicyFrom(provider)));
+    }
+
+    [Fact]
+    public void AMisspelledHostPolicy_IsReportedAtCritical()
+    {
+        // The failure is silent to the reader — the pages simply deny — so the log line is the only
+        // thing that explains why.
+        var logger = new RecordingLogger<ConfigureScheduledJobsInsightsAuthorization>();
+        var provider = Host(
+            options => options.AuthorizationPolicy = "NoSuchPolicy",
+            configureServices: services =>
+                services.AddSingleton<ILogger<ConfigureScheduledJobsInsightsAuthorization>>(logger));
+
+        PolicyFrom(provider);
+
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Critical && entry.Message.Contains("NoSuchPolicy", StringComparison.Ordinal));
     }
 }

@@ -8,8 +8,9 @@
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
 @using OptiPowerTools.ScheduledJobsInsights.Data.Entities
 @using OptiPowerTools.ScheduledJobsInsights.Repositories
+@using Microsoft.AspNetCore.Components.Web.Virtualization
 @inject IJobExecutionQueryService QueryService
-@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Options
 @inject IJSRuntime JS
 
 <p><a href="@Options.Value.CmsShellPath">&larr; Back to executions</a></p>
@@ -36,7 +37,7 @@ else
     </div>
 
     <div class="execution-meta">
-        <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(_execution.Status)">
+        <span class="status-badge @ExecutionStatusStyles.CssClass(_execution.Status)">
             @ExecutionStatusStyles.Label(_execution.Status)
         </span>
         <span>Started: @_clock.Timestamp(_execution.StartedAt)</span>
@@ -119,6 +120,16 @@ else
                 <span class="live-indicator" role="status">live</span>
             }
         </h2>
+        @if (_log.Truncated)
+        {
+            @* Said out loud, because a truncated log read as a complete one is worse than no log:
+               the missing lines are the tail, which is where a failure's cause usually is. *@
+            <p class="log-truncated" role="status">
+                Showing the first @LogCountLabel of this execution. It logged more than the
+                configured maximum, so the rest is not displayed &mdash; raise
+                <code>MaxLogEntriesPerExecution</code> to see more.
+            </p>
+        }
         @if (_log.Entries.Count > 0)
         {
             @* Only useful once the circuit is up, since jumping needs JS interop. *@
@@ -143,10 +154,10 @@ else
                rather than whatever the platform's default monospace metrics happen to produce.
                A line long enough to wrap is still taller than the estimate, which costs a little
                scrollbar accuracy and nothing else. *@
-            <Virtualize TItem="JobLogEntry" Items="_log.Entries" Context="entry" ItemSize="22">
-                <div class="console-line" style="border-left-color:@LogSeverityStyles.HexColor(entry.Severity)">
+            <Virtualize TItem="JobLogEntry" Items="_log.Entries" Context="entry" ItemSize="22" OverscanCount="12">
+                <div class="console-line @LogSeverityStyles.CssClass(entry.Severity)">
                     <span class="console-timestamp">@_clock.TimeOfDay(entry.Timestamp)</span>
-                    <span class="console-severity" style="color:@LogSeverityStyles.HexColor(entry.Severity)">[@LogSeverityStyles.Label(entry.Severity)]</span>
+                    <span class="console-severity">[@LogSeverityStyles.Label(entry.Severity)]</span>
                     <span class="console-message">@entry.Message</span>
                 </div>
             </Virtualize>
@@ -156,16 +167,28 @@ else
 
 @code {
     /// <summary>
-    /// How often a still-running execution is re-read.
+    /// How often a still-running execution is re-read, from
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.DetailPollInterval"/>.
     /// </summary>
     /// <remarks>
-    /// Settable for tests only. Two seconds is far too long to wait in a test, and the alternative —
-    /// leaving the poll loop, the trailing read and the finish detection uncovered — is worse than an
-    /// internal seam that costs nothing on the public surface. Tests that change it share one xUnit
-    /// collection so they cannot run concurrently with each other.
+    /// A real option rather than the mutable static this used to be. That static was process-wide
+    /// state on a component, writable by anything inside the assembly and shared across every
+    /// circuit — test-only coupling living in production code, and it forced the tests that changed it
+    /// into a shared xUnit collection. The interval is also a legitimate thing for an installation to
+    /// tune, which is what made it an option rather than a constant.
     /// </remarks>
-    internal static TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
+    private TimeSpan PollInterval => Options.Value.DetailPollInterval;
     private static readonly TimeSpan CopyFeedbackDuration = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long disposal waits for the poll loop to unwind before giving up on it.
+    /// </summary>
+    /// <remarks>
+    /// Long enough for a cancelled query to return, short enough that a wedged one does not hold up
+    /// circuit teardown. Abandoning the task is safe: it only ever touches the renderer through
+    /// <c>InvokeAsync</c>, which is a no-op once the renderer is gone.
+    /// </remarks>
+    private static readonly TimeSpan DisposeGracePeriod = TimeSpan.FromSeconds(1);
 
     private const string DefaultCopyLabel = "Copy";
 
@@ -177,7 +200,18 @@ else
     /// </summary>
     private const int SummaryAutoCollapseLines = 200;
 
-    private readonly LogEntryBuffer _log = new();
+    /// <summary>
+    /// Replaced in <c>OnInitializedAsync</c> with one bounded by the configured
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.MaxLogEntriesPerExecution"/>.
+    /// </summary>
+    /// <remarks>
+    /// Initialised to the default bound rather than left null, because the configured value comes from
+    /// injected options and property injection has not run when field initialisers do. Seeding it with
+    /// the default keeps the field non-null without a null-forgiving operator, and the instance is
+    /// replaced before anything reads it — <c>OnInitializedAsync</c> runs before the first render.
+    /// </remarks>
+    private LogEntryBuffer _log =
+        new(OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution);
     private readonly CancellationTokenSource _disposalCts = new();
 
     private ViewerClock _clock = ViewerClock.Utc;
@@ -212,6 +246,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _log = new LogEntryBuffer(Options.Value.MaxLogEntriesPerExecution);
+
         // Resolved once from a parameter rather than looked up per render: the zone cannot change
         // without a new request, and TimeZoneInfo lookups are not free.
         _clock = ViewerClock.ForZone(ViewerTimeZone);
@@ -349,8 +385,17 @@ else
     /// Fetches log lines written since the last poll. <see cref="LogEntryBuffer"/> decides where to
     /// resume from and holds the reasoning for why that is not simply the highest line seen.
     /// </summary>
-    private async Task LoadLogEntriesAsync(CancellationToken cancellationToken) =>
+    /// <remarks>
+    /// Skipped entirely once the buffer is full: nothing further can be held, so continuing would
+    /// re-run a capped query every two seconds only to throw the rows away.
+    /// </remarks>
+    private async Task LoadLogEntriesAsync(CancellationToken cancellationToken)
+    {
+        if (_log.IsFull)
+            return;
+
         _log.Merge(await QueryService.GetLogEntriesAsync(Id, _log.ResumeFrom, cancellationToken));
+    }
 
     /// <summary>
     /// Refreshes the summary's header badge and, the first time a summary appears, decides whether
@@ -385,7 +430,7 @@ else
 
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                await LoadAsync(cancellationToken);
+                await PollOnceAsync(cancellationToken);
 
                 if (_execution?.Status != ExecutionStatus.Running)
                 {
@@ -407,12 +452,66 @@ else
         }
         catch (Exception ex)
         {
-            // Anything else would fault _pollingTask, which DisposeAsync awaits — rethrowing it in
-            // the middle of circuit teardown, where nothing can handle it.
+            // Anything else would fault _pollingTask, which disposal observes — and a fault surfacing
+            // during circuit teardown has nowhere to go.
             _isPolling = false;
             _loadError = ex.Message;
-            await InvokeAsync(StateHasChanged);
+
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The renderer went away between the failure and the attempt to report it. There is
+                // no longer anything to render into, and this is not itself a failure.
+            }
         }
+    }
+
+    /// <summary>
+    /// One poll tick: the cheap parts always, the expensive parts only when something changed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A tick used to call <c>LoadAsync</c>, which re-fetched the entire <c>JobExecution</c> row —
+    /// including <c>ResultSummary</c> (up to 100,000 characters), the unbounded <c>InputDataJson</c>
+    /// and <c>ExceptionStackTrace</c> — every couple of seconds, per viewer, for the whole life of the
+    /// run. That is exactly the cost the incremental log fetch exists to avoid, paid on a different
+    /// column.
+    /// </para>
+    /// <para>
+    /// So the tick reads a narrow projection plus the new log lines, and only goes back for the heavy
+    /// columns when the status, the outcome or the summary's length has actually moved. The last of
+    /// those is what keeps a job checkpointing with <c>FlushSummary</c> rendering as it grows.
+    /// </para>
+    /// </remarks>
+    private async Task PollOnceAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await QueryService.GetExecutionStatusAsync(Id, cancellationToken);
+
+        if (snapshot is null || _execution is null)
+        {
+            // The row vanished, or we never had it. Fall back to the full read, which handles both.
+            await LoadAsync(cancellationToken);
+            return;
+        }
+
+        var heavyColumnsChanged =
+            snapshot.Status != _execution.Status
+            || snapshot.CompletedAt != _execution.CompletedAt
+            || snapshot.ResultMessage != _execution.ResultMessage
+            || snapshot.ExceptionMessage != _execution.ExceptionMessage
+            || snapshot.ResultSummaryLength != (_execution.ResultSummary?.Length ?? 0);
+
+        if (heavyColumnsChanged)
+        {
+            await LoadAsync(cancellationToken);
+            return;
+        }
+
+        // Nothing about the row moved; only the log can have grown.
+        await LoadLogEntriesAsync(cancellationToken);
     }
 
     /// <summary>
@@ -440,11 +539,26 @@ else
     {
         await _disposalCts.CancelAsync();
 
-        // Await the polling loop rather than abandoning it, so it cannot touch the renderer after
-        // disposal. PollUntilFinishedAsync swallows only cancellation, so a genuine fault still
-        // surfaces here instead of being lost in an unobserved task.
+        // Wait for the polling loop to notice, but never *depend* on it. Two hazards, both real:
+        //
+        //  - This runs on the renderer's dispatcher, and the loop's continuations need that same
+        //    dispatcher. A continuation that has to be posted cannot run while the dispatcher is
+        //    inside this disposal work item, so awaiting unconditionally can stall teardown for as
+        //    long as an in-flight query takes to honour cancellation.
+        //  - A fault reaching here is rethrown in the middle of circuit teardown, where nothing can
+        //    handle it. The loop's own catch reports failures on the page, which is where a reader
+        //    can act on them; anything that escapes it has nowhere useful to go.
         if (_pollingTask is not null)
-            await _pollingTask;
+        {
+            try
+            {
+                await Task.WhenAny(_pollingTask, Task.Delay(DisposeGracePeriod));
+            }
+            catch
+            {
+                // Observed and dropped: the circuit is going away regardless.
+            }
+        }
 
         if (_interop is not null)
         {

@@ -6,7 +6,7 @@
     <!-- NuGet Package Metadata -->
     <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
          value here is only what a local `dotnet pack` produces. -->
-    <Version>1.0.0-rc.1</Version>
+    <Version>1.0.0-rc.2</Version>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>
@@ -34,6 +34,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
     <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion> -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -60,7 +61,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\images\icon.png" Pack="true" PackagePath="icon.png" />
+    <!-- The 256px rendition, not the 1024px source. nuget.org displays the icon at 128px, and the
+         original was 236 KB of a 386 KB package — 61% of what every consumer downloads, to show an
+         image at an eighth of its resolution. 256 keeps it crisp on a high-DPI display at ~30 KB.
+         images/icon.png stays as the source for anything else that needs it. -->
+    <None Include="..\..\images\icon-256.png" Pack="true" PackagePath="icon.png" />
     <None Include="..\..\README.md" Pack="true" PackagePath="README.md" />
     <None Include="..\..\LICENSE.txt" Pack="true" PackagePath="LICENSE.txt" />
   </ItemGroup>

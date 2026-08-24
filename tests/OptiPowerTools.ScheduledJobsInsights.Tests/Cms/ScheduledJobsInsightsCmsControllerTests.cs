@@ -11,8 +11,16 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
 
 public class ScheduledJobsInsightsCmsControllerTests
 {
+
+    /// <summary>The typed model the view is rendered with.</summary>
+    /// <remarks>
+    /// Was <c>ViewData</c>, until these values moved onto a record: a renamed key used to hand the
+    /// components null with nothing failing to say so, which is the whole reason for the change.
+    /// </remarks>
+    private static ScheduledJobsInsightsPageModel ModelOf(IActionResult result) =>
+        Assert.IsType<ScheduledJobsInsightsPageModel>(Assert.IsType<ViewResult>(result).Model);
     private static ScheduledJobsInsightsCmsController CreateController(
-        OptiPowerToolScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
+        OptiPowerToolsScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
     {
         var httpContext = new DefaultHttpContext { User = user };
         if (timeZoneCookie is not null)
@@ -31,13 +39,12 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The id arrives from the "id" query string rather than a route segment, so that the request
         // path keeps matching the registered CMS menu item and the shell navigation still resolves.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id);
 
-        var viewResult = Assert.IsType<ViewResult>(result);
-        Assert.Equal(id, viewResult.ViewData["ExecutionId"]);
+        Assert.Equal(id, ModelOf(result).ExecutionId);
     }
 
     [Fact]
@@ -57,7 +64,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     [Fact]
     public void Index_ReturnsViewWithOptionValues()
     {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions
         {
             AuthorizedRoles = ["Administrators"],
             PageTitle = "Title"
@@ -68,9 +75,9 @@ public class ScheduledJobsInsightsCmsControllerTests
 
         var result = controller.Index(id: null);
 
-        var viewResult = Assert.IsType<ViewResult>(result);
-        Assert.Null(viewResult.ViewData["ExecutionId"]);
-        Assert.Equal("Title", viewResult.ViewData["PageTitle"]);
+        var model = ModelOf(result);
+        Assert.Null(model.ExecutionId);
+        Assert.Equal("Title", model.PageTitle);
     }
 
     [Fact]
@@ -79,12 +86,12 @@ public class ScheduledJobsInsightsCmsControllerTests
         // Read here rather than inside the components: IHttpContextAccessor only has a context during
         // prerendering, so a component that looked it up itself would resolve the zone on the
         // prerender pass and lose it the moment the circuit took over.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()), "Europe/Warsaw");
 
         var result = controller.Index(id: null);
 
-        Assert.Equal("Europe/Warsaw", Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
+        Assert.Equal("Europe/Warsaw", ModelOf(result).ViewerTimeZone);
     }
 
     [Fact]
@@ -92,11 +99,11 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The first ever page view, before the view's inline script has set the cookie. The
         // components fall back to UTC rather than guessing.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id: null);
 
-        Assert.Null(Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
+        Assert.Null(ModelOf(result).ViewerTimeZone);
     }
 }

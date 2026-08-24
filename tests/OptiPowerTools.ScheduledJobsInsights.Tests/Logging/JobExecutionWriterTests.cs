@@ -219,7 +219,7 @@ public class JobExecutionWriterTests
         // writes megabytes per row.
         using var factory = new SqliteDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { MaxLogMessageLength = 32 });
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { MaxLogMessageLength = 32 });
         var writer = new JobExecutionWriter(factory, channel, options, NullLogger<JobExecutionWriter>.Instance);
 
         writer.Log(1, 1, LogSeverity.Info, new string('x', 500), LogEntrySource.DevLog);

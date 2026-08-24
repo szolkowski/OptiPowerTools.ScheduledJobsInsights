@@ -33,7 +33,7 @@ public class JobLogBackgroundWriterTests
 
         var channel = Channel.CreateUnbounded<JobRecord>();
         // A long flush interval proves the drain-on-shutdown path (not the periodic flush) is what delivers these records.
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { LogBatchSize = 100, LogFlushInterval = TimeSpan.FromSeconds(30) });
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { LogBatchSize = 100, LogFlushInterval = TimeSpan.FromSeconds(30) });
 
         channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "buffered line", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
         channel.Writer.TryWrite(new MetricRecordItem(executionId, "BufferedMetric", 1, null, DateTimeOffset.UtcNow));
@@ -59,7 +59,7 @@ public class JobLogBackgroundWriterTests
 
         using var factory = new GatedDbContextFactory(sqlite);
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             LogBatchSize = 10,
             LogFlushInterval = TimeSpan.FromMilliseconds(10)
@@ -102,7 +102,7 @@ public class JobLogBackgroundWriterTests
         var executionId = await SeedExecutionAsync(factory);
 
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             LogBatchSize = 10,
             LogFlushInterval = TimeSpan.FromMilliseconds(10)
@@ -153,7 +153,7 @@ public class JobLogBackgroundWriterTests
         // the CMS down with it. The batch is allowed to be lost; the process is not.
         var factory = new FailingDbContextFactory();
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             LogBatchSize = 10,
             LogFlushInterval = TimeSpan.FromMilliseconds(20)
@@ -198,7 +198,7 @@ public class JobLogBackgroundWriterTests
 
         var factory = new IntermittentDbContextFactory(workingFactory, failuresBeforeRecovery: 3);
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             LogBatchSize = 1,
             LogFlushInterval = TimeSpan.FromMilliseconds(20)
@@ -247,7 +247,7 @@ public class JobLogBackgroundWriterTests
         var channel = Channel.CreateUnbounded<JobRecord>();
         // Batch size well above what we write, and a long interval, so the collector cannot decide to
         // flush on its own — it holds the records and waits.
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             LogBatchSize = 100,
             LogFlushInterval = TimeSpan.FromSeconds(30)
@@ -301,7 +301,7 @@ public class JobLogBackgroundWriterTests
         }
 
         var channel = Channel.CreateUnbounded<JobRecord>();
-        var options = Options.Create(new OptiPowerToolScheduledJobsInsightsOptions());
+        var options = Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions());
         channel.Writer.TryWrite(new LogRecordItem(executionId, 1, LogSeverity.Info, "never collected", LogEntrySource.DevLog, DateTimeOffset.UtcNow));
 
         var backgroundWriter = new JobLogBackgroundWriter(channel, factory, options, NullLogger<JobLogBackgroundWriter>.Instance);

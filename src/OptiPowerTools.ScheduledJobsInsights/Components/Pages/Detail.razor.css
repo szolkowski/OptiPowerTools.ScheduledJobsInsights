@@ -84,6 +84,10 @@
 }
 
 .status-badge {
+    /* Colour comes from the sji-status-* class alongside this one — see the palette in
+       wwwroot/css/scheduled-jobs-insights.css. The fallback covers a host that serves the
+       component CSS without the package stylesheet. */
+    background-color: var(--sji-status-color, #4FC3F7);
     color: #10151c;
     border-radius: 999px;
     padding: 0.15rem 0.6rem;
@@ -119,6 +123,15 @@
     font-size: 0.8rem;
     font-weight: 400;
     opacity: 0.65;
+}
+
+/* A flex item like its siblings, so it needs to claim the whole row rather than squeeze in between
+   the heading and the jump buttons. flex-wrap is already on for narrow viewports. */
+.log-truncated {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    opacity: 0.8;
 }
 
 .log-actions {
@@ -172,7 +185,9 @@
 }
 
 .console-line {
-    border-left: 3px solid transparent;
+    /* The severity colour arrives as a custom property from the sji-sev-* class, and inherits down to
+       .console-severity below. */
+    border-left: 3px solid var(--sji-severity-color, #B0BEC5);
     padding: 0.1rem 0.5rem;
     /* overflow-wrap, not the deprecated word-break: break-word. Matches the summary and payload panes
        above, and keeps a long unbroken path in a log line from widening the console. */
@@ -198,6 +213,7 @@
 }
 
 .console-severity {
+    color: var(--sji-severity-color, #B0BEC5);
     margin-right: 0.5rem;
     font-weight: 600;
 }

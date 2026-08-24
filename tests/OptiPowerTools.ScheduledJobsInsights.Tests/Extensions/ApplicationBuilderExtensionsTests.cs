@@ -18,13 +18,13 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Extensions;
 public class ApplicationBuilderExtensionsTests
 {
     [Fact]
-    public void UseOptiPowerToolScheduledJobsInsights_MissingOptions_ThrowsInvalidOperationException()
+    public void UseOptiPowerToolsScheduledJobsInsights_MissingOptions_ThrowsInvalidOperationException()
     {
         var services = new ServiceCollection();
         var serviceProvider = services.BuildServiceProvider();
         var app = Substitute.For<IApplicationBuilder>();
         app.ApplicationServices.Returns(serviceProvider);
 
-        Assert.Throws<InvalidOperationException>(() => app.UseOptiPowerToolScheduledJobsInsights());
+        Assert.Throws<InvalidOperationException>(() => app.UseOptiPowerToolsScheduledJobsInsights());
     }
 }

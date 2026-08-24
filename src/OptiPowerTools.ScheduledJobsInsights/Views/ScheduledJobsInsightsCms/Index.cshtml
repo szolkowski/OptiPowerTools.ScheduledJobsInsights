@@ -1,10 +1,15 @@
+@model OptiPowerTools.ScheduledJobsInsights.Cms.ScheduledJobsInsightsPageModel
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 @{
     Layout = string.Empty;
-    var executionId = (long?)ViewBag.ExecutionId;
-    var viewerTimeZone = (string?)ViewBag.ViewerTimeZone;
-    var showRetention = (bool)(ViewBag.ShowRetention ?? false);
-    var currentUser = (string?)ViewBag.CurrentUser;
+
+    // Typed, not ViewBag: these are the values whose loss breaks the page silently — a renamed key
+    // would have given the components null, rendering in UTC or auditing as "unknown", with nothing
+    // failing to say so. See ScheduledJobsInsightsPageModel.
+    var executionId = Model.ExecutionId;
+    var viewerTimeZone = Model.ViewerTimeZone;
+    var showRetention = Model.ShowRetention;
+    var currentUser = Model.CurrentUser;
 
     // The scoped-CSS bundle is named after the entry assembly. ApplicationName usually equals it but
     // is settable independently through WebApplicationOptions, so prefer the assembly name and fall
@@ -17,7 +22,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewBag.PageTitle</title>
+    <title>@Model.PageTitle</title>
 
     @* Required by blazor.server.js: it resolves the /_blazor hub relative to this base. Without it
        the hub is looked up under the current directory — /ScheduledJobsInsightsCms/_blazor — which
@@ -57,19 +62,11 @@
        Consequence worth knowing: on the very first page view the cookie does not exist yet, so times
        render in UTC (labelled as such, never silently wrong) and every view after that is in the
        reader's own zone. Nothing here reloads the page to avoid that one occurrence. *@
-    <script>
-        (function () {
-            try {
-                var zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                if (zone) {
-                    document.cookie = 'sji-timezone=' + encodeURIComponent(zone) +
-                        '; path=/; max-age=31536000; SameSite=Lax';
-                }
-            } catch (e) {
-                // No Intl support, or cookies blocked. The server keeps rendering UTC.
-            }
-        })();
-    </script>
+    @* An external file, not inline: an inline script never runs under a script-src policy without
+       'unsafe-inline', which is the ordinary case for a CMS back office — and the failure is silent,
+       leaving every reader permanently on UTC. asp-append-version for the same cache-busting reason as
+       the stylesheets above. *@
+    <script src="~/_content/OptiPowerTools.ScheduledJobsInsights/js/timezone.js" asp-append-version="true" defer></script>
 </head>
 <body>
     @* platform-navigation advertises an antiforgery header name on this page for the shell's client

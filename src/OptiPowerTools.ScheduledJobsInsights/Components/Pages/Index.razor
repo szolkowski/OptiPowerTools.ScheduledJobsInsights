@@ -7,14 +7,14 @@
    twice per page view. They are two indexed read-only queries, which is a fair price for the faster
    first paint; if that ever stops being true, the fix is PersistentComponentState rather than
    dropping prerendering. *@
-@implements IDisposable
+@implements IAsyncDisposable
 @attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using OptiPowerTools.ScheduledJobsInsights.Cms
 @using OptiPowerTools.ScheduledJobsInsights.Components.Shared
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
 @using OptiPowerTools.ScheduledJobsInsights.Repositories
 @inject IJobExecutionQueryService QueryService
-@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Options
 @inject NavigationManager Navigation
 
 <div class="page-header">
@@ -49,6 +49,12 @@
     </label>
 </div>
 
+@if (_filterError is not null)
+{
+    @* Non-blocking on purpose: the filters are degraded, the list below is not. *@
+    <p class="filter-error" role="status">The job filter could not be loaded: @_filterError</p>
+}
+
 @* Stated once here rather than suffixed onto fifty rows. Worth stating at all: before the browser's
    zone is known these are UTC, and a reader must never have to guess which they are looking at. *@
 <p class="timezone-note">Times shown in @_clock.Label</p>
@@ -82,7 +88,13 @@ else
                rather than rebuilding the tbody. *@
             @foreach (var execution in _page.Items)
             {
-                <tr @key="execution.Id" class="execution-row" @onclick="() => GoToDetail(execution.Id)">
+                @* The whole row is clickable as a mouse convenience, so it needs a keyboard equivalent
+                   too — otherwise the affordance exists for pointer users only. The link in the first
+                   cell is what Tab and screen readers already follow, so the row stays out of the tab
+                   order; Enter is handled for anyone focusing it by other means. *@
+                <tr @key="execution.Id" class="execution-row"
+                    @onclick="() => GoToDetail(execution.Id)"
+                    @onkeydown="args => OnRowKeyDown(args, execution.Id)">
                     <td>
                         @* A real link, not just the row's @onclick: it works during prerender before
                            the circuit exists, is reachable by keyboard and screen readers, and
@@ -91,7 +103,7 @@ else
                         <a href="@DetailUrl(execution.Id)" @onclick:stopPropagation="true">@execution.JobName</a>
                     </td>
                     <td>
-                        <span class="status-badge" style="background-color:@ExecutionStatusStyles.HexColor(execution.Status)">
+                        <span class="status-badge @ExecutionStatusStyles.CssClass(execution.Status)">
                             @ExecutionStatusStyles.Label(execution.Status)
                         </span>
                     </td>
@@ -136,8 +148,21 @@ else
     private ExecutionCursor? _cursor;
     private bool _isLoading;
 
+    /// <summary>Navigates on Enter, so the row's click affordance is not pointer-only.</summary>
+    private void OnRowKeyDown(KeyboardEventArgs args, long executionId)
+    {
+        if (args.Key is "Enter")
+            GoToDetail(executionId);
+    }
+
     /// <summary>Set when a read failed, so the page can say so instead of faulting the circuit.</summary>
     private string? _loadError;
+
+    /// <summary>
+    /// Set when only the job-name dropdown failed. Separate from <see cref="_loadError"/> because it is
+    /// not fatal to the page: the list is what the reader came for and it may well have loaded.
+    /// </summary>
+    private string? _filterError;
 
     private bool HasFilter => !string.IsNullOrEmpty(_jobNameFilter) || !string.IsNullOrEmpty(_statusFilter);
 
@@ -151,9 +176,12 @@ else
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Only the filter dropdown; the list itself may still load.
+            // Only the filter dropdown; the list itself may still load — so this is its own field.
+            // Setting _loadError here used to short-circuit the whole table, inverting the intent of
+            // this very comment: a dropdown that failed replaced an execution list that had loaded
+            // perfectly well with "Could not read the execution history".
             _jobNames = [];
-            _loadError = ex.Message;
+            _filterError = ex.Message;
         }
 
         await LoadPageAsync();
@@ -197,7 +225,14 @@ else
         {
             var filter = new ExecutionFilter(
                 JobName: string.IsNullOrEmpty(_jobNameFilter) ? null : _jobNameFilter,
-                Status: Enum.TryParse<ExecutionStatus>(_statusFilter, out var status) ? status : null);
+                // IsDefined as well as TryParse: TryParse happily accepts "999" off the wire and
+                // yields (ExecutionStatus)999, which then matches nothing and renders a permanently
+                // empty list. Harmless as a read, but the retention dropdown got an explicit
+                // offered-value check for exactly this and this did not.
+                Status: Enum.TryParse<ExecutionStatus>(_statusFilter, out var status)
+                    && Enum.IsDefined(status)
+                        ? status
+                        : null);
 
             _page = await QueryService.GetExecutionsAsync(filter, _cursor, Options.Value.PageSize, _disposalCts.Token);
         }
@@ -229,9 +264,14 @@ else
     private void GoToDetail(long executionId) =>
         Navigation.NavigateTo(DetailUrl(executionId), forceLoad: true);
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _disposalCts.Cancel();
+        // CancelAsync, and awaited, before disposing. Cancel() followed immediately by Dispose() tore
+        // the source down while an in-flight query still held its token, so the cancellation callbacks
+        // ran against a disposed source — benign here only because nothing observes the resulting
+        // ObjectDisposedException. IAsyncDisposable is the honest interface for a component that owns
+        // async work.
+        await _disposalCts.CancelAsync();
         _disposalCts.Dispose();
     }
 }

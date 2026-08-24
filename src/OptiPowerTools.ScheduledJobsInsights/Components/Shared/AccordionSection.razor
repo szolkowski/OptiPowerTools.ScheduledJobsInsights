@@ -7,11 +7,14 @@
    screen-reader behaviour comes for free; and there is no component state, so the detail page's
    two-second poll cannot collapse a section the user just opened.
 
-   Open is only the *initial* state. Blazor renders the open attribute once and, because the value
-   never changes between renders, the diff never touches it again — so a section the user toggles by
-   hand keeps its state across every subsequent re-render. *@
+   Open is only the *initial* state, and this component now enforces that rather than trusting it: the
+   value is captured once in OnInitialized and the attribute is bound to the captured copy. Bound
+   straight to the parameter, a caller whose value changed between renders would have the attribute
+   patched and the section collapsed under the reader mid-sentence — which is exactly what a job
+   checkpointing with FlushSummary does to its own summary as it grows. The detail page used to carry
+   a latch of its own to avoid that; the hazard belongs here, where it cannot be forgotten. *@
 
-<details class="accordion" open="@Open">
+<details class="accordion" open="@_initiallyOpen">
     <summary class="accordion-summary">
         <span class="accordion-title">@Title</span>
         @if (!string.IsNullOrEmpty(Badge))
@@ -33,11 +36,22 @@
     [Parameter]
     public string? Badge { get; set; }
 
-    /// <summary>Whether the section starts expanded. Defaults to collapsed.</summary>
+    /// <summary>
+    /// Whether the section starts expanded. Defaults to collapsed. Read once, when the component is
+    /// first initialised: later changes are ignored on purpose, so a re-render cannot collapse a
+    /// section the reader has opened.
+    /// </summary>
     [Parameter]
     public bool Open { get; set; }
 
     /// <summary>The section's content, rendered only once expanded.</summary>
     [Parameter]
     public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// <see cref="Open"/> as it was on first initialisation — what the attribute actually binds to.
+    /// </summary>
+    private bool _initiallyOpen;
+
+    protected override void OnInitialized() => _initiallyOpen = Open;
 }

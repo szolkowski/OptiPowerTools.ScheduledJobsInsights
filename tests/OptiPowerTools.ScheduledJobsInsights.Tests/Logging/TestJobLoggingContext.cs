@@ -1,7 +1,5 @@
 using EPiServer.DataAbstraction;
-using Microsoft.Extensions.Options;
 using NSubstitute;
-using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Logging;
@@ -22,16 +20,18 @@ internal static class TestJobLoggingContext
     /// <see cref="JobResultSummary.DefaultMaxLength"/>.
     /// </param>
     /// <param name="timeProvider">Clock; the system clock when not supplied.</param>
+    /// <remarks>
+    /// Delegates to the public <see cref="JobLoggingContext.ForWriter"/> rather than the internal
+    /// constructor, so the factory a consumer will actually use is the one the suite exercises.
+    /// </remarks>
     public static JobLoggingContext For(
         IJobExecutionWriter writer,
         IScheduledJobRepository? scheduledJobRepository = null,
         int maxResultSummaryLength = 0,
         TimeProvider? timeProvider = null) =>
-        new(writer,
+        JobLoggingContext.ForWriter(
+            writer,
             scheduledJobRepository ?? Substitute.For<IScheduledJobRepository>(),
-            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
-            {
-                MaxResultSummaryLength = maxResultSummaryLength
-            }),
-            timeProvider ?? TimeProvider.System);
+            maxResultSummaryLength,
+            timeProvider);
 }

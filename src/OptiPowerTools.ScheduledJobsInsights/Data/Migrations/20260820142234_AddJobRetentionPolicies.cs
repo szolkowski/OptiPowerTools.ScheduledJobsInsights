@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
 {
     /// <inheritdoc />
-    public partial class AddJobRetentionPolicies : Migration
+    internal partial class AddJobRetentionPolicies : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

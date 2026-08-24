@@ -4,10 +4,15 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <!-- Only audit direct dependencies; transitive vulns from EPiServer are outside our control -->
-    <NuGetAuditMode>direct</NuGetAuditMode>
-    <!-- NU1608: Castle.Core version conflict between NSubstitute 5.x and EPiServer (known, harmless) -->
-    <NoWarn>NU1608</NoWarn>
+    <!-- Audit everything, including transitives. `direct` was hiding a real advisory: we cannot patch
+         a package EPiServer pulls in, but we can know about it, and a consumer's own restore audits at
+         the default `all` and will report it against us. So the mode stays at the default and each
+         known-and-accepted advisory is suppressed by id, with a date, so the suppression is visible
+         and expires under review rather than silently covering every future CVE.
+
+         NU1902: MailKit 4.15.1 (moderate) via EPiServer — https://github.com/advisories/GHSA-9j88-vvj5-vhgr
+                 Accepted 2026-08-24. Recheck when EPiServer ships a build that moves off it. -->
+    <NoWarn>NU1902</NoWarn>
   </PropertyGroup>
 
   <!-- Deterministic output on CI, so a package can be rebuilt from its tag and compared byte for

@@ -45,7 +45,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     public JobExecutionWriter(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
         Channel<JobRecord> channel,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         ILogger<JobExecutionWriter> logger)
     {
         _dbContextFactory = dbContextFactory;
@@ -60,7 +60,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         var configuredLogLength = options.Value.MaxLogMessageLength;
         _maxLogMessageLength = configuredLogLength > 0
             ? configuredLogLength
-            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogMessageLength;
+            : OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogMessageLength;
     }
 
     public long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)
@@ -96,9 +96,18 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
 
     public void Complete(long executionId, ExecutionStatus outcome, string? resultMessage, Exception? exception)
     {
-        // Running is not a completion. Recording it would leave the row looking unfinished forever,
-        // so an out-of-range caller is treated as a failure rather than silently stranding the run.
-        var status = outcome is ExecutionStatus.Succeeded or ExecutionStatus.Failed or ExecutionStatus.Stopped
+        // Running is not a completion. Recording it would leave the row looking unfinished forever, so
+        // an out-of-range caller is treated as a failure rather than silently stranding the run.
+        //
+        // Interrupted is accepted, unlike before: it is a legitimate terminal state, it is a documented
+        // member of a public enum on a public interface, and a caller recording an execution of their
+        // own — which this interface exists to allow — has as much right to say "the process vanished"
+        // as the cleanup job's own sweep does. Silently rewriting it to Failed lost that distinction
+        // and reported a fault where none was known.
+        var status = outcome is ExecutionStatus.Succeeded
+            or ExecutionStatus.Failed
+            or ExecutionStatus.Stopped
+            or ExecutionStatus.Interrupted
             ? outcome
             : ExecutionStatus.Failed;
 
@@ -112,10 +121,19 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
                 .SetProperty(e => e.ExceptionStackTrace, exception != null ? exception.StackTrace : null)));
     }
 
-    public void SetInputData(long executionId, string inputDataJson) =>
+    public void SetInputData(long executionId, string inputDataJson)
+    {
+        // Bounded like every other unbounded column here. This one was not, and it is the widest of
+        // them: LogInputData serialises an arbitrary object graph, so a job describing a large payload
+        // writes it whole — and the detail page reads it back into a Blazor circuit. Reuses the
+        // summary's bound rather than adding an option nobody would know to set; input data is not
+        // rendered for reading, so the same ceiling is generous for it.
+        var bounded = Truncate(inputDataJson, _maxResultSummaryLength);
+
         Write(executionId, nameof(SetInputData), dbContext => dbContext.JobExecutions
             .Where(e => e.Id == executionId)
-            .ExecuteUpdate(setters => setters.SetProperty(e => e.InputDataJson, inputDataJson)));
+            .ExecuteUpdate(setters => setters.SetProperty(e => e.InputDataJson, bounded)));
+    }
 
     public void SetResultSummary(long executionId, string summary)
     {
@@ -131,8 +149,35 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     /// <summary>
     /// Truncates a value to fit its column, marking it so a reader can tell it was cut.
     /// </summary>
-    private static string Clamp(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..(maxLength - Ellipsis.Length)] + Ellipsis;
+    /// <remarks>
+    /// <para>
+    /// Tolerates a null: this runs on <see cref="Log"/> and <see cref="RecordMetric"/>, whose whole
+    /// contract is that they never throw into a running job. It used to dereference the value before
+    /// the guarded region, so a null message — reachable from an untyped caller, or from
+    /// <c>OnStatusChanged(null)</c> — raised a <see cref="NullReferenceException"/> out of an
+    /// interface documented as never throwing.
+    /// </para>
+    /// <para>
+    /// Surrogate-safe, like <see cref="Truncate"/>: cutting between a high and low surrogate stores
+    /// half a code point, which renders as a replacement glyph. The two used to disagree about this,
+    /// in the same file.
+    /// </para>
+    /// </remarks>
+    private static string Clamp(string? value, int maxLength)
+    {
+        if (value is null)
+            return string.Empty;
+
+        if (value.Length <= maxLength)
+            return value;
+
+        var budget = Math.Max(1, maxLength - Ellipsis.Length);
+
+        if (budget < value.Length && char.IsHighSurrogate(value[budget - 1]))
+            budget--;
+
+        return value[..budget] + Ellipsis;
+    }
 
     /// <summary>
     /// Bounds a summary written directly through <see cref="SetResultSummary"/>, which

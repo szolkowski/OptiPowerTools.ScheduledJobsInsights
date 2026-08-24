@@ -25,9 +25,26 @@ env:
   MSSQL_SA_PASSWORD: Episerver123!
   SQLSERVER_IMAGE: mcr.microsoft.com/mssql/server:2022-latest
 
+# One publish at a time, and never cancelled part-way: a run that has already pushed to nuget.org
+# cannot be undone, so the second tag waits rather than racing it. Without this, two tags a minute
+# apart both minted OIDC keys and raced `dotnet nuget push`, where --skip-duplicate made the loser
+# silently succeed.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+
+    # Bounded, because everything here waits on something external — SQL Server coming up, two tool
+    # installs, an OIDC exchange. Unbounded, a wedged step burns to GitHub's 6-hour default on the
+    # maintainer's own Actions minutes.
+    timeout-minutes: 30
+
+    # This repository only. A fork that tags a release would otherwise start a publish it cannot
+    # finish, failing at the OIDC exchange with an error that looks like a broken pipeline.
+    if: github.repository == 'szolkowski/OptiPowerTools.ScheduledJobsInsights'
 
     permissions:
       # Trusted Publishing: GitHub mints a short-lived OIDC token, nuget.org validates it against the
@@ -48,14 +65,19 @@ jobs:
           - 1433:1433
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
+          # Restores from cache rather than re-downloading the whole graph every run. Also removes a
+          # hard dependency on nuget.org being reachable at release time, which previously could fail a
+          # publish *after* tests and pack had already succeeded.
+          cache: true
+          cache-dependency-path: '**/*.csproj'
 
       # Every ${{ … }} that reaches a shell arrives through env rather than being pasted into the
       # script text. inputs.version is supplied by whoever dispatches the workflow, and expanding it
@@ -85,6 +107,16 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # What the README's absolute links are pinned to. A real tag push pins to the tag; a dry run
+          # has no tag, so it pins to the commit, which raw.githubusercontent resolves just as well and
+          # which keeps the dry run's package a faithful rehearsal.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "tag=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "Version $VERSION"
 
       # A tag can point at any commit, including one that never passed CI — build.yml runs on
@@ -92,6 +124,39 @@ jobs:
       # reaching a feed that cannot be unpublished.
       - name: Test
         run: dotnet test "$TESTS" -c Release
+
+      # nuget.org renders the packed README on its own, with no repository around it: a relative
+      # `images/...` path resolves to nothing and every screenshot becomes a broken-image icon, on the
+      # one page most people will ever see. The images are not in the package either — only the icon
+      # is — so the links have to be absolute.
+      #
+      # Rewritten here rather than committed absolute, so the in-repo README keeps working on GitHub
+      # and stays diffable. Pinned to the tag, never to a branch: a screenshot changed later must not
+      # retroactively alter the page of a version already shipped.
+      - name: Make README links absolute for nuget.org
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          RAW="https://raw.githubusercontent.com/$REPO/$TAG"
+          BLOB="https://github.com/$REPO/blob/$TAG"
+
+          # GNU sed, so bare -i is correct (on BSD/macOS it would need an explicit ''). Verified by
+          # running these three substitutions against the real README before this was committed.
+          sed -i "s|](images/|]($RAW/images/|g" README.md
+          sed -i "s|](LICENSE.txt)|]($BLOB/LICENSE.txt)|g" README.md
+          sed -i "s|](CONTRIBUTING.md)|]($BLOB/CONTRIBUTING.md)|g" README.md
+          sed -i "s|](CHANGELOG.md)|]($BLOB/CHANGELOG.md)|g" README.md
+
+          echo "Rewritten link targets:"
+          grep -nE "!\[|\]\(https://github.com/$REPO/blob/" README.md || true
+
+          # Fail loudly rather than shipping a page with a broken image on it.
+          if grep -qE "\]\((images/|LICENSE\.txt\)|CONTRIBUTING\.md\)|CHANGELOG\.md\))" README.md; then
+            echo "::error::A relative link survived the rewrite; it would render broken on nuget.org."
+            exit 1
+          fi
 
       - name: Pack
         env:
@@ -108,7 +173,9 @@ jobs:
           # A globally installed tool is not on PATH in a fresh shell; without this `dotnet ef` below
           # is "command not found". build.yml does the same.
           export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet tool install --global dotnet-ef
+          # Pinned: an unpinned tool install lets a tool release change release-pipeline behaviour
+          # between two runs of the same tag.
+          dotnet tool install --global dotnet-ef --version 10.0.2
 
           SCRIPT="./nupkg/scheduled-jobs-insights-$VERSION.sql"
           dotnet ef migrations script --idempotent \
@@ -207,10 +274,22 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE="--prerelease"
           fi
-          gh release create "$TAG" \
-            ./nupkg/*.nupkg \
-            ./nupkg/*.snupkg \
-            ./nupkg/*.sql \
-            --title "$TAG" \
-            --generate-notes \
-            $PRERELEASE
+          # Idempotent, so re-running a publish that failed after the push is not a red step. The push
+          # above already tolerates a duplicate (--skip-duplicate); this is the same reasoning applied
+          # to the release, which otherwise errors because the tag already has one.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading assets to it instead."
+            gh release upload "$TAG" \
+              ./nupkg/*.nupkg \
+              ./nupkg/*.snupkg \
+              ./nupkg/*.sql \
+              --clobber
+          else
+            gh release create "$TAG" \
+              ./nupkg/*.nupkg \
+              ./nupkg/*.snupkg \
+              ./nupkg/*.sql \
+              --title "$TAG" \
+              --generate-notes \
+              $PRERELEASE
+          fi

@@ -48,8 +48,8 @@ public class LoggedScheduledJobBaseTests
         job.Execute();
 
         writer.Received(1).RecordMetric(1L, JobMetricNames.DurationMs, Arg.Any<double>(), "ms");
-        writer.Received(1).RecordMetric(1L, JobMetricNames.AllocatedBytes, Arg.Any<double>(), "bytes");
-        writer.Received(1).RecordMetric(1L, JobMetricNames.CpuTimeMs, Arg.Any<double>(), "ms");
+        writer.Received(1).RecordMetric(1L, JobMetricNames.ThreadAllocatedBytes, Arg.Any<double>(), "bytes");
+        writer.Received(1).RecordMetric(1L, JobMetricNames.ProcessCpuTimeMs, Arg.Any<double>(), "ms");
         writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen0Collections, Arg.Any<double>(), null);
         // All three generations: asserting only Gen0 let the Gen1/Gen2 lines be deleted silently.
         writer.Received(1).RecordMetric(1L, JobMetricNames.GcGen1Collections, Arg.Any<double>(), null);
@@ -329,6 +329,132 @@ public class LoggedScheduledJobBaseTests
         new UnserializableInputJob(writer).Execute();
 
         writer.Received(1).SetInputData(53L, Arg.Is<string>(json => json.Contains("InputDataUnavailable")));
+    }
+
+    [Fact]
+    public void LogInputData_WhenAPropertyGetterThrows_DoesNotThrowIntoTheJob()
+    {
+        // The case a filtered catch missed: System.Text.Json wraps its own failures, but propagates
+        // whatever a getter throws. A disposed lazy-loading proxy is the everyday shape of this, and
+        // it used to escape LogInputData, escape ExecuteJob, and be reported as the job's failure.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(55L);
+        var job = new ThrowingGetterInputJob(writer);
+
+        var result = job.Execute();
+
+        Assert.Equal("done", result);
+        writer.Received(1).Complete(55L, ExecutionStatus.Succeeded, Arg.Any<string>(), null);
+        writer.Received(1).SetInputData(55L, Arg.Is<string>(json => json.Contains("InputDataUnavailable")));
+    }
+
+    [Fact]
+    public void LogInputData_WhenTheExceptionMessageAlsoThrows_RecordsTheTypeName()
+    {
+        // Exception.Message is overridable, so describing the failure can fail too. The type name is
+        // the one thing that cannot throw.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(56L);
+
+        var result = new HostileGetterInputJob(writer).Execute();
+
+        Assert.Equal("done", result);
+        writer.Received(1).SetInputData(56L, Arg.Is<string>(json => json.Contains(nameof(HostileException))));
+    }
+
+    [Fact]
+    public void Stop_IsSealed_SoTheBookkeepingCannotBeSkipped()
+    {
+        // The reason it is sealed: an override that forgot base.Stop() lost IsStopRequested and
+        // StopToken silently, and a run cut short was then recorded as Succeeded.
+        var stop = typeof(LoggedScheduledJobBase).GetMethod(nameof(LoggedScheduledJobBase.Stop));
+
+        Assert.NotNull(stop);
+        Assert.True(stop.IsFinal, "Stop() must stay sealed; override OnStopRequested instead.");
+    }
+
+    [Fact]
+    public void OnStopRequested_RunsAfterTheStopIsAlreadyRecorded()
+    {
+        // Ordering is the contract: by the time a job's own handler runs, the stop is registered and
+        // the token cancelled, so the handler cannot change the recorded outcome.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(57L);
+        var job = new StopSeamJob(writer);
+
+        job.Execute();
+
+        Assert.True(job.SeamCalled);
+        Assert.True(job.StopWasAlreadyRecorded);
+        writer.Received(1).Complete(57L, ExecutionStatus.Stopped, Arg.Any<string>(), null);
+    }
+
+    [Fact]
+    public void OnStopRequested_Throwing_DoesNotLoseTheStopOrEscapeIntoTheCms()
+    {
+        // Stop() is called by the CMS, not by the job, so a careless handler must not throw there —
+        // and the run must still be recorded as stopped rather than as a success.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(58L);
+        var job = new StopSeamJob(writer) { SeamThrows = true };
+
+        Assert.Null(Record.Exception(() => job.Execute()));
+
+        writer.Received(1).Complete(58L, ExecutionStatus.Stopped, Arg.Any<string>(), null);
+        writer.Received().Log(58L, Arg.Any<int>(), LogSeverity.Warning,
+            Arg.Is<string>(m => m.Contains("OnStopRequested")), Arg.Any<LogEntrySource>());
+    }
+
+    [Fact]
+    public void Execute_WhenCompletingASuccessfulRunThrows_StillReturnsTheResult()
+    {
+        // The inversion this package exists to prevent, on the one path that was unguarded: a writer
+        // failing at Complete() used to send its own exception through the catch below, which recorded
+        // the run as Failed, re-ran the metrics, and rethrew — reporting a successful job as failed.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(60L);
+        writer.When(w => w.Complete(60L, ExecutionStatus.Succeeded, Arg.Any<string>(), null))
+            .Do(_ => throw new InvalidOperationException("sink exploded on complete"));
+        var job = new TestLoggedJob(writer) { ResultToReturn = "fine" };
+
+        var result = job.Execute();
+
+        Assert.Equal("fine", result);
+        writer.DidNotReceive().Complete(60L, ExecutionStatus.Failed, Arg.Any<string>(), Arg.Any<Exception>());
+    }
+
+    [Fact]
+    public void Execute_WhenAStoppedRunAlsoThrows_IsRecordedAsFailed()
+    {
+        // The history must not disagree with the CMS. Optimizely sets HasLastExecutionFailed from the
+        // rethrown exception and knows nothing about the stop, so recording Stopped-with-a-stack-trace
+        // showed a failed run as merely stopped in one place and failed in the other.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(61L);
+        var thrown = new InvalidOperationException("unrelated boom");
+        var job = new TestLoggedJob(writer) { StopMidRun = true, ExceptionToThrow = thrown };
+
+        Assert.Throws<InvalidOperationException>(() => job.Execute());
+
+        writer.Received(1).Complete(61L, ExecutionStatus.Failed, null, thrown);
+    }
+
+    [Fact]
+    public void Execute_WhenAStoppedRunHonoursTheTokenByThrowing_IsStillRecordedAsStopped()
+    {
+        // The other side of the same rule: OperationCanceledException is the stop working, not the job
+        // breaking, so it stays Stopped.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(62L);
+        var job = new TestLoggedJob(writer)
+        {
+            StopMidRun = true,
+            ExceptionToThrow = new OperationCanceledException("stopping")
+        };
+
+        Assert.Throws<OperationCanceledException>(() => job.Execute());
+
+        writer.Received(1).Complete(62L, ExecutionStatus.Stopped, null, Arg.Any<Exception>());
     }
 
     [Fact]

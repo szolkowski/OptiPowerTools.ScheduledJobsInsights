@@ -31,6 +31,10 @@
 }
 
 .status-badge {
+    /* Colour comes from the sji-status-* class alongside this one — see the palette in
+       wwwroot/css/scheduled-jobs-insights.css. The fallback covers a host that serves the
+       component CSS without the package stylesheet. */
+    background-color: var(--sji-status-color, #4FC3F7);
     color: #10151c;
     border-radius: 999px;
     padding: 0.15rem 0.6rem;
@@ -67,4 +71,11 @@
     /* Shown when the insights database cannot be read — an accepted state for this package, but one
        the reader should see as a message rather than as a dead circuit. */
     color: #EF5350;
+}
+
+.filter-error {
+    /* Degraded, not broken: only the job dropdown failed to load, and the list below it is fine.
+       Deliberately quieter than .load-error, which means the page has nothing to show. */
+    font-size: 0.85rem;
+    opacity: 0.8;
 }

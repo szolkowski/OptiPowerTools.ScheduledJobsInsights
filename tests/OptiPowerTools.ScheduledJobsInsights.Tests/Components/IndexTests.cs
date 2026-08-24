@@ -226,4 +226,56 @@ public class IndexTests : ComponentTestBase
         Assert.Equal("/custom/insights?view=retention", page.Find("a.action-link").GetAttribute("href"));
     }
 
+
+    [Fact]
+    public void AFailedJobFilter_StillShowsTheExecutionList()
+    {
+        // The bug this pins: the catch around GetDistinctJobNamesAsync set _loadError, and the render
+        // guard on _loadError short-circuited the whole table — so a dropdown failure replaced a list
+        // that had loaded perfectly well with "Could not read the execution history".
+        QueryService.GetDistinctJobNamesAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<string>>>(_ => throw new InvalidOperationException("dropdown died"));
+        GivenPage(ARow(id: 5, jobName: "Nightly Import"));
+
+        var page = RenderList();
+
+        Assert.Single(page.FindAll("table.executions-table"));
+        Assert.Contains("Nightly Import", page.Find("table.executions-table").TextContent);
+        Assert.Contains("dropdown died", page.Find(".filter-error").TextContent);
+        Assert.Empty(page.FindAll(".load-error"));
+    }
+
+    [Fact]
+    public void AFailedExecutionRead_IsStillFatalToTheList()
+    {
+        // The other half of the same decision: when the list itself cannot be read there is nothing
+        // to show, and that must stay a load error rather than a quiet notice.
+        QueryService.GetExecutionsAsync(
+                Arg.Any<ExecutionFilter>(), Arg.Any<ExecutionCursor?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<Task<ExecutionPage>>(_ => throw new InvalidOperationException("history unreadable"));
+
+        var page = RenderList();
+
+        Assert.Contains("history unreadable", page.Find(".load-error").TextContent);
+        Assert.Empty(page.FindAll("table.executions-table"));
+    }
+
+    [Theory]
+    [InlineData(ExecutionStatus.Succeeded, "sji-status-succeeded")]
+    [InlineData(ExecutionStatus.Failed, "sji-status-failed")]
+    [InlineData(ExecutionStatus.Stopped, "sji-status-stopped")]
+    [InlineData(ExecutionStatus.Interrupted, "sji-status-interrupted")]
+    [InlineData(ExecutionStatus.Running, "sji-status-running")]
+    public void AStatusBadge_CarriesItsColourAsAClass_NotAnInlineStyle(ExecutionStatus status, string expectedClass)
+    {
+        // An inline style attribute is dropped outright by a CMS served under a style-src policy
+        // without 'unsafe-inline' — the normal case for a back office — which left every badge
+        // unpainted with nothing to indicate why.
+        GivenPage(ARow(status: status));
+
+        var badge = RenderList().Find(".status-badge");
+
+        Assert.Contains(expectedClass, badge.GetAttribute("class"), StringComparison.Ordinal);
+        Assert.Null(badge.GetAttribute("style"));
+    }
 }

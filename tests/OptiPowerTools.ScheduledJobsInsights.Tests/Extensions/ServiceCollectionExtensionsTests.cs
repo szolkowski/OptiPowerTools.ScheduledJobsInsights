@@ -14,32 +14,32 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Extensions;
 public class ServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddOptiPowerToolScheduledJobsInsights_RegistersOptionsAndMenuProvider()
+    public void AddOptiPowerToolsScheduledJobsInsights_RegistersOptionsAndMenuProvider()
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
 
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.PageTitle = "Custom Title";
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;";
         });
 
         var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+        var options = provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
 
         Assert.Equal("Custom Title", options.PageTitle);
         Assert.NotNull(provider.GetRequiredService<ScheduledJobsInsightsMenuProvider>());
     }
 
     /// <summary>A collection with the package registered and nothing else of interest.</summary>
-    private static ServiceCollection Registered(Action<OptiPowerToolScheduledJobsInsightsOptions>? configure = null)
+    private static ServiceCollection Registered(Action<OptiPowerToolsScheduledJobsInsightsOptions>? configure = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;";
             configure?.Invoke(options);
@@ -51,7 +51,7 @@ public class ServiceCollectionExtensionsTests
         services.Single(descriptor => descriptor.ServiceType == typeof(TService)).Lifetime;
 
     [Fact]
-    public void AddOptiPowerToolScheduledJobsInsights_RegistersDataAndLoggingServices()
+    public void AddOptiPowerToolsScheduledJobsInsights_RegistersDataAndLoggingServices()
     {
         var provider = Registered().BuildServiceProvider();
 
@@ -87,7 +87,7 @@ public class ServiceCollectionExtensionsTests
         // Plausible with a shared bootstrap library plus Program.cs. Two writers would drain one
         // channel created with SingleReader = true, whose behaviour is undefined.
         var services = Registered();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;");
 
         var provider = services.BuildServiceProvider();
@@ -96,18 +96,22 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void RegisteringTwice_KeepsTheFirstCallsOptions()
+    public void RegisteringTwice_LetsTheLaterCallConfigure()
     {
-        // A second call is a no-op in full: it must not silently re-apply defaults over the values
-        // the first one set.
+        // Reversed deliberately. This used to assert that the second call's options were discarded,
+        // which encoded the defect rather than a decision: a consumer configuring the package after a
+        // shared library had already made a bare call got no configuration and no error. The guard is
+        // there to stop a second background writer draining a single-reader channel — which
+        // RegisteringTwice_RegistersOneBackgroundWriter still pins — not to ignore the caller.
+        // Configure is additive and ordered, so the later call has the last word.
         var services = Registered(options => options.PageTitle = "From the first call");
-        services.AddOptiPowerToolScheduledJobsInsights(options => options.PageTitle = "From the second");
+        services.AddOptiPowerToolsScheduledJobsInsights(options => options.PageTitle = "From the second");
 
         var provider = services.BuildServiceProvider();
 
         Assert.Equal(
-            "From the first call",
-            provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value.PageTitle);
+            "From the second",
+            provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value.PageTitle);
     }
 
     [Fact]
@@ -118,7 +122,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = string.Empty;
             options.LogBatchSize = 0;
@@ -131,5 +135,74 @@ public class ServiceCollectionExtensionsTests
 
         Assert.Contains("ConnectionString", exception.Message, StringComparison.Ordinal);
         Assert.Contains("LogBatchSize", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ByDefault_BlazorServerServicesAreRegistered()
+    {
+        var services = Registered();
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void WithAddBlazorServicesFalse_TheHostsOwnBlazorRegistrationsAreLeftAlone()
+    {
+        // The service-side counterpart to MapBlazorHub. AddServerSideBlazor grafts circuit services
+        // into what may be a Blazor Web App, and AddCascadingAuthenticationState registers a provider
+        // for the whole application — neither is this package's to decide for a host that has already
+        // chosen.
+        var services = Registered(options => options.AddBlazorServices = false);
+
+        Assert.DoesNotContain(services, IsBlazorServerRegistration);
+        Assert.DoesNotContain(services, IsCascadingAuthenticationStateRegistration);
+    }
+
+    [Fact]
+    public void WithAddBlazorServicesFalse_EverythingElseIsStillRegistered()
+    {
+        // The opt-out is about Blazor's own services, not about the package.
+        var services = Registered(options => options.AddBlazorServices = false);
+
+        Assert.Contains(services, d => d.ServiceType == typeof(IJobExecutionWriter));
+        Assert.Contains(services, d => d.ServiceType == typeof(ICleanupRepository));
+    }
+
+    /// <summary>
+    /// Whether a descriptor came from <c>AddServerSideBlazor</c>. Matched by name because the circuit
+    /// types are internal to ASP.NET Core, and <c>CircuitOptions</c> itself is never a service type —
+    /// it arrives through <c>IConfigureOptions</c>.
+    /// </summary>
+    private static bool IsBlazorServerRegistration(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType.FullName?.Contains("Circuit", StringComparison.Ordinal) == true
+        || descriptor.ImplementationType?.FullName?.Contains("Circuit", StringComparison.Ordinal) == true;
+
+    /// <summary>Whether a descriptor came from <c>AddCascadingAuthenticationState</c>.</summary>
+    private static bool IsCascadingAuthenticationStateRegistration(ServiceDescriptor descriptor) =>
+        descriptor.ImplementationType?.FullName?.Contains("CascadingAuthenticationState", StringComparison.Ordinal) == true;
+
+    [Fact]
+    public void ASecondCall_DoesNotUndoTheFirstCallsOtherValues()
+    {
+        // Additive, not replacing: the later call sets what it names and leaves the rest alone.
+        var services = Registered(options => options.ConnectionString = "first");
+        services.AddOptiPowerToolsScheduledJobsInsights(options => options.PageTitle = "Second Call");
+
+        var resolved = services.BuildServiceProvider()
+            .GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
+
+        Assert.Equal("Second Call", resolved.PageTitle);
+        Assert.Equal("first", resolved.ConnectionString);
+    }
+
+    [Fact]
+    public void ASecondCall_StillRegistersOnlyOneBackgroundWriter()
+    {
+        // The half the guard is actually for: two writers draining a channel created with
+        // SingleReader = true is undefined behaviour.
+        var services = Registered();
+        services.AddOptiPowerToolsScheduledJobsInsights(_ => { });
+
+        Assert.Single(services, d => d.ImplementationType == typeof(JobLogBackgroundWriter));
     }
 }

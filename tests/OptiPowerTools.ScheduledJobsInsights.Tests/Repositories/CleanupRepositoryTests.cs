@@ -32,6 +32,82 @@ public class CleanupRepositoryTests
     }
 
     [Fact]
+    public void DeleteExecutionsOlderThan_LeavesARunningExecutionAlone_HoweverOld()
+    {
+        // A job can legitimately run for longer than its own retention: a 25-hour import under a
+        // one-day rule. Deleting the row underneath it loses that run's history entirely — the
+        // still-buffered log lines then violate the foreign key, poisoning the batch they travel in.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "StillRunning", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Running, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Finished", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Succeeded, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
+
+        Assert.Equal(1, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        var remaining = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal("StillRunning", remaining.JobName);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_ForOneJobType_LeavesARunningExecutionAlone()
+    {
+        // The per-job-type overload is the one a short explicit retention actually goes through, so
+        // it is the more likely of the two to meet a run that outlives its own rule.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "StillRunning", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Running, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Finished", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Failed, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan("Slow", cutoff, batchSize: 100);
+
+        Assert.Equal(1, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        var remaining = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal(ExecutionStatus.Running, remaining.Status);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_StillDeletesInterruptedAndStoppedExecutions()
+    {
+        // Only Running is protected. An interrupted or stopped run is finished — it will never be
+        // written to again — so retention must still be able to age it out, or a process that
+        // recycles regularly accumulates history nothing can ever remove.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Interrupted", JobTypeName = "T", StartedAt = cutoff.AddDays(-1), Status = ExecutionStatus.Interrupted, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Stopped", JobTypeName = "T", StartedAt = cutoff.AddDays(-1), Status = ExecutionStatus.Stopped, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
+
+        Assert.Equal(2, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        Assert.Empty(verifyContext.JobExecutions);
+    }
+
+    [Fact]
     public void DeleteExecutionsOlderThan_RespectsBatchSize()
     {
         using var factory = new SqliteDbContextFactory();
@@ -155,7 +231,7 @@ public class CleanupRepositoryTests
             ("Contoso.Jobs.StillGoing", cutoff.AddHours(1), ExecutionStatus.Running),   // unfinished but recent
             ("Contoso.Jobs.Finished", cutoff.AddHours(-1), ExecutionStatus.Succeeded)); // old but done
 
-        var marked = new CleanupRepository(factory).MarkInterruptedExecutions(cutoff);
+        var marked = new CleanupRepository(factory).MarkInterruptedExecutions(cutoff, batchSize: 100);
 
         Assert.Equal(1, marked);
         using var dbContext = factory.CreateDbContext();
@@ -173,7 +249,7 @@ public class CleanupRepositoryTests
         var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
         SeedWithStatus(factory, ("Contoso.Jobs.Abandoned", cutoff.AddHours(-1), ExecutionStatus.Running));
 
-        new CleanupRepository(factory).MarkInterruptedExecutions(cutoff);
+        new CleanupRepository(factory).MarkInterruptedExecutions(cutoff, batchSize: 100);
 
         using var dbContext = factory.CreateDbContext();
         Assert.Null(dbContext.JobExecutions.Single().CompletedAt);
@@ -216,5 +292,82 @@ public class CleanupRepositoryTests
             });
         }
         dbContext.SaveChanges();
+    }
+
+    [Fact]
+    public void MarkInterruptedExecutions_WorksInBatches()
+    {
+        // Unbounded, this held locks across JobExecutions for the length of one statement — which on a
+        // first sweep through a backlog blocks BeginExecution for every job that starts meanwhile.
+        // The loop must still resolve everything, one batch at a time.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            for (var i = 0; i < 7; i++)
+            {
+                dbContext.JobExecutions.Add(new JobExecution
+                {
+                    ScheduledJobId = Guid.NewGuid(),
+                    JobName = $"Stranded{i}",
+                    JobTypeName = "T",
+                    StartedAt = cutoff.AddDays(-2),
+                    Status = ExecutionStatus.Running,
+                    MachineName = "m"
+                });
+            }
+            dbContext.SaveChanges();
+        }
+
+        var marked = new CleanupRepository(factory).MarkInterruptedExecutions(cutoff, batchSize: 2);
+
+        Assert.Equal(7, marked);
+        using var verifyContext = factory.CreateDbContext();
+        Assert.Equal(7, verifyContext.JobExecutions.Count(e => e.Status == ExecutionStatus.Interrupted));
+        Assert.Empty(verifyContext.JobExecutions.Where(e => e.Status == ExecutionStatus.Running));
+    }
+
+    [Fact]
+    public void MarkInterruptedExecutions_StopsBetweenBatchesWhenCancelled()
+    {
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var marked = new CleanupRepository(factory).MarkInterruptedExecutions(cutoff, batchSize: 2, cts.Token);
+
+        Assert.Equal(0, marked);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_WithAHugeExclusionList_StillDeletesTheRest()
+    {
+        // Each excluded name is one SQL parameter, and SQL Server allows about 2,100 per statement.
+        // The list includes every job type present only in history, which grows without bound over an
+        // installation's lifetime — so past the limit the batch failed outright and the default sweep
+        // silently stopped working. Sqlite has its own (lower) variable limit, so this exercises the
+        // same switch.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Governed", JobTypeName = "Governed.Type", StartedAt = cutoff.AddDays(-2), Status = ExecutionStatus.Succeeded, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Sweepable", JobTypeName = "Sweepable.Type", StartedAt = cutoff.AddDays(-2), Status = ExecutionStatus.Succeeded, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        // Well past the inline threshold, and it genuinely excludes the governed type.
+        var excluded = Enumerable.Range(0, 900).Select(i => $"Filler.Type{i}").Append("Governed.Type").ToList();
+
+        var deleted = new CleanupRepository(factory).DeleteExecutionsOlderThan(cutoff, batchSize: 100, excluded);
+
+        Assert.Equal(1, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        var remaining = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal("Governed.Type", remaining.JobTypeName);
     }
 }

@@ -6,7 +6,6 @@ using DetailPage = OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 
-[Collection(DetailTestCollection.Name)]
 public class DetailTests : ComponentTestBase
 {
     private IRenderedComponent<DetailPage> RenderDetail(long id = 1, string? viewerTimeZone = null) =>
@@ -181,6 +180,52 @@ public class DetailTests : ComponentTestBase
     }
 
     [Fact]
+    public void ALogLongerThanTheBound_IsTruncatedAndSaysSo()
+    {
+        // The notice is the point. A truncated log read as a complete one is worse than no log at
+        // all: the lines that go missing are the tail, which is where a failure's cause usually is.
+        Options.MaxLogEntriesPerExecution = 2;
+        GivenExecution(AnExecution());
+        QueryService.GetLogEntriesAsync(1, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<JobLogEntry>>(
+            [
+                ALogLine(1), ALogLine(2), ALogLine(3), ALogLine(4)
+            ]));
+
+        var page = RenderDetail();
+
+        Assert.Equal(2, page.FindAll(".console-line").Count);
+        var notice = page.Find(".log-truncated");
+        Assert.Contains("Showing the first 2 lines", notice.TextContent);
+        Assert.Contains("MaxLogEntriesPerExecution", notice.TextContent);
+    }
+
+    [Fact]
+    public void ALogWithinTheBound_ShowsNoTruncationNotice()
+    {
+        Options.MaxLogEntriesPerExecution = 10;
+        GivenExecution(AnExecution());
+        QueryService.GetLogEntriesAsync(1, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<JobLogEntry>>([ALogLine(1), ALogLine(2)]));
+
+        var page = RenderDetail();
+
+        Assert.Equal(2, page.FindAll(".console-line").Count);
+        Assert.Empty(page.FindAll(".log-truncated"));
+    }
+
+    private static JobLogEntry ALogLine(int sequence) => new()
+    {
+        Id = sequence,
+        JobExecutionId = 1,
+        Sequence = sequence,
+        Timestamp = Noon,
+        Severity = LogSeverity.Info,
+        Source = LogEntrySource.DevLog,
+        Message = $"line {sequence}"
+    };
+
+    [Fact]
     public void LogLines_RenderWithTheirSeverityAndViewerLocalTime()
     {
         GivenExecution(AnExecution());
@@ -237,4 +282,27 @@ public class DetailTests : ComponentTestBase
         Assert.Equal("/custom/insights", RenderDetail().Find("a").GetAttribute("href"));
     }
 
+
+    [Fact]
+    public void ALogLine_CarriesItsSeverityAsAClass_NotAnInlineStyle()
+    {
+        // Same reason as the status badge: three inline style attributes per console line meant the
+        // whole log lost its severity colouring under any ordinary CSP.
+        GivenExecution(AnExecution());
+        QueryService.GetLogEntriesAsync(1, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<JobLogEntry>>(
+            [
+                new JobLogEntry
+                {
+                    Id = 1, JobExecutionId = 1, Sequence = 1, Timestamp = Noon,
+                    Severity = LogSeverity.Error, Source = LogEntrySource.DevLog, Message = "upstream 503"
+                }
+            ]));
+
+        var line = RenderDetail().Find(".console-line");
+
+        Assert.Contains("sji-sev-error", line.GetAttribute("class"), StringComparison.Ordinal);
+        Assert.Null(line.GetAttribute("style"));
+        Assert.Null(line.QuerySelector(".console-severity")!.GetAttribute("style"));
+    }
 }

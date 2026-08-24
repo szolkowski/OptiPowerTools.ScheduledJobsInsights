@@ -6,7 +6,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Data;
 
 /// <summary>
 /// EF Core context for the ScheduledJobsInsights schema. Applied via standard EF Core Migrations
-/// (see <c>Data/Migrations</c>), auto-applied at startup by <c>UseOptiPowerToolScheduledJobsInsights</c>
+/// (see <c>Data/Migrations</c>), auto-applied at startup by <c>UseOptiPowerToolsScheduledJobsInsights</c>
 /// when <c>AutoMigrateDatabase</c> is enabled.
 /// </summary>
 internal class ScheduledJobsInsightsDbContext : DbContext

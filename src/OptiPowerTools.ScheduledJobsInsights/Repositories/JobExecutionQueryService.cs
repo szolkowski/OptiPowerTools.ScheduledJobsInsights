@@ -47,7 +47,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
     public JobExecutionQueryService(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
         TimeProvider timeProvider,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions>? options = null)
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions>? options = null)
     {
         _dbContextFactory = dbContextFactory;
         _timeProvider = timeProvider;
@@ -55,7 +55,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
         var configured = options?.Value.MaxLogEntriesPerExecution ?? 0;
         _maxLogEntries = configured > 0
             ? configured
-            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution;
+            : OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution;
     }
 
     public async Task<ExecutionPage> GetExecutionsAsync(ExecutionFilter filter, ExecutionCursor? after, int pageSize, CancellationToken cancellationToken = default)
@@ -156,6 +156,24 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
         return await dbContext.JobExecutions
             .AsNoTracking()
             .FirstOrDefaultAsync(e => e.Id == executionId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<ExecutionStatusSnapshot?> GetExecutionStatusAsync(long executionId, CancellationToken cancellationToken = default)
+    {
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await dbContext.JobExecutions
+            .AsNoTracking()
+            .Where(e => e.Id == executionId)
+            // Projected in SQL: the length is computed by the database, so the summary text itself
+            // never crosses the wire. Same technique as ExecutionListItem's HasResultSummary.
+            .Select(e => new ExecutionStatusSnapshot(
+                e.Status,
+                e.CompletedAt,
+                e.ResultMessage,
+                e.ExceptionMessage,
+                e.ResultSummary == null ? 0 : e.ResultSummary.Length))
+            .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 

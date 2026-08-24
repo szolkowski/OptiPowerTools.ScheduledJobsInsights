@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
@@ -35,15 +36,27 @@ public static class ApplicationBuilderExtensions
     /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <exception cref="ArgumentNullException"><paramref name="endpoints"/> is <c>null</c>.</exception>
-    public static IEndpointRouteBuilder MapOptiPowerToolScheduledJobsInsights(this IEndpointRouteBuilder endpoints)
+    public static IEndpointRouteBuilder MapOptiPowerToolsScheduledJobsInsights(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var options = endpoints.ServiceProvider
-            .GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+            .GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
+
+        // Guarded per application, not per call. Both public entry points reach here — Use... calls
+        // Map... — so a host that calls both would otherwise map the hub twice whenever MapBlazorHub
+        // is set to true explicitly, because that bypasses the detection below. Mapping twice is the
+        // AmbiguousMatchException on every Blazor request that the detection exists to prevent, and
+        // the configuration most likely to hit it is the one someone reaches for while already
+        // debugging hub problems.
+        if (AlreadyMappedHub(endpoints))
+            return endpoints;
 
         if (options.MapBlazorHub ?? !HasBlazorHub(endpoints))
+        {
             endpoints.MapBlazorHub().RequireAuthorization(ScheduledJobsInsightsAuthorization.PolicyName);
+            MarkHubMapped(endpoints);
+        }
 
         return endpoints;
     }
@@ -57,8 +70,18 @@ public static class ApplicationBuilderExtensions
     /// naming this package. The same reasoning as the deliberate absence of <c>MapControllers()</c>
     /// below, applied to the one endpoint this package does have to own. A host that maps its hub
     /// *after* this call cannot be detected, which is what
-    /// <see cref="OptiPowerToolScheduledJobsInsightsOptions.MapBlazorHub"/> is for.
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.MapBlazorHub"/> is for.
     /// </remarks>
+    private static bool AlreadyMappedHub(IEndpointRouteBuilder endpoints) =>
+        endpoints.ServiceProvider.GetService<HubMappedMarker>()?.Mapped == true;
+
+    private static void MarkHubMapped(IEndpointRouteBuilder endpoints)
+    {
+        var marker = endpoints.ServiceProvider.GetService<HubMappedMarker>();
+        if (marker is not null)
+            marker.Mapped = true;
+    }
+
     private static bool HasBlazorHub(IEndpointRouteBuilder endpoints) =>
         endpoints.DataSources
             .SelectMany(source => source.Endpoints)
@@ -83,19 +106,51 @@ public static class ApplicationBuilderExtensions
     /// </remarks>
     /// <param name="app">The application builder.</param>
     /// <exception cref="ArgumentNullException"><paramref name="app"/> is <c>null</c>.</exception>
-    public static IApplicationBuilder UseOptiPowerToolScheduledJobsInsights(this IApplicationBuilder app)
+    public static IApplicationBuilder UseOptiPowerToolsScheduledJobsInsights(this IApplicationBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
         var options = app.ApplicationServices
-            .GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+            .GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
 
         if (options.AutoMigrateDatabase)
             TryMigrate(app.ApplicationServices);
 
-        app.UseEndpoints(endpoints => endpoints.MapOptiPowerToolScheduledJobsInsights());
+        ResolveAuthorizationPolicyEarly(app.ApplicationServices);
+
+        app.UseEndpoints(endpoints => endpoints.MapOptiPowerToolsScheduledJobsInsights());
 
         return app;
+    }
+
+    /// <summary>
+    /// Forces this package's authorization policy to be built now, so a misconfiguration is reported
+    /// at startup rather than at whatever request happens to need authorization first.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AuthorizationOptions"/> is a single shared instance resolved lazily on the first
+    /// authorization decision in the application, which could be hours after a deployment and in a
+    /// request that has nothing to do with this package. Touching it here moves the Critical log line
+    /// about an unregistered policy next to the rest of the startup output, where somebody will see
+    /// it. Nothing is thrown either way — the policy resolves to deny-all, so the pages are closed
+    /// rather than open.
+    /// </remarks>
+    private static void ResolveAuthorizationPolicyEarly(IServiceProvider services)
+    {
+        try
+        {
+            _ = services.GetRequiredService<IOptions<AuthorizationOptions>>()
+                .Value
+                .GetPolicy(ScheduledJobsInsightsAuthorization.PolicyName);
+        }
+        catch (Exception ex)
+        {
+            // A host that configures AuthorizationOptions in a way that throws is the host's problem,
+            // but it must not become a failure to start caused by this line.
+            services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
+                .LogCritical(ex, "ScheduledJobsInsights could not resolve its authorization policy at startup. Access to the insights pages may be denied.");
+        }
     }
 
     /// <summary>

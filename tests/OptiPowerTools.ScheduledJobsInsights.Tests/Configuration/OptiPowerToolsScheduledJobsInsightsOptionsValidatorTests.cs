@@ -7,16 +7,16 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Configuration;
 /// Every case here used to start the application successfully and then misbehave silently — which is
 /// why validation exists at all.
 /// </summary>
-public class OptiPowerToolScheduledJobsInsightsOptionsValidatorTests
+public class OptiPowerToolsScheduledJobsInsightsOptionsValidatorTests
 {
-    private static readonly OptiPowerToolScheduledJobsInsightsOptionsValidator Validator = new();
+    private static readonly OptiPowerToolsScheduledJobsInsightsOptionsValidator Validator = new();
 
-    private static OptiPowerToolScheduledJobsInsightsOptions Valid() => new()
+    private static OptiPowerToolsScheduledJobsInsightsOptions Valid() => new()
     {
         ConnectionString = "Server=.;Database=Insights;Trusted_Connection=True;"
     };
 
-    private static ValidateOptionsResult Validate(Action<OptiPowerToolScheduledJobsInsightsOptions> mutate)
+    private static ValidateOptionsResult Validate(Action<OptiPowerToolsScheduledJobsInsightsOptions> mutate)
     {
         var options = Valid();
         mutate(options);
@@ -150,5 +150,17 @@ public class OptiPowerToolScheduledJobsInsightsOptionsValidatorTests
 
         Assert.True(result.Failed);
         Assert.Equal(3, result.Failures.Count());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ANonPositiveDetailPollInterval_IsRejected(int seconds)
+    {
+        // Zero would spin the detail page's PeriodicTimer as fast as the database answers, one query
+        // per tick per open page.
+        var result = Validate(options => options.DetailPollInterval = TimeSpan.FromSeconds(seconds));
+
+        Assert.Contains("DetailPollInterval", string.Join(" ", result.Failures ?? []), StringComparison.Ordinal);
     }
 }

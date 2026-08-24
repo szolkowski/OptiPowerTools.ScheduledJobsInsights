@@ -70,13 +70,15 @@ the build fails (CS1591). Because of this, the public API surface is deliberatel
 implementation types (`JobExecutionWriter`, `JobLogBackgroundWriter`, `CleanupRepository`,
 `JobExecutionQueryService`, the EF entities, `ScheduledJobsInsightsDbContext`, `JobRecord`/`LogRecordItem`/
 `MetricRecordItem`) are `internal` and only need doc comments if you choose to add them. Only
-`LoggedScheduledJobBase`, `JobResultSummary`, `IJobExecutionWriter`, `ICleanupRepository`,
-`IJobRetentionPolicySource`, `JobLoggingContext`, `RetentionPeriod`, `JobRetentionAttribute`, the
-config/enum types, the CMS controller/menu provider/cleanup job (all forced public by Optimizely
-discovery), the three Razor pages and `AccordionSection`, and the extension methods are `public` —
-**24 exported types, verified by reflecting over the packed assembly** rather than by reading the XML
-docs, which include internal members and overstate it. Keep new additions to that surface fully
-documented, or make them `internal` instead (the test project has `InternalsVisibleTo` access to
+`LoggedScheduledJobBase`, `JobResultSummary`, `IJobExecutionWriter`, `JobLoggingContext`,
+`RetentionPeriod`, `JobRetentionAttribute`, `JobMetricNames`, the config/enum types, the CMS
+controller/menu provider/cleanup job (all forced public by Optimizely discovery), the three Razor
+pages and `AccordionSection`, and the extension methods are `public` — **22 exported types, pinned by
+`PublicSurfaceTests`** rather than by reading the XML docs, which include internal members and
+overstate it. That test is the guard until `PackageValidationBaselineVersion` can be armed, which
+cannot happen until 1.0.0 is published (there is nothing to compare against on the release that
+establishes the baseline); `publish.yml` fails any later release whose csproj has no baseline set.
+Keep new additions to that surface fully documented, or make them `internal` instead (the test project has `InternalsVisibleTo` access to
 everything). Razor components are generated as public types, so their `[Parameter]` properties need
 doc comments too. The EF migration classes are `internal` on purpose: EF discovers them through
 `GetConstructableTypes()`, which does not require public, and five generically-named `Migration`
@@ -87,13 +89,24 @@ Three things on that surface are deliberately closed, and each has a test assert
 recorded a cut-short run as `Succeeded`); `JobLoggingContext`'s constructor and its `Writer`/
 `ScheduledJobRepository`/`TimeProvider` are `internal`, with `JobLoggingContext.ForWriter(...)` as the
 public way to build one in a consumer's unit test (reaching the writer through the context would
-bypass the `_executionId` guard and the sequence counter); and `IJobExecutionWriter`,
-`ICleanupRepository` and `IJobRetentionPolicySource` are **not extension points** — members may be
-added in a minor version, so implementing them is unsupported and replacing the concrete registration
-is the documented alternative.
+bypass the `_executionId` guard and the sequence counter); and `IJobExecutionWriter` carries an
+explicit promise that **no member will be added outside a major version**, so implementing or mocking
+it is supported and stays compiling across 1.x.
 
-`NuGetAuditMode` is set to `direct` only (transitive EPiServer CVEs are out of scope), and `NU1608` is
-suppressed for a known Castle.Core version conflict between NSubstitute and EPiServer.
+That promise is a commitment rather than a mechanism, and deliberately so. Default implementations
+would make additions safe automatically — and would also make the interface unmockable by
+Castle-based libraries such as NSubstitute, which breaks `JobLoggingContext.ForWriter`, the
+unit-testing pattern the README documents. Measured, not assumed: adding DIMs to the three interfaces
+turned 75 of 407 tests red with `ArgumentNullException` out of Castle's `InvocationHelper`.
+`ICleanupRepository` and `IJobRetentionPolicySource` are no longer on the surface at all —
+`ScheduledJobsInsightsCleanupJob` takes `IServiceProvider` and resolves them itself, because a public
+constructor cannot take a less accessible parameter type and freezing two implementation-detail
+interfaces as a side effect of CMS job discovery was the worse trade.
+
+`NuGetAuditMode` is left at the default (`all`), and a single advisory is suppressed by id in
+`Directory.Build.props` with a recorded acceptance date and a recheck condition — see the file for
+which and why. Suppressing one known advisory by id is deliberately narrower than lowering the audit
+mode, which would hide every future transitive advisory as well.
 
 ## Architecture
 
@@ -241,8 +254,20 @@ deleting the row underneath a live run destroys that run's history rather than t
 the still-buffered log lines then violate the FK, which poisons the batch they travel in and takes
 other jobs' lines with it, while `Complete`'s `ExecuteUpdate` matches nothing and reports nothing.
 Age alone cannot tell "stranded" from "still working" — that is what `MarkInterruptedExecutions` is
-for, and it runs first. Only `Running` is protected: `Interrupted` and `Stopped` runs are finished and
-must still age out, or a regularly-recycled process accumulates history nothing can remove.
+for, and **it runs last, after both deletes**. This ordering is load-bearing and was wrong until it
+was fixed: marking moves a row out of `Running`, and `Running` is the only status the deletes will not
+touch, so a pass that marked first stripped the guard off the very rows it exists for and deleted them
+moments later in the same `ExecuteJob` call. `Execute_DoesNotDeleteALiveRunsHistoryInTheSamePassThatMarksItInterrupted`
+pins it and fails against the previous order. Only `Running` is protected: `Interrupted` and `Stopped`
+runs are finished and must still age out, or a regularly-recycled process accumulates history nothing
+can remove.
+
+A residual window remains and is filed rather than fixed: a run still alive past
+`InterruptedExecutionThreshold` is marked `Interrupted` at the end of one sweep and is then an
+ordinary deletable row for the *next* one. Exposure is threshold plus one cleanup interval rather than
+zero. Closing it properly needs evidence of liveness the package does not collect — a heartbeat —
+though `MarkInterruptedExecutions` deliberately leaves `CompletedAt` null, which is a usable
+"inferred, not observed" marker for a cheaper partial fix.
 
 The fourth, `JobRetentionPolicy`, is configuration rather than history: one row per job type that an
 administrator has given an explicit retention, unique on `JobTypeName`, with `RetentionDays` nullable
@@ -250,8 +275,11 @@ administrator has given an explicit retention, unique on `JobTypeName`, with `Re
 `JobExecution` — the key is a CLR type name, which deliberately outlives both the history it governs
 and the code that produced it.
 
-`JobExecution` carries five indexes and every one of them earns its place. Measured against 100,000
-executions / 2,000,000 log rows on real SQL Server (logical reads):
+`JobExecution` carries four indexes and every one of them earns its place. There were five: an index
+on `ScheduledJobId` was dropped by `DropUnusedScheduledJobIdIndex`, because nothing ever filtered or
+joined on that column — it is written on insert and projected for the detail page's cross-link, so the
+index was pure write cost on the highest-insert-rate table here. `verify-schema.sql` asserts it stays
+absent. Measured against 100,000 executions / 2,000,000 log rows on real SQL Server (logical reads):
 
 | query | with index | without |
 |---|---|---|
@@ -486,11 +514,13 @@ indefinite. The order is expressed in exactly one place — `JobRetention.Resolv
 - **Keyed on `JobTypeName`, never `JobName`.** The CLR name survives a job being renamed in the CMS.
   A retention rule that silently stopped applying after a rename would fail in the worst direction —
   quietly keeping everything forever.
-- **Two interfaces over one implementation.** `IJobRetentionPolicySource` is public and minimal;
-  `IJobRetentionService` is internal and adds the screen's needs. The split exists because
-  `ScheduledJobsInsightsCleanupJob` must be public for Optimizely to discover it, so every type in its
-  constructor must be public too — and exposing the whole screen-facing surface (audit trails,
-  execution counts, orphaned jobs) just to satisfy that would be the tail wagging the dog.
+- **Two interfaces over one implementation.** `IJobRetentionPolicySource` is minimal and
+  cleanup-facing; `IJobRetentionService` adds the screen's needs (audit trails, execution counts,
+  orphaned jobs). Both are now `internal`: the split originally existed to keep the *narrow* one
+  public, since `ScheduledJobsInsightsCleanupJob` must be public for Optimizely to discover it and a
+  public constructor cannot take a less accessible parameter type. That job takes `IServiceProvider`
+  instead, so the narrowing is once again about what the cleanup job needs rather than about
+  accessibility.
 - **An unusable attribute value is surfaced, not swallowed.** An attribute cannot throw usefully at
   startup, so `[JobRetention(0)]` falls back to the default *and* is flagged in the screen. Silently
   ignoring it would leave the author believing retention was configured.

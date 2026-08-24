@@ -39,6 +39,7 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
         RequirePositive(options.PageSize, nameof(options.PageSize), failures);
         RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), failures);
         RequirePositive(options.MaxLogEntriesPerExecution, nameof(options.MaxLogEntriesPerExecution), failures);
+        RequirePositive(options.MaxLogCharactersPerExecution, nameof(options.MaxLogCharactersPerExecution), failures);
 
         if (options.InterruptedExecutionThreshold < TimeSpan.Zero)
             failures.Add($"InterruptedExecutionThreshold cannot be negative (was {options.InterruptedExecutionThreshold}); use TimeSpan.Zero to disable the sweep.");

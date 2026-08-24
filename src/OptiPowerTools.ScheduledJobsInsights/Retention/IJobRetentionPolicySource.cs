@@ -7,19 +7,17 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// <para>
 /// Deliberately narrower than the service backing the Job Retention screen. That one deals in
 /// attributes, audit trails, execution counts and jobs that no longer exist — none of which the
-/// cleanup job has any use for. Keeping the two apart is also what lets the richer type stay
-/// internal: <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> has to be public for Optimizely to
-/// discover it, so every type in its constructor must be public too.
+/// cleanup job has any use for.
 /// </para>
 /// <para>
-/// <b>Not an extension point.</b> Resolve it from DI; do not implement it in consuming code. Members
-/// may be added in a minor version — which is precisely why implementing it is unsupported, and why
-/// no <c>[Obsolete]</c> shim or default implementation will be provided for one. If you need a
-/// different sink or a different rule source, the supported route is to replace this package's
-/// registration for the concrete service, not to implement the interface and hope its shape holds.
+/// Internal, and free to change. The split used to carry a second job: keeping this face public so
+/// that <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/>, which must be public for Optimizely to
+/// discover it, could take it as a constructor parameter. The job now resolves it from an
+/// <see cref="IServiceProvider"/> instead, so the narrowing is once again about what the cleanup job
+/// needs rather than about accessibility.
 /// </para>
 /// </remarks>
-public interface IJobRetentionPolicySource
+internal interface IJobRetentionPolicySource
 {
     /// <summary>
     /// The installation-wide fallback, from

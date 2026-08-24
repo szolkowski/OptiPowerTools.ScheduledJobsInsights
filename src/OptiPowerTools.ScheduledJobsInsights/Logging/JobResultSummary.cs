@@ -32,7 +32,11 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 public sealed class JobResultSummary
 {
     /// <summary>Character limit applied when no explicit one is given — 100,000.</summary>
-    public const int DefaultMaxLength = 100_000;
+    /// <remarks>
+    /// <c>static readonly</c> rather than <c>const</c>: a <c>const</c> is inlined into every consumer
+    /// assembly that reads it, so revising this later would reach only the consumers that recompiled.
+    /// </remarks>
+    public static readonly int DefaultMaxLength = 100_000;
 
     /// <summary>
     /// Appended when content had to be dropped. Internal rather than private so

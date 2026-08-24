@@ -1,4 +1,5 @@
 using EPiServer.DataAbstraction;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -24,10 +25,16 @@ public class ScheduledJobsInsightsCleanupJobTests
         var writer = Substitute.For<IJobExecutionWriter>();
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
 
+        // The job resolves its two collaborators from the container rather than taking them as
+        // constructor parameters, so that neither interface has to be public. See the constructor's
+        // own remarks.
+        var services = new ServiceCollection();
+        services.AddSingleton(repository);
+        services.AddSingleton(retention);
+
         return new ScheduledJobsInsightsCleanupJob(
             TestJobLoggingContext.For(writer),
-            repository,
-            retention,
+            services.BuildServiceProvider(),
             Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
             {
                 RetentionDays = retentionDays,

@@ -30,21 +30,38 @@ namespace OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 /// is open. A job logging a line per row is then an out-of-memory on the server rather than on the
 /// reader's machine.
 /// </para>
+/// <para>
+/// The bound is two bounds, because a line count alone does not describe the cost: multiplied by the
+/// per-message limit it permits far more memory than it appears to. A character budget bounds the
+/// text itself, and whichever is reached first stops the buffer.
+/// </para>
 /// </remarks>
 internal sealed class LogEntryBuffer
 {
     private readonly List<JobLogEntry> _entries = [];
     private readonly HashSet<int> _seen = [];
     private readonly int _maxEntries;
+    private readonly int _maxCharacters;
+    private int _characters;
 
-    /// <summary>Creates a buffer holding at most <paramref name="maxEntries"/> lines.</summary>
+    /// <summary>
+    /// Creates a buffer bounded by both a line count and a total character budget.
+    /// </summary>
     /// <param name="maxEntries">
-    /// The bound. A non-positive value is treated as unbounded, matching how the query service reads
-    /// the same option — the validator rejects one at startup, so this only covers a buffer built
-    /// directly.
+    /// The line bound. A non-positive value is treated as unbounded, matching how the query service
+    /// reads the same option — the validator rejects one at startup, so this only covers a buffer
+    /// built directly.
     /// </param>
-    public LogEntryBuffer(int maxEntries) =>
+    /// <param name="maxCharacters">
+    /// The text bound, in characters, and the one that actually describes memory: a line count
+    /// multiplied by the per-message limit permits far more than it appears to. Non-positive is
+    /// unbounded. Whichever bound is reached first stops the buffer.
+    /// </param>
+    public LogEntryBuffer(int maxEntries, int maxCharacters = 0)
+    {
         _maxEntries = maxEntries > 0 ? maxEntries : int.MaxValue;
+        _maxCharacters = maxCharacters > 0 ? maxCharacters : int.MaxValue;
+    }
 
     /// <summary>
     /// Everything held, in sequence order. Typed as the concrete list because <c>Virtualize</c>
@@ -60,7 +77,7 @@ internal sealed class LogEntryBuffer
     /// The caller checks this to stop fetching altogether. Without that it would keep issuing the
     /// same capped query every poll tick and discarding every row it returned.
     /// </remarks>
-    public bool IsFull => _entries.Count >= _maxEntries;
+    public bool IsFull => _entries.Count >= _maxEntries || _characters >= _maxCharacters;
 
     /// <summary>Whether at least one line was dropped because the bound was reached.</summary>
     /// <remarks>
@@ -92,8 +109,18 @@ internal sealed class LogEntryBuffer
                 break;
             }
 
+            // The first line is always kept, however long: refusing it would leave a reader looking at
+            // an empty log with only a truncation notice to explain it.
+            var length = entry.Message?.Length ?? 0;
+            if (_entries.Count > 0 && _characters + (long)length > _maxCharacters)
+            {
+                Truncated = true;
+                break;
+            }
+
             _seen.Add(entry.Sequence);
             _entries.Add(entry);
+            _characters += length;
             added = true;
         }
 

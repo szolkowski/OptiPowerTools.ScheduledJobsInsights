@@ -1,3 +1,15 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.Options
+@using OptiPowerTools.ScheduledJobsInsights.Components
+@using OptiPowerTools.ScheduledJobsInsights.Components.Pages
+@* Inlined from what used to be _Imports.razor. That file generated a public Components._Imports type
+   with no meaning to any consumer, and 1.0 freezes the exported surface — so the @using set lives in
+   each component instead. *@
 @* One execution's detail and console log. Hosted by ScheduledJobsInsightsCmsController's view inside
    the CMS shell — see Views/ScheduledJobsInsightsCms/Index.cshtml — so this is not a routable page;
    Id arrives as a component parameter from the MVC route rather than from Blazor routing. *@
@@ -8,7 +20,6 @@
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
 @using OptiPowerTools.ScheduledJobsInsights.Data.Entities
 @using OptiPowerTools.ScheduledJobsInsights.Repositories
-@using Microsoft.AspNetCore.Components.Web.Virtualization
 @inject IJobExecutionQueryService QueryService
 @inject IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Options
 @inject IJSRuntime JS
@@ -127,7 +138,8 @@ else
             <p class="log-truncated" role="status">
                 Showing the first @LogCountLabel of this execution. It logged more than the
                 configured maximum, so the rest is not displayed &mdash; raise
-                <code>MaxLogEntriesPerExecution</code> to see more.
+                <code>MaxLogEntriesPerExecution</code> or
+                <code>MaxLogCharactersPerExecution</code> to see more.
             </p>
         }
         @if (_log.Entries.Count > 0)
@@ -211,7 +223,8 @@ else
     /// replaced before anything reads it — <c>OnInitializedAsync</c> runs before the first render.
     /// </remarks>
     private LogEntryBuffer _log =
-        new(OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution);
+        new(OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution,
+            OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogCharactersPerExecution);
     private readonly CancellationTokenSource _disposalCts = new();
 
     private ViewerClock _clock = ViewerClock.Utc;
@@ -246,7 +259,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _log = new LogEntryBuffer(Options.Value.MaxLogEntriesPerExecution);
+        _log = new LogEntryBuffer(Options.Value.MaxLogEntriesPerExecution, Options.Value.MaxLogCharactersPerExecution);
 
         // Resolved once from a parameter rather than looked up per render: the zone cannot change
         // without a new request, and TimeZoneInfo lookups are not free.

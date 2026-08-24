@@ -1,5 +1,6 @@
 using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
@@ -35,23 +36,31 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
     /// <param name="context">Collaborators the base class records this job's own runs with.</param>
-    /// <param name="cleanupRepository">Performs the batched deletes.</param>
-    /// <param name="retentionService">Resolves the retention in force for each job type.</param>
+    /// <param name="services">
+    /// Supplies the deletion and retention services this job runs on. Both are internal to the
+    /// package.
+    /// </param>
     /// <param name="options">Package options; supplies the batch size.</param>
     /// <exception cref="ArgumentNullException">Any argument is <c>null</c>.</exception>
+    /// <remarks>
+    /// Takes an <see cref="IServiceProvider"/> rather than its two collaborators directly, which is a
+    /// service locator and is the point. Optimizely discovers this job by type, so the class and this
+    /// constructor must be public — and a public constructor cannot take a less accessible parameter
+    /// type. Naming the collaborators here would therefore force two implementation-detail interfaces
+    /// onto the permanently frozen 1.0 surface, purely as a side effect of how the CMS constructs
+    /// jobs. One awkward constructor is the cheaper price.
+    /// </remarks>
     public ScheduledJobsInsightsCleanupJob(
         JobLoggingContext context,
-        ICleanupRepository cleanupRepository,
-        IJobRetentionPolicySource retentionService,
+        IServiceProvider services,
         IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options)
         : base(context)
     {
-        ArgumentNullException.ThrowIfNull(cleanupRepository);
-        ArgumentNullException.ThrowIfNull(retentionService);
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
 
-        _cleanupRepository = cleanupRepository;
-        _retentionService = retentionService;
+        _cleanupRepository = services.GetRequiredService<ICleanupRepository>();
+        _retentionService = services.GetRequiredService<IJobRetentionPolicySource>();
         _options = options.Value;
 
         // A first run against years of accumulated history can take a long time; an administrator

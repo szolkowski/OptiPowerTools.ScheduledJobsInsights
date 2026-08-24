@@ -1,3 +1,15 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.Options
+@using OptiPowerTools.ScheduledJobsInsights.Components
+@using OptiPowerTools.ScheduledJobsInsights.Components.Pages
+@* Inlined from what used to be _Imports.razor. That file generated a public Components._Imports type
+   with no meaning to any consumer, and 1.0 freezes the exported surface — so the @using set lives in
+   each component instead. *@
 @* Per-job retention. Hosted by ScheduledJobsInsightsCmsController's view inside the CMS shell, like
    the other two pages, so it is not routable and owns no document of its own.
 

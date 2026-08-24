@@ -14,7 +14,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - One-liner DI bootstrap: `services.AddOptiPowerToolsScheduledJobsInsights()`.
 - `LoggedScheduledJobBase` — a drop-in replacement for `ScheduledJobBase` that captures execution history automatically.
 - Per-run log lines with severity/color (`Default`/`Info`/`Success`/`Warning`/`Error`/`Debug`), plus a dedicated `LogInputData` call for capturing what a run started with.
-- Automatic execution metrics (duration, allocated bytes, CPU time, GC generation counts) and a `RecordMetric` API for custom domain metrics.
+- Automatic execution metrics — wall-clock duration, bytes allocated on the job's own thread, process CPU time and GC generation counts — plus a `RecordMetric` API for custom domain metrics. The names say whose thread and whose CPU they measure, because on a CMS serving requests the process-wide numbers include everything else the application was doing.
 - An optional per-run **result summary** — a multi-line report the job builds as it works, shown in its own collapsible section of the detail view, separate from the one-line message Optimizely shows in its admin grid.
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
@@ -77,6 +77,8 @@ components live in the package, so the SDK does not notice. Without the setting 
 never becomes interactive, and the browser console shows a 404 for `blazor.server.js`.
 
 Applications that already contain their own `.razor` files get it automatically and can skip this.
+If it is missing, the package says so at startup with a warning naming this setting — the failure is
+otherwise silent, and looks like a page that renders but does nothing.
 
 ### Wiring it up
 
@@ -288,9 +290,13 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
     options.PageSize = 50;
 
     options.PageTitle = "Scheduled Jobs Insights";
-    options.AuthorizedRoles = ["Administrators", "CmsAdmins", "WebAdmins"];
-    // Authorization: roles by default. Name a policy of your own with options.AuthorizationPolicy,
-    // or set options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
+
+    // Authorization. AuthorizedRoles starts empty, which means the built-in set —
+    // Administrators, CmsAdmins, WebAdmins. Assigning it REPLACES that set rather than adding to it,
+    // so the line below narrows access to one role rather than granting a fourth.
+    options.AuthorizedRoles = ["SecOps"];
+    // Or name a policy of your own with options.AuthorizationPolicy, or set
+    // options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
     options.EnableCmsMenu = true;
     options.MenuPlacement = CmsMenuPlacement.CmsSection;
     options.MenuPath = null;
@@ -318,7 +324,7 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
       "PageSize": 50,
       "MaxResultSummaryLength": 100000,
       "PageTitle": "Scheduled Jobs Insights",
-      "AuthorizedRoles": ["Administrators", "CmsAdmins", "WebAdmins"],
+      "AuthorizedRoles": ["SecOps"],
 
       "EnableCmsMenu": true,
       "MenuPlacement": "CmsSection",
@@ -331,6 +337,13 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
 ```
 
 Code overrides configuration when both are used.
+
+`AuthorizedRoles` is worth one note, because it is the one option where the obvious reading is wrong.
+Omit it and the built-in set applies — `Administrators`, `CmsAdmins`, `WebAdmins`. List roles, as
+above, and that set is **replaced**: the example authorizes `SecOps` alone, not `SecOps` plus the
+three. This is why the option's own default is empty rather than the three role names — a non-empty
+default could not be replaced from `appsettings.json` at all, because the configuration binder adds
+into an existing collection instead of clearing it.
 
 ### Options reference
 
@@ -533,12 +546,19 @@ Changes take effect on the next run of the cleanup job. Nothing is deleted at th
 
 Each run does three passes:
 
-1. **Give up on abandoned runs.** Executions still `Running` since longer ago than
+1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
+2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+3. **Give up on abandoned runs.** Executions still `Running` since longer ago than
    `InterruptedExecutionThreshold` are recorded as **Interrupted**. A process recycled mid-run writes
    nothing further, so nothing else would ever finish those rows — and until they are resolved, every
    count and status filter is wrong. `CompletedAt` stays empty: the end time is genuinely unknown.
-2. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
-3. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+
+**Neither sweep ever deletes a row that is still `Running`**, however old it is, and the third pass
+runs last for that reason. A job may legitimately run longer than its own retention — a 25-hour import
+under a one-day rule — and age alone cannot tell a stranded run from a working one. Marking a row
+`Interrupted` moves it out of `Running` and so makes it deletable, so resolving abandoned runs *before*
+the sweeps would hand them the history of jobs that were still going. Doing it last costs a stranded
+row one extra cleanup interval before it ages out, which is the cheaper side of that trade.
 
 After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
 
@@ -547,7 +567,7 @@ Being a logged job, it records metrics of its own, alongside the automatic ones:
 | Metric | Notes |
 |---|---|
 | `ExecutionsDeleted` | Executions removed in that run, across the default sweep and every per-job rule. Their log and metric rows go with them, by database cascade. |
-| `ExecutionsMarkedInterrupted` | Executions given up on and moved from *Running* to *Interrupted* — the sweep that resolves rows a recycled process left behind. It runs **after** the deletes, never before: marking a row moves it out of *Running*, and *Running* is the one status the deletes will not touch, so marking first would hand the sweep the history of jobs that were still working. |
+| `ExecutionsMarkedInterrupted` | Executions given up on and moved from *Running* to *Interrupted* by the third pass. |
 
 ### If your application already uses Blazor
 
@@ -568,11 +588,12 @@ left exactly as the host configured it.
 ## Removing this package
 
 Unlike a fully self-contained storage layer, this package owns its own SQL Server tables. Removing it stops new executions from being recorded and drops the cleanup job from the CMS's Scheduled Jobs list, but existing `scheduled_jobs_insights.*` tables and their data are left in place until you drop them manually.
+
 ## Development
 
 Building the package, running the dev CMS in Docker, the submodule, seeding Alloy content and
 regenerating migrations are all covered in
-[CONTRIBUTING.md](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/blob/main/CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 None of it is needed to *use* the package.
 
 ## Versioning

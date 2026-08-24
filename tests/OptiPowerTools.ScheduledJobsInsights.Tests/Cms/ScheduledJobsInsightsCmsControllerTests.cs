@@ -11,6 +11,14 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
 
 public class ScheduledJobsInsightsCmsControllerTests
 {
+
+    /// <summary>The typed model the view is rendered with.</summary>
+    /// <remarks>
+    /// Was <c>ViewData</c>, until these values moved onto a record: a renamed key used to hand the
+    /// components null with nothing failing to say so, which is the whole reason for the change.
+    /// </remarks>
+    private static ScheduledJobsInsightsPageModel ModelOf(IActionResult result) =>
+        Assert.IsType<ScheduledJobsInsightsPageModel>(Assert.IsType<ViewResult>(result).Model);
     private static ScheduledJobsInsightsCmsController CreateController(
         OptiPowerToolsScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
     {
@@ -36,8 +44,7 @@ public class ScheduledJobsInsightsCmsControllerTests
 
         var result = controller.Index(id);
 
-        var viewResult = Assert.IsType<ViewResult>(result);
-        Assert.Equal(id, viewResult.ViewData["ExecutionId"]);
+        Assert.Equal(id, ModelOf(result).ExecutionId);
     }
 
     [Fact]
@@ -68,9 +75,9 @@ public class ScheduledJobsInsightsCmsControllerTests
 
         var result = controller.Index(id: null);
 
-        var viewResult = Assert.IsType<ViewResult>(result);
-        Assert.Null(viewResult.ViewData["ExecutionId"]);
-        Assert.Equal("Title", viewResult.ViewData["PageTitle"]);
+        var model = ModelOf(result);
+        Assert.Null(model.ExecutionId);
+        Assert.Equal("Title", model.PageTitle);
     }
 
     [Fact]
@@ -84,7 +91,7 @@ public class ScheduledJobsInsightsCmsControllerTests
 
         var result = controller.Index(id: null);
 
-        Assert.Equal("Europe/Warsaw", Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
+        Assert.Equal("Europe/Warsaw", ModelOf(result).ViewerTimeZone);
     }
 
     [Fact]
@@ -97,6 +104,6 @@ public class ScheduledJobsInsightsCmsControllerTests
 
         var result = controller.Index(id: null);
 
-        Assert.Null(Assert.IsType<ViewResult>(result).ViewData["ViewerTimeZone"]);
+        Assert.Null(ModelOf(result).ViewerTimeZone);
     }
 }

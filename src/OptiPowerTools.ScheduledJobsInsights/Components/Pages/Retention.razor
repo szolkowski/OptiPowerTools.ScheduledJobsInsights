@@ -4,7 +4,7 @@
    Reached at CmsShellPath?view=retention. A query string rather than a path segment for the same
    reason the execution id is one: the CMS shell resolves which product's navigation to render by
    matching the request path against registered menu items, and any extra segment matches nothing. *@
-@implements IDisposable
+@implements IAsyncDisposable
 @attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using System.Globalization
 @using Microsoft.AspNetCore.Authorization
@@ -34,6 +34,16 @@
     Installation default: <strong>@Describe(RetentionService.DefaultPeriod)</strong>
     <span class="hint">— set in configuration (<code>RetentionDays</code>), not here.</span>
 </p>
+
+@if (_error is not null)
+{
+    @* Above the table and above the empty state, not below them. Below, a failed save on a long job
+       list left a sighted reader looking at an unchanged dropdown with the explanation scrolled off
+       the bottom of the page — screen-reader users got it from role="alert", everyone else got
+       nothing. It has to sit outside the load-state branches too, or a failed *read* renders "no jobs
+       found" and swallows the reason. *@
+    <p class="error-text" role="alert">@_error</p>
+}
 
 @if (_jobs is null)
 {
@@ -150,11 +160,6 @@ else
     </p>
 }
 
-@if (_error is not null)
-{
-    <p class="error-text" role="alert">@_error</p>
-}
-
 @code {
     private const string InheritChoice = "inherit";
     private const string IndefiniteChoice = "indefinite";
@@ -197,6 +202,14 @@ else
         catch (OperationCanceledException)
         {
             // Disposed mid-query; nothing left to render into.
+        }
+        catch (Exception ex)
+        {
+            // The same reasoning as the other two pages, which this one was missing: unhandled here it
+            // faults the circuit and the reader gets the framework's yellow bar over the CMS chrome
+            // with no message and no way back. This page issues the most expensive query in the UI, so
+            // it is the *likeliest* of the three to fail, not the least.
+            _error = ex.Message;
         }
     }
 
@@ -272,15 +285,21 @@ else
     /// — a long-lived circuit belonging to someone whose roles have since been revoked stops being
     /// able to delete history.
     /// <para>
-    /// No cascaded authentication state means the host does not supply one, in which case the
-    /// endpoint's own authorization is all there is and remains sufficient. Denying instead would
-    /// break every save on a host that never opted into the cascade.
+    /// No cascaded authentication state means the host does not supply one — a supported
+    /// configuration since <c>AddBlazorServices</c> became an option — in which case the endpoint's
+    /// own authorization is all there is and remains sufficient. Denying instead would break every
+    /// save on such a host. It is logged rather than passed over silently, because the difference
+    /// between "checked twice" and "checked once" on a destructive write is worth being able to see.
     /// </para>
     /// </remarks>
     private async Task<bool> IsAuthorizedAsync()
     {
         if (AuthenticationState is null)
+        {
+            Logger.LogWarning(
+                "No cascading authentication state is available, so the retention save relied on the page's own authorization only. Register AddCascadingAuthenticationState (or leave AddBlazorServices at its default) to restore the second check.");
             return true;
+        }
 
         var state = await AuthenticationState;
 
@@ -336,9 +355,14 @@ else
         _ => "No override and no attribute, so the installation default applies."
     };
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _disposalCts.Cancel();
+        // CancelAsync, and awaited, before disposing. Cancel() followed immediately by Dispose() tore
+        // the source down while an in-flight query still held its token, so the cancellation callbacks
+        // ran against a disposed source — benign here only because nothing observes the resulting
+        // ObjectDisposedException. IAsyncDisposable is the honest interface for a component that owns
+        // async work.
+        await _disposalCts.CancelAsync();
         _disposalCts.Dispose();
     }
 }

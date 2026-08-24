@@ -302,4 +302,17 @@ public class RetentionPageTests : ComponentTestBase
         Assert.Equal("/custom/insights", RenderPage().Find("a.action-link").GetAttribute("href"));
     }
 
+
+    [Fact]
+    public void AFailedRead_IsReportedRatherThanFaultingTheCircuit()
+    {
+        // This page was the only one of the three catching just OperationCanceledException — and it
+        // issues the most expensive query in the UI, so it is the likeliest to fail, not the least.
+        _retention.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<JobRetention>>>(_ => throw new InvalidOperationException("retention unreadable"));
+
+        var page = Render<RetentionPage>();
+
+        Assert.Contains("retention unreadable", page.Markup, StringComparison.Ordinal);
+    }
 }

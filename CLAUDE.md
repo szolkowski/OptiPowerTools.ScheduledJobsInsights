@@ -437,10 +437,21 @@ invariant, because a locale-ordered date reintroduces the day/month ambiguity IS
 avoid. The list states the zone once above the table rather than suffixing fifty rows.
 
 `Components/Shared/LogSeverityStyles.cs`/`ExecutionStatusStyles.cs` are the **only** places that map the
-persisted `LogSeverity`/`ExecutionStatus` enums to actual colors — the data model itself has no color
-concept, by design. Note these cannot be extracted into shared Razor components: both enums are
+persisted `LogSeverity`/`ExecutionStatus` enums to an appearance — the data model itself has no color
+concept, by design. They return a **CSS class name**, not a hex colour: emitting the colour inline
+meant three `style` attributes per console line, and a back office served under a `style-src` policy
+without `'unsafe-inline'` — the ordinary case — drops every one of them, so the log silently loses all
+severity colouring. The palette itself lives in `wwwroot/css/scheduled-jobs-insights.css` as **custom
+properties set by class** (`--sji-severity-color`, `--sji-status-color`), which the per-component
+scoped rules read with `var()`; custom properties inherit rather than compete on specificity, so
+neither stylesheet has to win a cascade fight against the other, and a host can retheme by overriding
+one declaration. Note these cannot be extracted into shared Razor components: both enums are
 `internal`, and a `[Parameter]` of an internal type on a (necessarily public) component is a compile
 error.
+
+The same CSP reasoning applies to `wwwroot/js/timezone.js`: it is an external static web asset rather
+than an inline `<script>` because an inline script never runs under `script-src 'self'`, and the
+failure is silent — the cookie is never set and every reader stays on UTC for ever.
 
 `Cms/CmsAdminUrls.cs` holds the hard-coded URLs of the CMS's own scheduled job screens, used by the
 cross-links on the execution pages. Optimizely exposes no resolver for them, so this is the single place to

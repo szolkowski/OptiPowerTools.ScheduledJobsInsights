@@ -242,4 +242,36 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     /// non-default path.
     /// </remarks>
     public bool? MapBlazorHub { get; set; }
+
+    /// <summary>
+    /// Whether <c>AddOptiPowerToolsScheduledJobsInsights</c> registers Blazor Server and cascading
+    /// authentication state. Defaults to <c>true</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The service-side counterpart to <see cref="MapBlazorHub"/>, and needed for the same reason:
+    /// this package's UI is Blazor Server, but the host may already have made its own choices.
+    /// <c>AddServerSideBlazor</c> grafts circuit services into an application that may be on the
+    /// Blazor Web App model, and <c>AddCascadingAuthenticationState</c> registers a cascading value
+    /// provider for the whole application, not just for these pages.
+    /// </para>
+    /// <para>
+    /// Set it to <c>false</c> when the host registers Blazor itself. The insights pages then rely on
+    /// the host's registrations, so they must be equivalent — Blazor Server circuits and a cascading
+    /// authentication state — or the retention screen loses the authorization re-check it makes before
+    /// a destructive write.
+    /// </para>
+    /// </remarks>
+    public bool AddBlazorServices { get; set; } = true;
+
+    /// <summary>
+    /// How often the detail page re-reads an execution that is still running. Defaults to 2 seconds.
+    /// </summary>
+    /// <remarks>
+    /// One query per open detail page per interval, so it is the one setting here that scales with the
+    /// number of people watching rather than with the amount of history. Raise it on a busy
+    /// installation; lower it when watching a job that reports progress in bursts. Each tick reads a
+    /// narrow projection plus whatever log lines are new, not the whole execution row.
+    /// </remarks>
+    public TimeSpan DetailPollInterval { get; set; } = TimeSpan.FromSeconds(2);
 }

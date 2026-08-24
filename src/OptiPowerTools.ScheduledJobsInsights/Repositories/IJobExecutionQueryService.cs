@@ -12,6 +12,18 @@ internal interface IJobExecutionQueryService
     Task<JobExecution?> GetExecutionAsync(long executionId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The narrow slice of an execution the detail page needs while polling a running run.
+    /// </summary>
+    /// <remarks>
+    /// Exists so a poll tick does not re-read <c>ResultSummary</c>, <c>InputDataJson</c> and
+    /// <c>ExceptionStackTrace</c> — all unbounded — every couple of seconds for the whole life of the
+    /// run. See <see cref="ExecutionStatusSnapshot"/>.
+    /// </remarks>
+    /// <param name="executionId">Execution to check.</param>
+    /// <param name="cancellationToken">Cancels the query.</param>
+    Task<ExecutionStatusSnapshot?> GetExecutionStatusAsync(long executionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Log lines for an execution, ordered by <c>Sequence</c>.
     /// </summary>
     /// <param name="executionId">Execution whose log to read.</param>

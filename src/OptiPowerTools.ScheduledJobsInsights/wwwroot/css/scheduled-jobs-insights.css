@@ -138,3 +138,32 @@
     border-color: currentColor;
     text-decoration: none;
 }
+
+/* ---------------------------------------------------------------------------
+   The palette. The only place in the package where a status or a severity
+   becomes an actual colour.
+
+   Delivered as custom properties set by a class, rather than as the colour
+   properties themselves, for two reasons. Inline `style` attributes — what this
+   replaced — are dropped outright by any CMS served under a `style-src` policy
+   without 'unsafe-inline', which left every badge unpainted and every log line
+   uncoloured with nothing to say why. And custom properties inherit rather than
+   compete on specificity, so the per-component rules in the scoped stylesheets
+   can consume these without a cascade fight against them.
+
+   Override any of these in the host application's own stylesheet to retheme.
+   --------------------------------------------------------------------------- */
+.sji-content .sji-status-succeeded { --sji-status-color: #66BB6A; }
+.sji-content .sji-status-failed { --sji-status-color: #EF5350; }
+/* Amber rather than green or red: stopped is neither a success nor a fault. */
+.sji-content .sji-status-stopped { --sji-status-color: #FFA726; }
+/* Grey: nothing is known to have gone wrong, only that nothing was reported. */
+.sji-content .sji-status-interrupted { --sji-status-color: #9E9E9E; }
+.sji-content .sji-status-running { --sji-status-color: #4FC3F7; }
+
+.sji-content .sji-sev-info { --sji-severity-color: #4FC3F7; }
+.sji-content .sji-sev-success { --sji-severity-color: #66BB6A; }
+.sji-content .sji-sev-warning { --sji-severity-color: #FFCA28; }
+.sji-content .sji-sev-error { --sji-severity-color: #EF5350; }
+.sji-content .sji-sev-debug { --sji-severity-color: #9E9E9E; }
+.sji-content .sji-sev-default { --sji-severity-color: #B0BEC5; }

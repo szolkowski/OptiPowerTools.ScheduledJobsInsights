@@ -132,4 +132,48 @@ public class ServiceCollectionExtensionsTests
         Assert.Contains("ConnectionString", exception.Message, StringComparison.Ordinal);
         Assert.Contains("LogBatchSize", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ByDefault_BlazorServerServicesAreRegistered()
+    {
+        var services = Registered();
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void WithAddBlazorServicesFalse_TheHostsOwnBlazorRegistrationsAreLeftAlone()
+    {
+        // The service-side counterpart to MapBlazorHub. AddServerSideBlazor grafts circuit services
+        // into what may be a Blazor Web App, and AddCascadingAuthenticationState registers a provider
+        // for the whole application — neither is this package's to decide for a host that has already
+        // chosen.
+        var services = Registered(options => options.AddBlazorServices = false);
+
+        Assert.DoesNotContain(services, IsBlazorServerRegistration);
+        Assert.DoesNotContain(services, IsCascadingAuthenticationStateRegistration);
+    }
+
+    [Fact]
+    public void WithAddBlazorServicesFalse_EverythingElseIsStillRegistered()
+    {
+        // The opt-out is about Blazor's own services, not about the package.
+        var services = Registered(options => options.AddBlazorServices = false);
+
+        Assert.Contains(services, d => d.ServiceType == typeof(IJobExecutionWriter));
+        Assert.Contains(services, d => d.ServiceType == typeof(ICleanupRepository));
+    }
+
+    /// <summary>
+    /// Whether a descriptor came from <c>AddServerSideBlazor</c>. Matched by name because the circuit
+    /// types are internal to ASP.NET Core, and <c>CircuitOptions</c> itself is never a service type —
+    /// it arrives through <c>IConfigureOptions</c>.
+    /// </summary>
+    private static bool IsBlazorServerRegistration(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType.FullName?.Contains("Circuit", StringComparison.Ordinal) == true
+        || descriptor.ImplementationType?.FullName?.Contains("Circuit", StringComparison.Ordinal) == true;
+
+    /// <summary>Whether a descriptor came from <c>AddCascadingAuthenticationState</c>.</summary>
+    private static bool IsCascadingAuthenticationStateRegistration(ServiceDescriptor descriptor) =>
+        descriptor.ImplementationType?.FullName?.Contains("CascadingAuthenticationState", StringComparison.Ordinal) == true;
 }

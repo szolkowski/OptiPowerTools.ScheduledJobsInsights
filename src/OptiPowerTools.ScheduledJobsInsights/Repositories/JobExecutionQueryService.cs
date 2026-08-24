@@ -159,6 +159,24 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
             .ConfigureAwait(false);
     }
 
+    public async Task<ExecutionStatusSnapshot?> GetExecutionStatusAsync(long executionId, CancellationToken cancellationToken = default)
+    {
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        return await dbContext.JobExecutions
+            .AsNoTracking()
+            .Where(e => e.Id == executionId)
+            // Projected in SQL: the length is computed by the database, so the summary text itself
+            // never crosses the wire. Same technique as ExecutionListItem's HasResultSummary.
+            .Select(e => new ExecutionStatusSnapshot(
+                e.Status,
+                e.CompletedAt,
+                e.ResultMessage,
+                e.ExceptionMessage,
+                e.ResultSummary == null ? 0 : e.ResultSummary.Length))
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<JobLogEntry>> GetLogEntriesAsync(long executionId, int afterSequence = 0, CancellationToken cancellationToken = default)
     {
         await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);

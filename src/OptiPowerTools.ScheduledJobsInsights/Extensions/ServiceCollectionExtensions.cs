@@ -84,16 +84,25 @@ public static class ServiceCollectionExtensions
 
         services.AddHttpContextAccessor();
 
-        // Blazor Server rather than the Blazor Web App model: the components are hosted inside the
-        // CMS shell MVC view via the Component Tag Helper, so nothing here owns a whole HTML page.
-        services.AddServerSideBlazor();
+
 
         // One named policy for the page, the retention screen and the menu, so all three agree.
         services.AddAuthorization();
 
-        // Lets the retention screen re-check the policy before a destructive write, rather than
-        // trusting the authorization that happened when the page was first served.
-        services.AddCascadingAuthenticationState();
+        // Gated, because these two reach past this package into the host's own choices:
+        // AddServerSideBlazor grafts circuit services into what may be a Blazor Web App, and
+        // AddCascadingAuthenticationState registers a provider for the whole application. The hub half
+        // of this already had an opt-out; the service half did not.
+        if (ResolveOptions(services, setupAction).AddBlazorServices)
+        {
+            // Blazor Server rather than the Blazor Web App model: the components are hosted inside the
+            // CMS shell MVC view via the Component Tag Helper, so nothing here owns a whole HTML page.
+            services.AddServerSideBlazor();
+
+            // Lets the retention screen re-check the policy before a destructive write, rather than
+            // trusting the authorization that happened when the page was first served.
+            services.AddCascadingAuthenticationState();
+        }
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AuthorizationOptions>,
             ConfigureScheduledJobsInsightsAuthorization>());
 
@@ -152,5 +161,32 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<JobLogBackgroundWriter>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The options as configured by this call, for the few registrations that have to branch on them.
+    /// </summary>
+    /// <remarks>
+    /// Registration happens before any service provider exists, so <c>IOptions</c> cannot be resolved
+    /// here. Binding a throwaway copy is the only way to read a value that decides *what to register*
+    /// rather than how a registered service behaves. Deliberately rare: everything else defers to
+    /// <c>IOptions</c> at resolve time, where <c>appsettings.json</c> and validation both apply.
+    /// </remarks>
+    private static OptiPowerToolsScheduledJobsInsightsOptions ResolveOptions(
+        IServiceCollection services,
+        Action<OptiPowerToolsScheduledJobsInsightsOptions> setupAction)
+    {
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
+
+        var configuration = services
+            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(IConfiguration))?
+            .ImplementationInstance as IConfiguration;
+
+        configuration?.GetSection(OptiPowerToolsScheduledJobsInsightsOptions.ConfigurationSectionName).Bind(options);
+
+        // Same precedence as the real binding: configuration first, then code.
+        setupAction(options);
+
+        return options;
     }
 }

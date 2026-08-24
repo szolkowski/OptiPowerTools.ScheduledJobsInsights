@@ -42,20 +42,18 @@ public sealed class ScheduledJobsInsightsCmsController : Controller
     {
         // Authorization is the policy on the class, enforced by the framework before this runs —
         // not a check written out here, which the menu could then disagree with.
-        ViewBag.ExecutionId = id;
-        ViewBag.PageTitle = _options.PageTitle;
-
-        // The reader's time zone, stashed in a cookie by the view's own inline script. Read here and
-        // handed to the components as a parameter rather than looked up inside them: IHttpContextAccessor
-        // is only meaningful during prerendering, and a component that consulted it would see the right
-        // zone on the prerender pass and null once the circuit takes over, flipping the page back to UTC.
-        ViewBag.ViewerTimeZone = Request.Cookies[ViewerClock.CookieName];
-        ViewBag.ShowRetention = string.Equals(view, RetentionView, StringComparison.OrdinalIgnoreCase);
-
-        // Handed to the component rather than read there: retention changes are audited, and a Blazor
-        // component has no HttpContext once the circuit takes over.
-        ViewBag.CurrentUser = User.Identity?.Name;
-
-        return View();
+        //
+        // The time zone comes from a cookie set by the page's own script, read here and handed to the
+        // components as a parameter rather than looked up inside them: IHttpContextAccessor is only
+        // meaningful during prerendering, so a component that consulted it would see the right zone on
+        // the prerender pass and null once the circuit takes over, flipping the page back to UTC. The
+        // current user travels the same way, because retention changes are audited and a component has
+        // no HttpContext once the circuit owns the page.
+        return View(new ScheduledJobsInsightsPageModel(
+            ExecutionId: id,
+            ViewerTimeZone: Request.Cookies[ViewerClock.CookieName],
+            ShowRetention: string.Equals(view, RetentionView, StringComparison.OrdinalIgnoreCase),
+            CurrentUser: User.Identity?.Name,
+            PageTitle: _options.PageTitle));
     }
 }

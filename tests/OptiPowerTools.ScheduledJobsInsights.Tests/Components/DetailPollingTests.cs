@@ -2,6 +2,7 @@ using Bunit;
 using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Data.Entities;
+using OptiPowerTools.ScheduledJobsInsights.Repositories;
 using DetailPage = OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
@@ -12,26 +13,19 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 /// </summary>
 /// <remarks>
 /// Previously left untested because every case needs a second poll tick and the interval was a
-/// hard-coded two seconds. It is now an internal seam, which costs nothing on the public surface —
-/// and this is the trickiest logic in the UI, with a real bug already found in it once (metrics
-/// arriving after the status flipped, leaving a finished run showing an empty metrics table).
+/// hard-coded two seconds. It is now a configuration option, which is a legitimate thing for an
+/// installation to tune and happens to make these tests possible — and this is the trickiest logic in
+/// the UI, with a real bug already found in it once (metrics arriving after the status flipped,
+/// leaving a finished run showing an empty metrics table).
 /// </remarks>
-[Collection(DetailTestCollection.Name)]
 public class DetailPollingTests : ComponentTestBase
 {
-    private static readonly TimeSpan RealPollInterval = DetailPage.PollInterval;
-
     public DetailPollingTests()
     {
-        DetailPage.PollInterval = TimeSpan.FromMilliseconds(20);
+        // Per-instance options now, not a static seam — so these tests no longer have to share an
+        // xUnit collection to keep out of each other's way.
+        Options.DetailPollInterval = TimeSpan.FromMilliseconds(20);
         Options.LogFlushInterval = TimeSpan.FromMilliseconds(10);
-    }
-
-    /// <summary>Restores the real interval so no other class inherits this one's seam.</summary>
-    protected override void Dispose(bool disposing)
-    {
-        DetailPage.PollInterval = RealPollInterval;
-        base.Dispose(disposing);
     }
 
     private IRenderedComponent<DetailPage> RenderDetail() =>
@@ -42,17 +36,73 @@ public class DetailPollingTests : ComponentTestBase
         QueryService.GetExecutionAsync(1, Arg.Any<CancellationToken>())
             .Returns(_ => Task.FromResult<JobExecution?>(first), _ => Task.FromResult<JobExecution?>(rest));
 
+    /// <summary>
+    /// Stubs the narrow projection a poll tick reads, to agree with <paramref name="execution"/>.
+    /// </summary>
+    /// <remarks>
+    /// Without this the substitute returns null and the component falls back to a full read, which is
+    /// the safety net rather than the path under test.
+    /// </remarks>
+    private void GivenStatusMatching(JobExecution execution, int? resultSummaryLength = null) =>
+        QueryService.GetExecutionStatusAsync(1, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<ExecutionStatusSnapshot?>(new ExecutionStatusSnapshot(
+                execution.Status,
+                execution.CompletedAt,
+                execution.ResultMessage,
+                execution.ExceptionMessage,
+                resultSummaryLength ?? execution.ResultSummary?.Length ?? 0)));
+
     [Fact]
     public void WhileTheRunIsInFlight_ThePageKeepsReadingIt()
     {
         var running = AnExecution(status: ExecutionStatus.Running, completedAt: null);
         QueryService.GetExecutionAsync(1, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<JobExecution?>(running));
+        GivenStatusMatching(running);
 
         var page = RenderDetail();
 
         page.WaitForAssertion(
-            () => QueryService.Received(3).GetExecutionAsync(1, Arg.Any<CancellationToken>()),
+            () => QueryService.Received(3).GetExecutionStatusAsync(1, Arg.Any<CancellationToken>()),
+            TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void WhileNothingChanges_ThePageDoesNotReReadTheWholeRow()
+    {
+        // The row carries ResultSummary, InputDataJson and ExceptionStackTrace, all unbounded. Polling
+        // used to re-read all three every couple of seconds, per viewer, for the life of the run —
+        // the very cost the incremental log fetch exists to avoid, paid on a different column.
+        var running = AnExecution(status: ExecutionStatus.Running, completedAt: null);
+        QueryService.GetExecutionAsync(1, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<JobExecution?>(running));
+        GivenStatusMatching(running);
+
+        var page = RenderDetail();
+
+        page.WaitForAssertion(
+            () => QueryService.Received(3).GetExecutionStatusAsync(1, Arg.Any<CancellationToken>()),
+            TimeSpan.FromSeconds(5));
+
+        // Once, at initialisation. Every tick after that read only the projection and the new lines.
+        QueryService.Received(1).GetExecutionAsync(1, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public void WhenACheckpointingJobGrowsItsSummary_ThePageReReadsIt()
+    {
+        // A job calling FlushSummary mid-run changes nothing else about the row, so the length is what
+        // tells the page to go back for the text. Without it the summary would freeze at whatever it
+        // was on first render and only a manual reload would move it.
+        var running = AnExecution(status: ExecutionStatus.Running, completedAt: null, resultSummary: "one line\n");
+        var grown = AnExecution(status: ExecutionStatus.Running, completedAt: null, resultSummary: "one line\ntwo lines\n");
+        GivenExecutionSequence(running, grown);
+        GivenStatusMatching(running, resultSummaryLength: grown.ResultSummary!.Length);
+
+        var page = RenderDetail();
+
+        page.WaitForAssertion(
+            () => Assert.Contains("two lines", page.Markup, StringComparison.Ordinal),
             TimeSpan.FromSeconds(5));
     }
 

@@ -6,7 +6,6 @@ using DetailPage = OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 
-[Collection(DetailTestCollection.Name)]
 public class DetailTests : ComponentTestBase
 {
     private IRenderedComponent<DetailPage> RenderDetail(long id = 1, string? viewerTimeZone = null) =>
@@ -283,4 +282,27 @@ public class DetailTests : ComponentTestBase
         Assert.Equal("/custom/insights", RenderDetail().Find("a").GetAttribute("href"));
     }
 
+
+    [Fact]
+    public void ALogLine_CarriesItsSeverityAsAClass_NotAnInlineStyle()
+    {
+        // Same reason as the status badge: three inline style attributes per console line meant the
+        // whole log lost its severity colouring under any ordinary CSP.
+        GivenExecution(AnExecution());
+        QueryService.GetLogEntriesAsync(1, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<JobLogEntry>>(
+            [
+                new JobLogEntry
+                {
+                    Id = 1, JobExecutionId = 1, Sequence = 1, Timestamp = Noon,
+                    Severity = LogSeverity.Error, Source = LogEntrySource.DevLog, Message = "upstream 503"
+                }
+            ]));
+
+        var line = RenderDetail().Find(".console-line");
+
+        Assert.Contains("sji-sev-error", line.GetAttribute("class"), StringComparison.Ordinal);
+        Assert.Null(line.GetAttribute("style"));
+        Assert.Null(line.QuerySelector(".console-severity")!.GetAttribute("style"));
+    }
 }

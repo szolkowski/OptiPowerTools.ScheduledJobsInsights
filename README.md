@@ -41,9 +41,15 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 
 **Job Retention overview** — the list covers every job deriving from LoggedScheduledJobBase — so a job can be configured before its first run — plus every job type that only exists in history, so records left behind by deleted code can still be trimmed. Those rows are marked history only.
 
-![Result summary section](images/JobRetentionView.png)
+![Job Retention overview](images/JobRetentionView.png)
 
 ## Quick Start
+
+### Install
+
+```bash
+dotnet add package OptiPowerTools.ScheduledJobsInsights
+```
 
 ### Package sources
 
@@ -315,6 +321,8 @@ Code overrides configuration when both are used.
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
 | `MaxLogMessageLength` | `int` | `4000` | Longest log message stored; longer ones are truncated with an ellipsis. The column itself is unbounded, so this is what stops a job that logs a response body per iteration writing megabytes per row. |
 | `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads *and holds* for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer — and it bounds the total across all the polls of a running job, not just one read. A longer log is displayed truncated, with a notice above it saying so. |
+| `DetailPollInterval` | `TimeSpan` | `00:00:02` | How often the detail page re-reads an execution that is still running. One query per open page per interval, so it scales with viewers rather than with history; each tick reads a narrow projection plus any new log lines, not the whole row. |
+| `AddBlazorServices` | `bool` | `true` | Whether to register Blazor Server and cascading authentication state. Set to `false` when the host registers Blazor itself — its registrations must be equivalent, or the retention screen loses the authorization re-check it makes before a destructive write. The service-side counterpart to `MapBlazorHub`. |
 | `InterruptedExecutionThreshold` | `TimeSpan` | `24:00:00` | How long a run may sit unfinished before the cleanup job records it as **Interrupted**. `TimeSpan.Zero` disables the sweep. |
 | `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |

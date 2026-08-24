@@ -151,4 +151,16 @@ public class OptiPowerToolsScheduledJobsInsightsOptionsValidatorTests
         Assert.True(result.Failed);
         Assert.Equal(3, result.Failures.Count());
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ANonPositiveDetailPollInterval_IsRejected(int seconds)
+    {
+        // Zero would spin the detail page's PeriodicTimer as fast as the database answers, one query
+        // per tick per open page.
+        var result = Validate(options => options.DetailPollInterval = TimeSpan.FromSeconds(seconds));
+
+        Assert.Contains("DetailPollInterval", string.Join(" ", result.Failures ?? []), StringComparison.Ordinal);
+    }
 }

@@ -51,6 +51,11 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
         if (options.LogFlushInterval <= TimeSpan.Zero)
             failures.Add($"LogFlushInterval must be greater than zero (was {options.LogFlushInterval}).");
 
+        // Zero or negative would spin the detail page's PeriodicTimer as fast as the database answers,
+        // one query per tick per open page.
+        if (options.DetailPollInterval <= TimeSpan.Zero)
+            failures.Add($"DetailPollInterval must be greater than zero (was {options.DetailPollInterval}).");
+
         if (!IsUsableShellPath(options.CmsShellPath))
         {
             failures.Add($"CmsShellPath must be an absolute path with at least one segment and no query string "

@@ -2,17 +2,28 @@ using OptiPowerTools.ScheduledJobsInsights.Configuration;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 
-/// <summary>Maps <see cref="LogSeverity"/> to display colors. The only place in the package where severity becomes a color.</summary>
+/// <summary>
+/// Maps <see cref="LogSeverity"/> to the CSS class that colours it. The only place in the package
+/// where severity becomes an appearance.
+/// </summary>
+/// <remarks>
+/// A class name rather than a hex colour, deliberately. Emitting the colour inline meant three
+/// <c>style</c> attributes per console line, and a CMS back office served under a <c>style-src</c>
+/// policy without <c>'unsafe-inline'</c> — the normal case — drops every one of them: the log loses
+/// all severity colouring, silently. Returning a class also puts the palette in the stylesheet with
+/// the rest of the styling, where a host can override it and where a dark theme is possible at all.
+/// </remarks>
 internal static class LogSeverityStyles
 {
-    public static string HexColor(LogSeverity severity) => severity switch
+    /// <summary>The CSS class carrying this severity's colour.</summary>
+    public static string CssClass(LogSeverity severity) => severity switch
     {
-        LogSeverity.Info => "#4FC3F7",
-        LogSeverity.Success => "#66BB6A",
-        LogSeverity.Warning => "#FFCA28",
-        LogSeverity.Error => "#EF5350",
-        LogSeverity.Debug => "#9E9E9E",
-        _ => "#B0BEC5"
+        LogSeverity.Info => "sji-sev-info",
+        LogSeverity.Success => "sji-sev-success",
+        LogSeverity.Warning => "sji-sev-warning",
+        LogSeverity.Error => "sji-sev-error",
+        LogSeverity.Debug => "sji-sev-debug",
+        _ => "sji-sev-default"
     };
 
     public static string Label(LogSeverity severity) => severity switch

@@ -6,7 +6,7 @@
     <!-- NuGet Package Metadata -->
     <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
          value here is only what a local `dotnet pack` produces. -->
-    <Version>1.0.0-rc.1</Version>
+    <Version>1.0.0-rc.2</Version>
     <Authors>Stanisław Szołkowski</Authors>
     <Copyright>Stanisław Szołkowski 2026</Copyright>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>

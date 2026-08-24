@@ -51,7 +51,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="EPiServer.CMS.AspNetCore" Version="[13.0.0,14.0.0)" />
+    <PackageReference Include="EPiServer.CMS.AspNetCore" Version="[13.1.2, 14.0.0)" />
     <PackageReference Include="EPiServer.CMS.UI.Core" Version="[13.0.0,14.0.0)" />
   </ItemGroup>
 

@@ -30,7 +30,7 @@ public class Startup
 
         _alloySiteStartup.ConfigureServices(services);
 
-        services.AddOptiPowerToolScheduledJobsInsights();
+        services.AddOptiPowerToolsScheduledJobsInsights();
     }
 
     /// <remarks>
@@ -59,7 +59,7 @@ public class Startup
         app.UseOptiPowerToolHangfire();
 
         // Must precede the UseEndpoints below - see the remarks above.
-        app.UseOptiPowerToolScheduledJobsInsights();
+        app.UseOptiPowerToolsScheduledJobsInsights();
 
         app.UseEndpoints(endpoints =>
         {

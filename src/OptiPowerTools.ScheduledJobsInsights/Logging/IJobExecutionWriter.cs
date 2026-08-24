@@ -10,9 +10,11 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Intended to be consumed, not implemented.</b> Resolve it from DI to record executions that are
-/// not scheduled jobs; do not implement it in consuming code. Members may be added in future minor
-/// versions, which would break any outside implementation.
+/// <b>Not an extension point.</b> Resolve it from DI to record executions that are not scheduled
+/// jobs; do not implement it in consuming code. Members may be added in a minor version — which is
+/// precisely why implementing it is unsupported, and why no <c>[Obsolete]</c> shim or default
+/// implementation will be provided for one. To send execution data somewhere else, replace the
+/// registration of the concrete writer rather than implementing this.
 /// </para>
 /// <b>No member of this interface throws.</b> Implementations report failures out of band and carry
 /// on. A job is running when these are called, and this package's contract is that it only
@@ -54,7 +56,7 @@ public interface IJobExecutionWriter
     /// <param name="executionId">Execution to attach the summary to.</param>
     /// <param name="summary">
     /// The rendered summary. Truncated to the configured
-    /// <see cref="Configuration.OptiPowerToolScheduledJobsInsightsOptions.MaxResultSummaryLength"/>
+    /// <see cref="Configuration.OptiPowerToolsScheduledJobsInsightsOptions.MaxResultSummaryLength"/>
     /// if longer, so callers writing an execution directly are bounded the same way
     /// <see cref="JobResultSummary"/> is.
     /// </param>

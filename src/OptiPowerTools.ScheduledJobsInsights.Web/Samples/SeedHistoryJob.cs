@@ -48,12 +48,15 @@ public sealed class SeedHistoryJob : LoggedScheduledJobBase
 
     private readonly IJobExecutionWriter _writer;
 
-    public SeedHistoryJob(JobLoggingContext context)
+    public SeedHistoryJob(JobLoggingContext context, IJobExecutionWriter writer)
         : base(context)
     {
-        // The writer is public API precisely so callers like this one can record executions that are
-        // not scheduled job runs at all.
-        _writer = context.Writer;
+        // Injected, not taken off the context: the writer is public API precisely so callers like this
+        // one can record executions that are not scheduled job runs at all, and DI is how they get it.
+        // Optimizely builds jobs through ActivatorUtilities, so a second constructor parameter costs
+        // nothing. Reaching through JobLoggingContext would bypass the base class's execution-id guard
+        // and sequence counter for this job's *own* run, which is why the context does not expose it.
+        _writer = writer;
     }
 
     protected override string ExecuteJob()

@@ -72,10 +72,16 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
 
     /// <summary>
     /// Records the stop request, cancels <see cref="StopToken"/> and raises the base implementation.
-    /// Override to add your own cancellation, and call <c>base.Stop()</c> so the outcome is still
-    /// recorded correctly.
+    /// Sealed — override <see cref="OnStopRequested"/> to add cancellation of your own.
     /// </summary>
-    public override void Stop()
+    /// <remarks>
+    /// Sealed for the same reason as <see cref="Execute"/> and <see cref="OnStatusChanged"/>: the
+    /// bookkeeping here has to happen. It used to be overridable with a doc comment asking derived
+    /// jobs to call <c>base.Stop()</c>, and forgetting that lost <see cref="IsStopRequested"/> and
+    /// <see cref="StopToken"/> silently — so a run cut short was recorded as
+    /// <see cref="ExecutionStatus.Succeeded"/>, which is the one outcome that must never be wrong.
+    /// </remarks>
+    public sealed override void Stop()
     {
         _stopRequested = true;
 
@@ -89,7 +95,34 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
             // throwing over — this is called by the CMS, not by the job.
         }
 
+        try
+        {
+            OnStopRequested();
+        }
+        catch (Exception ex)
+        {
+            // A job's own stop handling must not prevent the stop from being recorded, nor throw into
+            // the CMS thread that pressed the button. The request is already registered above, so the
+            // run still ends as Stopped either way.
+            Log($"The job's OnStopRequested handler threw: {ex.Message}", LogSeverity.Warning);
+        }
+
         base.Stop();
+    }
+
+    /// <summary>
+    /// Called when an administrator stops the run, after the stop has been recorded and
+    /// <see cref="StopToken"/> cancelled. Override to cancel work of your own; the default does
+    /// nothing.
+    /// </summary>
+    /// <remarks>
+    /// Most jobs need nothing here — checking <see cref="IsStopRequested"/> between units of work, or
+    /// passing <see cref="StopToken"/> to whatever they call, is the ordinary way to honour a stop.
+    /// This exists for the job that holds something the token cannot reach. It is called on the CMS's
+    /// thread, not the job's, so keep it short and do not block.
+    /// </remarks>
+    protected virtual void OnStopRequested()
+    {
     }
 
     /// <summary>
@@ -204,13 +237,16 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         {
             json = JsonSerializer.Serialize(inputData, InputDataJsonOptions);
         }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        catch (Exception ex)
         {
-            // Reachable with any ordinary domain object: an EF navigation or an IContent is a
-            // reference cycle, and cycles, depth limits and unsupported types all throw. Recording
-            // the failure is right; letting it out of here would fail a job that merely described
-            // its own input.
-            json = JsonSerializer.Serialize(new { InputDataUnavailable = ex.Message });
+            // Deliberately unfiltered. Cycles, depth limits and unsupported types arrive as
+            // JsonException/NotSupportedException — but System.Text.Json does not wrap what a
+            // property getter throws, it propagates it unchanged. A disposed lazy-loading proxy
+            // raises ObjectDisposedException, an IContent's computed property raises whatever it
+            // likes, and a filtered catch would let those out of here and fail a job that merely
+            // described its own input. Recording why is the whole point; nothing serialized here is
+            // worth a failed run.
+            json = SerializeUnavailable(ex);
         }
 
         _writer.SetInputData(executionId, json);
@@ -280,6 +316,28 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
         _writer.Complete(executionId, outcome, resultMessage, exception);
     }
 
+    /// <summary>
+    /// Renders "the input could not be captured, and here is why" as JSON, without trusting the
+    /// exception either.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Exception.Message"/> is itself overridable, so a hostile or merely careless
+    /// exception type can throw from the very property this reads. That would put a throw back on the
+    /// path this whole method exists to keep clear, so the type name — which cannot throw — is the
+    /// fallback.
+    /// </remarks>
+    private static string SerializeUnavailable(Exception ex)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(new { InputDataUnavailable = ex.Message });
+        }
+        catch
+        {
+            return JsonSerializer.Serialize(new { InputDataUnavailable = ex.GetType().FullName });
+        }
+    }
+
     /// <summary>Options used for <see cref="LogInputData"/>, tolerant of ordinary domain objects.</summary>
     private static readonly JsonSerializerOptions InputDataJsonOptions = new()
     {
@@ -317,7 +375,10 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     {
         try
         {
-            var job = _context.ScheduledJobRepository.Get(scheduledJobId);
+            // Null outside a CMS — a context built by JobLoggingContext.ForWriter for a unit test.
+            // Checked rather than left to the catch below, which is there for a lookup that fails,
+            // not for a collaborator that was never supplied.
+            var job = _context.ScheduledJobRepository?.Get(scheduledJobId);
             if (job is not null && !string.IsNullOrEmpty(job.Name))
                 return job.Name;
         }

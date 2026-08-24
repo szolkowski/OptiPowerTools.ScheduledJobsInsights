@@ -18,7 +18,7 @@ public enum CmsMenuPlacement
 
     /// <summary>
     /// Creates a new section group and nests the menu item underneath it.
-    /// The section name is controlled by <see cref="OptiPowerToolScheduledJobsInsightsOptions.CustomSectionName"/>.
+    /// The section name is controlled by <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CustomSectionName"/>.
     /// </summary>
     CustomSection = 2
 }

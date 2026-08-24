@@ -43,7 +43,7 @@ public class JobRetentionServiceTests
             new JobRetentionPolicyStore(factory, NullLogger<JobRetentionPolicyStore>.Instance),
             new RegisteredJobNames(repository, NullLogger<RegisteredJobNames>.Instance),
             new LoggedJobTypeIndex(),
-            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions { RetentionDays = defaultDays }),
+            Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { RetentionDays = defaultDays }),
             logger ?? NullLogger<JobRetentionService>.Instance,
             timeProvider);
 

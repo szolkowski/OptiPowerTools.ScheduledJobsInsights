@@ -50,16 +50,16 @@ public abstract class ComponentTestBase : BunitContext
                 Arg.Any<ExecutionFilter>(), Arg.Any<ExecutionCursor?>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new ExecutionPage([], null, false)));
 
-        Options = new OptiPowerToolScheduledJobsInsightsOptions();
+        Options = new OptiPowerToolsScheduledJobsInsightsOptions();
 
         Services.AddSingleton(QueryService);
-        Services.AddSingleton<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>(
-            new OptionsWrapper<OptiPowerToolScheduledJobsInsightsOptions>(Options));
+        Services.AddSingleton<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>(
+            new OptionsWrapper<OptiPowerToolsScheduledJobsInsightsOptions>(Options));
     }
 
     internal IJobExecutionQueryService QueryService { get; }
 
-    internal OptiPowerToolScheduledJobsInsightsOptions Options { get; }
+    internal OptiPowerToolsScheduledJobsInsightsOptions Options { get; }
 
     /// <summary>A fixed instant, so rendered timestamps are assertable rather than relative to now.</summary>
     protected static readonly DateTimeOffset Noon = new(2026, 8, 19, 12, 0, 0, TimeSpan.Zero);

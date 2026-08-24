@@ -3,8 +3,17 @@ namespace OptiPowerTools.ScheduledJobsInsights.Configuration;
 /// <summary>
 /// Configuration options for the OptiPowerTools ScheduledJobsInsights Blazor integration.
 /// </summary>
-public class OptiPowerToolScheduledJobsInsightsOptions
+public class OptiPowerToolsScheduledJobsInsightsOptions
 {
+    /// <summary>
+    /// The configuration section these options bind from — <c>"OptiPowerTools:ScheduledJobsInsights"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so a host that reads or rewrites the section itself does not have to repeat the string,
+    /// and so a rename would be a compile error rather than a silently unbound configuration.
+    /// </remarks>
+    public const string ConfigurationSectionName = "OptiPowerTools:ScheduledJobsInsights";
+
     /// <summary>
     /// SQL Server connection string used to store job executions, logs, and metrics. Required — there is
     /// no fallback to the CMS's own "EPiServerDB" connection string.
@@ -92,8 +101,9 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     /// <remarks>
     /// The reader is a Blazor Server circuit, which holds every line it is given for as long as the
     /// page stays open — so an unbounded read of a very chatty execution is an out-of-memory on the
-    /// server, once per viewer. A run that exceeds this is reported as truncated rather than
-    /// silently shortened.
+    /// server, once per viewer. This bounds both halves of that: the query asks for no more than this
+    /// many lines, and the page holds no more than this many across all the polls of a running
+    /// execution. A run that exceeds it is displayed truncated, and says so above the log.
     /// </remarks>
     public int MaxLogEntriesPerExecution { get; set; } = DefaultMaxLogEntriesPerExecution;
 
@@ -222,7 +232,7 @@ public class OptiPowerToolScheduledJobsInsightsOptions
     public string CmsShellPath { get; set; } = "/ScheduledJobsInsightsCms/Index";
 
     /// <summary>
-    /// Whether <c>UseOptiPowerToolScheduledJobsInsights</c> maps the Blazor Server hub.
+    /// Whether <c>UseOptiPowerToolsScheduledJobsInsights</c> maps the Blazor Server hub.
     /// <c>null</c> (the default) detects an existing <c>/_blazor</c> mapping and skips its own.
     /// </summary>
     /// <remarks>

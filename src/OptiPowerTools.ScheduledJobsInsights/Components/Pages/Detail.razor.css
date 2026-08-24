@@ -121,6 +121,15 @@
     opacity: 0.65;
 }
 
+/* A flex item like its siblings, so it needs to claim the whole row rather than squeeze in between
+   the heading and the jump buttons. flex-wrap is already on for narrow viewports. */
+.log-truncated {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
 .log-actions {
     display: flex;
     gap: 0.5rem;

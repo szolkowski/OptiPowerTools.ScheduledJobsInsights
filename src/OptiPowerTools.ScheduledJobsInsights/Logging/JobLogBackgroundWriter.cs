@@ -11,8 +11,8 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 
 /// <summary>
 /// Drains the channel that <see cref="JobExecutionWriter"/> buffers log lines and metrics into,
-/// flushing them to the database in batches — either when <see cref="OptiPowerToolScheduledJobsInsightsOptions.LogBatchSize"/>
-/// records have accumulated or <see cref="OptiPowerToolScheduledJobsInsightsOptions.LogFlushInterval"/> has elapsed,
+/// flushing them to the database in batches — either when <see cref="OptiPowerToolsScheduledJobsInsightsOptions.LogBatchSize"/>
+/// records have accumulated or <see cref="OptiPowerToolsScheduledJobsInsightsOptions.LogFlushInterval"/> has elapsed,
 /// whichever comes first. On shutdown, remaining buffered records are drained and flushed one final time.
 /// </summary>
 /// <remarks>
@@ -49,13 +49,13 @@ internal sealed class JobLogBackgroundWriter : BackgroundService
 
     private readonly Channel<JobRecord> _channel;
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
     private readonly ILogger<JobLogBackgroundWriter> _logger;
 
     public JobLogBackgroundWriter(
         Channel<JobRecord> channel,
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         ILogger<JobLogBackgroundWriter> logger)
     {
         _channel = channel;

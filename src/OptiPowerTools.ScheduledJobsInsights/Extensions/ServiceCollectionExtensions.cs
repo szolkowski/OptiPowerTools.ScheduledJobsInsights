@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using EPiServer.DataAbstraction;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -34,12 +35,13 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Adds ScheduledJobsInsights services configured for Optimizely CMS with default options.
-    /// Values bind from "OptiPowerTools:ScheduledJobsInsights" in configuration.
+    /// Values bind from the
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.ConfigurationSectionName"/> section.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> is <c>null</c>.</exception>
-    public static IServiceCollection AddOptiPowerToolScheduledJobsInsights(this IServiceCollection services) =>
-        services.AddOptiPowerToolScheduledJobsInsights(_ => { });
+    public static IServiceCollection AddOptiPowerToolsScheduledJobsInsights(this IServiceCollection services) =>
+        services.AddOptiPowerToolsScheduledJobsInsights(_ => { });
 
     /// <summary>
     /// Adds ScheduledJobsInsights services with the specified options.
@@ -55,9 +57,9 @@ public static class ServiceCollectionExtensions
     /// would otherwise add a second <see cref="JobLogBackgroundWriter"/> draining a channel created
     /// with <c>SingleReader = true</c>, whose behaviour is undefined.
     /// </remarks>
-    public static IServiceCollection AddOptiPowerToolScheduledJobsInsights(
+    public static IServiceCollection AddOptiPowerToolsScheduledJobsInsights(
         this IServiceCollection services,
-        Action<OptiPowerToolScheduledJobsInsightsOptions> setupAction)
+        Action<OptiPowerToolsScheduledJobsInsightsOptions> setupAction)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(setupAction);
@@ -67,18 +69,18 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(RegistrationMarker.Instance);
 
-        services.AddOptions<OptiPowerToolScheduledJobsInsightsOptions>()
+        services.AddOptions<OptiPowerToolsScheduledJobsInsightsOptions>()
             .Configure<IConfiguration>((options, configuration) =>
             {
-                configuration.GetSection("OptiPowerTools:ScheduledJobsInsights").Bind(options);
+                configuration.GetSection(OptiPowerToolsScheduledJobsInsightsOptions.ConfigurationSectionName).Bind(options);
                 setupAction(options);
             })
             // Startup is the last moment a misconfiguration is cheap to notice; every one of these
             // otherwise degrades silently once jobs start running.
             .ValidateOnStart();
 
-        services.TryAddSingleton<IValidateOptions<OptiPowerToolScheduledJobsInsightsOptions>,
-            OptiPowerToolScheduledJobsInsightsOptionsValidator>();
+        services.TryAddSingleton<IValidateOptions<OptiPowerToolsScheduledJobsInsightsOptions>,
+            OptiPowerToolsScheduledJobsInsightsOptionsValidator>();
 
         services.AddHttpContextAccessor();
 
@@ -100,13 +102,13 @@ public static class ServiceCollectionExtensions
 
         services.AddPooledDbContextFactory<ScheduledJobsInsightsDbContext>((provider, optionsBuilder) =>
         {
-            var insightsOptions = provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+            var insightsOptions = provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
             optionsBuilder.UseSqlServer(insightsOptions.ConnectionString);
         });
 
         services.AddSingleton(provider =>
         {
-            var insightsOptions = provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+            var insightsOptions = provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
             return Channel.CreateBounded<JobRecord>(new BoundedChannelOptions(insightsOptions.LogChannelCapacity)
             {
                 SingleReader = true,
@@ -129,12 +131,22 @@ public static class ServiceCollectionExtensions
         // The same instance under its public, cleanup-facing face.
         services.AddSingleton<IJobRetentionPolicySource>(provider => provider.GetRequiredService<IJobRetentionService>());
 
+        // Per-application, so calling both Use... and Map... cannot map the Blazor hub twice.
+        services.AddSingleton<HubMappedMarker>();
+
         services.AddSingleton<IJobExecutionWriter, JobExecutionWriter>();
 
         // What every logged job takes in its constructor. Transient rather than singleton so it
         // inherits whatever lifetime the host gives IScheduledJobRepository — the same constraint
-        // jobs were already under when they took that repository directly.
-        services.AddTransient<JobLoggingContext>();
+        // jobs were already under when they took that repository directly. Built by a factory because
+        // the constructor is internal: ActivatorUtilities, which AddTransient<T>() uses, needs a
+        // public one.
+        services.AddTransient(serviceProvider => new JobLoggingContext(
+            serviceProvider.GetRequiredService<IJobExecutionWriter>(),
+            serviceProvider.GetRequiredService<IScheduledJobRepository>(),
+            serviceProvider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>()
+                .Value.MaxResultSummaryLength,
+            serviceProvider.GetRequiredService<TimeProvider>()));
         services.AddSingleton<IJobExecutionQueryService, JobExecutionQueryService>();
         services.AddSingleton<ICleanupRepository, CleanupRepository>();
         services.AddHostedService<JobLogBackgroundWriter>();

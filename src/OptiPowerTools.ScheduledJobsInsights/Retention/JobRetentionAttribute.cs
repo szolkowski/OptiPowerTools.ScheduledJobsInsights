@@ -2,7 +2,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 
 /// <summary>
 /// Declares how long this job's execution history should be kept, overriding the installation-wide
-/// <see cref="Configuration.OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/>.
+/// <see cref="Configuration.OptiPowerToolsScheduledJobsInsightsOptions.RetentionDays"/>.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -8,8 +8,9 @@
 @using OptiPowerTools.ScheduledJobsInsights.Configuration
 @using OptiPowerTools.ScheduledJobsInsights.Data.Entities
 @using OptiPowerTools.ScheduledJobsInsights.Repositories
+@using Microsoft.AspNetCore.Components.Web.Virtualization
 @inject IJobExecutionQueryService QueryService
-@inject IOptions<OptiPowerToolScheduledJobsInsightsOptions> Options
+@inject IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Options
 @inject IJSRuntime JS
 
 <p><a href="@Options.Value.CmsShellPath">&larr; Back to executions</a></p>
@@ -119,6 +120,16 @@ else
                 <span class="live-indicator" role="status">live</span>
             }
         </h2>
+        @if (_log.Truncated)
+        {
+            @* Said out loud, because a truncated log read as a complete one is worse than no log:
+               the missing lines are the tail, which is where a failure's cause usually is. *@
+            <p class="log-truncated" role="status">
+                Showing the first @LogCountLabel of this execution. It logged more than the
+                configured maximum, so the rest is not displayed &mdash; raise
+                <code>MaxLogEntriesPerExecution</code> to see more.
+            </p>
+        }
         @if (_log.Entries.Count > 0)
         {
             @* Only useful once the circuit is up, since jumping needs JS interop. *@
@@ -177,7 +188,11 @@ else
     /// </summary>
     private const int SummaryAutoCollapseLines = 200;
 
-    private readonly LogEntryBuffer _log = new();
+    /// <summary>
+    /// Built in <c>OnInitializedAsync</c> rather than initialised here, because its bound comes from
+    /// the injected options and property injection has not run when field initialisers do.
+    /// </summary>
+    private LogEntryBuffer _log = default!;
     private readonly CancellationTokenSource _disposalCts = new();
 
     private ViewerClock _clock = ViewerClock.Utc;
@@ -212,6 +227,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _log = new LogEntryBuffer(Options.Value.MaxLogEntriesPerExecution);
+
         // Resolved once from a parameter rather than looked up per render: the zone cannot change
         // without a new request, and TimeZoneInfo lookups are not free.
         _clock = ViewerClock.ForZone(ViewerTimeZone);
@@ -349,8 +366,17 @@ else
     /// Fetches log lines written since the last poll. <see cref="LogEntryBuffer"/> decides where to
     /// resume from and holds the reasoning for why that is not simply the highest line seen.
     /// </summary>
-    private async Task LoadLogEntriesAsync(CancellationToken cancellationToken) =>
+    /// <remarks>
+    /// Skipped entirely once the buffer is full: nothing further can be held, so continuing would
+    /// re-run a capped query every two seconds only to throw the rows away.
+    /// </remarks>
+    private async Task LoadLogEntriesAsync(CancellationToken cancellationToken)
+    {
+        if (_log.IsFull)
+            return;
+
         _log.Merge(await QueryService.GetLogEntriesAsync(Id, _log.ResumeFrom, cancellationToken));
+    }
 
     /// <summary>
     /// Refreshes the summary's header badge and, the first time a summary appears, decides whether

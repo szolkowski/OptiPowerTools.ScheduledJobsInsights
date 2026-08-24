@@ -17,7 +17,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Jobs;
 /// <remarks>
 /// Retention is resolved per job type, in the order override, then
 /// <see cref="JobRetentionAttribute"/>, then
-/// <see cref="OptiPowerToolScheduledJobsInsightsOptions.RetentionDays"/>. Jobs resolving to
+/// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.RetentionDays"/>. Jobs resolving to
 /// indefinite are skipped entirely. Everything else is deleted in batches so no single transaction
 /// holds locks for long.
 /// </remarks>
@@ -31,7 +31,7 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 {
     private readonly ICleanupRepository _cleanupRepository;
     private readonly IJobRetentionPolicySource _retentionService;
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
     /// <param name="context">Collaborators the base class records this job's own runs with.</param>
@@ -43,7 +43,7 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         JobLoggingContext context,
         ICleanupRepository cleanupRepository,
         IJobRetentionPolicySource retentionService,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options)
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options)
         : base(context)
     {
         ArgumentNullException.ThrowIfNull(cleanupRepository);

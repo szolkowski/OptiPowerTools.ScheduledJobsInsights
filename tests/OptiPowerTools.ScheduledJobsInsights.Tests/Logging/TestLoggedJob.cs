@@ -117,6 +117,95 @@ internal sealed class UnserializableInputJob : LoggedScheduledJobBase
     }
 }
 
+/// <summary>
+/// A node whose getter throws, which is what a disposed lazy-loading proxy or a computed
+/// <c>IContent</c> property does.
+/// </summary>
+/// <remarks>
+/// The distinction that matters: <c>System.Text.Json</c> raises its own failures as
+/// <c>JsonException</c>/<c>NotSupportedException</c>, but propagates a getter's exception unchanged.
+/// So this is not "serializable with difficulty", it is a throw from user code arriving through the
+/// serializer — which a filtered catch does not see.
+/// </remarks>
+internal sealed class ThrowingGetterNode
+{
+    public string Name => throw new ObjectDisposedException("SomeDbContext");
+}
+
+/// <summary>Logs input data whose property getter throws an exception of its own.</summary>
+internal sealed class ThrowingGetterInputJob : LoggedScheduledJobBase
+{
+    public ThrowingGetterInputJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    protected override string ExecuteJob()
+    {
+        LogInputData(new ThrowingGetterNode());
+        return "done";
+    }
+}
+
+/// <summary>An exception whose <c>Message</c> throws — the fallback path of the guard.</summary>
+internal sealed class HostileException : Exception
+{
+    public override string Message => throw new InvalidOperationException("even the message throws");
+}
+
+/// <summary>A node whose getter throws a <see cref="HostileException"/>.</summary>
+internal sealed class HostileNode
+{
+    public string Name => throw new HostileException();
+}
+
+/// <summary>Logs input data whose getter throws an exception that cannot be described either.</summary>
+internal sealed class HostileGetterInputJob : LoggedScheduledJobBase
+{
+    public HostileGetterInputJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    protected override string ExecuteJob()
+    {
+        LogInputData(new HostileNode());
+        return "done";
+    }
+}
+
+/// <summary>Uses the <c>OnStopRequested</c> seam that replaced overriding <c>Stop()</c>.</summary>
+internal sealed class StopSeamJob : LoggedScheduledJobBase
+{
+    public StopSeamJob(IJobExecutionWriter writer)
+        : base(TestJobLoggingContext.For(writer))
+    {
+    }
+
+    public bool SeamCalled { get; private set; }
+
+    /// <summary>Whether the base class had already recorded the stop by the time the seam ran.</summary>
+    public bool StopWasAlreadyRecorded { get; private set; }
+
+    /// <summary>Set to have the seam throw, as a careless override would.</summary>
+    public bool SeamThrows { get; set; }
+
+    protected override void OnStopRequested()
+    {
+        SeamCalled = true;
+        StopWasAlreadyRecorded = IsStopRequested && StopToken.IsCancellationRequested;
+
+        if (SeamThrows)
+            throw new InvalidOperationException("handler exploded");
+    }
+
+    protected override string ExecuteJob()
+    {
+        Stop();
+        return "done";
+    }
+}
+
 /// <summary>Observes <c>StopToken</c> across the boundaries of a run.</summary>
 internal sealed class TokenObservingJob : LoggedScheduledJobBase
 {

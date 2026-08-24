@@ -7,16 +7,16 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Configuration;
 /// Every case here used to start the application successfully and then misbehave silently — which is
 /// why validation exists at all.
 /// </summary>
-public class OptiPowerToolScheduledJobsInsightsOptionsValidatorTests
+public class OptiPowerToolsScheduledJobsInsightsOptionsValidatorTests
 {
-    private static readonly OptiPowerToolScheduledJobsInsightsOptionsValidator Validator = new();
+    private static readonly OptiPowerToolsScheduledJobsInsightsOptionsValidator Validator = new();
 
-    private static OptiPowerToolScheduledJobsInsightsOptions Valid() => new()
+    private static OptiPowerToolsScheduledJobsInsightsOptions Valid() => new()
     {
         ConnectionString = "Server=.;Database=Insights;Trusted_Connection=True;"
     };
 
-    private static ValidateOptionsResult Validate(Action<OptiPowerToolScheduledJobsInsightsOptions> mutate)
+    private static ValidateOptionsResult Validate(Action<OptiPowerToolsScheduledJobsInsightsOptions> mutate)
     {
         var options = Valid();
         mutate(options);

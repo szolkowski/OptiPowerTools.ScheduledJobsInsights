@@ -151,7 +151,7 @@ jobs:
           echo "::endgroup::"
 
           # Re-applying must change nothing. A migration that is not idempotent breaks every existing
-          # installation on upgrade, and UseOptiPowerToolScheduledJobsInsights runs Migrate() on every
+          # installation on upgrade, and UseOptiPowerToolsScheduledJobsInsights runs Migrate() on every
           # single startup.
           echo "::group::Re-applying (must be a no-op)"
           apply | tee /tmp/second-apply.log

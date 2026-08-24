@@ -45,7 +45,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     public JobExecutionWriter(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
         Channel<JobRecord> channel,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         ILogger<JobExecutionWriter> logger)
     {
         _dbContextFactory = dbContextFactory;
@@ -60,7 +60,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         var configuredLogLength = options.Value.MaxLogMessageLength;
         _maxLogMessageLength = configuredLogLength > 0
             ? configuredLogLength
-            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogMessageLength;
+            : OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogMessageLength;
     }
 
     public long? BeginExecution(Guid scheduledJobId, string jobName, string jobTypeName)

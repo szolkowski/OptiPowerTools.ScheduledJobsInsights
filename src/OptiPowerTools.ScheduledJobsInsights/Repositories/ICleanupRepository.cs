@@ -2,16 +2,27 @@ namespace OptiPowerTools.ScheduledJobsInsights.Repositories;
 
 /// <summary>Deletes aged-out job execution history. Child log/metric rows cascade at the database level.</summary>
 /// <remarks>
-/// Intended to be consumed rather than implemented; it is public only because
-/// <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> must be public for Optimizely to discover it,
-/// which forces its constructor parameter types to be public too.
+/// <para>
+/// Public only because <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> must be public for
+/// Optimizely to discover it, which forces its constructor parameter types to be public too.
+/// </para>
+/// <para>
+/// <b>Not an extension point.</b> Do not implement it in consuming code. Members may be added in a
+/// minor version — which is precisely why implementing it is unsupported, and why no
+/// <c>[Obsolete]</c> shim or default implementation will be provided for one.
+/// </para>
 /// </remarks>
 public interface ICleanupRepository
 {
     /// <summary>
-    /// Deletes up to <paramref name="batchSize"/> executions older than <paramref name="cutoff"/>,
-    /// skipping any job type that has its own retention rule.
+    /// Deletes up to <paramref name="batchSize"/> finished executions older than
+    /// <paramref name="cutoff"/>, skipping any job type that has its own retention rule.
     /// </summary>
+    /// <remarks>
+    /// Executions still <see cref="Configuration.ExecutionStatus.Running"/> are never deleted, however
+    /// old: a job may legitimately run for longer than its own retention, and removing the row under a
+    /// live run destroys that run's history rather than trimming an old one.
+    /// </remarks>
     /// <param name="cutoff">Executions started before this are eligible.</param>
     /// <param name="batchSize">Maximum executions to delete in this call.</param>
     /// <param name="excludedJobTypeNames">
@@ -32,9 +43,13 @@ public interface ICleanupRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Deletes up to <paramref name="batchSize"/> executions of one job type older than
+    /// Deletes up to <paramref name="batchSize"/> finished executions of one job type older than
     /// <paramref name="cutoff"/>.
     /// </summary>
+    /// <remarks>
+    /// As above, executions still <see cref="Configuration.ExecutionStatus.Running"/> are left alone
+    /// whatever their age.
+    /// </remarks>
     /// <param name="jobTypeName">CLR full name of the job whose history is being trimmed.</param>
     /// <param name="cutoff">Executions started before this are eligible.</param>
     /// <param name="batchSize">Maximum executions to delete in this call.</param>

@@ -14,32 +14,32 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Extensions;
 public class ServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddOptiPowerToolScheduledJobsInsights_RegistersOptionsAndMenuProvider()
+    public void AddOptiPowerToolsScheduledJobsInsights_RegistersOptionsAndMenuProvider()
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
 
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.PageTitle = "Custom Title";
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;";
         });
 
         var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value;
+        var options = provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value;
 
         Assert.Equal("Custom Title", options.PageTitle);
         Assert.NotNull(provider.GetRequiredService<ScheduledJobsInsightsMenuProvider>());
     }
 
     /// <summary>A collection with the package registered and nothing else of interest.</summary>
-    private static ServiceCollection Registered(Action<OptiPowerToolScheduledJobsInsightsOptions>? configure = null)
+    private static ServiceCollection Registered(Action<OptiPowerToolsScheduledJobsInsightsOptions>? configure = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;";
             configure?.Invoke(options);
@@ -51,7 +51,7 @@ public class ServiceCollectionExtensionsTests
         services.Single(descriptor => descriptor.ServiceType == typeof(TService)).Lifetime;
 
     [Fact]
-    public void AddOptiPowerToolScheduledJobsInsights_RegistersDataAndLoggingServices()
+    public void AddOptiPowerToolsScheduledJobsInsights_RegistersDataAndLoggingServices()
     {
         var provider = Registered().BuildServiceProvider();
 
@@ -87,7 +87,7 @@ public class ServiceCollectionExtensionsTests
         // Plausible with a shared bootstrap library plus Program.cs. Two writers would drain one
         // channel created with SingleReader = true, whose behaviour is undefined.
         var services = Registered();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
             options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;");
 
         var provider = services.BuildServiceProvider();
@@ -101,13 +101,13 @@ public class ServiceCollectionExtensionsTests
         // A second call is a no-op in full: it must not silently re-apply defaults over the values
         // the first one set.
         var services = Registered(options => options.PageTitle = "From the first call");
-        services.AddOptiPowerToolScheduledJobsInsights(options => options.PageTitle = "From the second");
+        services.AddOptiPowerToolsScheduledJobsInsights(options => options.PageTitle = "From the second");
 
         var provider = services.BuildServiceProvider();
 
         Assert.Equal(
             "From the first call",
-            provider.GetRequiredService<IOptions<OptiPowerToolScheduledJobsInsightsOptions>>().Value.PageTitle);
+            provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value.PageTitle);
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         services.AddLogging();
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = string.Empty;
             options.LogBatchSize = 0;

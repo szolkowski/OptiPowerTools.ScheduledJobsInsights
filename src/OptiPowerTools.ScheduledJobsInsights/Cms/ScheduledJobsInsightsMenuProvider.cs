@@ -15,7 +15,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 [MenuProvider]
 public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
 {
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
     /// <summary>
@@ -31,7 +31,7 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// process. It is resolved per call from the request's own scope instead.
     /// </remarks>
     public ScheduledJobsInsightsMenuProvider(
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         IHttpContextAccessor httpContextAccessor)
     {
         ArgumentNullException.ThrowIfNull(options);

@@ -70,11 +70,27 @@ the build fails (CS1591). Because of this, the public API surface is deliberatel
 implementation types (`JobExecutionWriter`, `JobLogBackgroundWriter`, `CleanupRepository`,
 `JobExecutionQueryService`, the EF entities, `ScheduledJobsInsightsDbContext`, `JobRecord`/`LogRecordItem`/
 `MetricRecordItem`) are `internal` and only need doc comments if you choose to add them. Only
-`LoggedScheduledJobBase`, `JobResultSummary`, `IJobExecutionWriter`, `ICleanupRepository`, the
-config/enum types, and the extension methods are `public` — keep new additions to that surface fully
+`LoggedScheduledJobBase`, `JobResultSummary`, `IJobExecutionWriter`, `ICleanupRepository`,
+`IJobRetentionPolicySource`, `JobLoggingContext`, `RetentionPeriod`, `JobRetentionAttribute`, the
+config/enum types, the CMS controller/menu provider/cleanup job (all forced public by Optimizely
+discovery), the three Razor pages and `AccordionSection`, and the extension methods are `public` —
+**24 exported types, verified by reflecting over the packed assembly** rather than by reading the XML
+docs, which include internal members and overstate it. Keep new additions to that surface fully
 documented, or make them `internal` instead (the test project has `InternalsVisibleTo` access to
 everything). Razor components are generated as public types, so their `[Parameter]` properties need
-doc comments too.
+doc comments too. The EF migration classes are `internal` on purpose: EF discovers them through
+`GetConstructableTypes()`, which does not require public, and five generically-named `Migration`
+classes on the frozen surface would be permanently tracked by `EnablePackageValidation`.
+
+Three things on that surface are deliberately closed, and each has a test asserting it stays closed:
+`Stop()` is `sealed` (override `OnStopRequested()` instead — an override that forgot `base.Stop()`
+recorded a cut-short run as `Succeeded`); `JobLoggingContext`'s constructor and its `Writer`/
+`ScheduledJobRepository`/`TimeProvider` are `internal`, with `JobLoggingContext.ForWriter(...)` as the
+public way to build one in a consumer's unit test (reaching the writer through the context would
+bypass the `_executionId` guard and the sequence counter); and `IJobExecutionWriter`,
+`ICleanupRepository` and `IJobRetentionPolicySource` are **not extension points** — members may be
+added in a minor version, so implementing them is unsupported and replacing the concrete registration
+is the documented alternative.
 
 `NuGetAuditMode` is set to `direct` only (transitive EPiServer CVEs are out of scope), and `NU1608` is
 suppressed for a known Castle.Core version conflict between NSubstitute and EPiServer.
@@ -179,6 +195,13 @@ constructible in unit tests without a registered `ScheduledJob` definition.
 2. **No member of `IJobExecutionWriter` throws.** They all run while a job is executing, and this
    package only *observes* an execution — a failure to record must never become a failure of the run.
    `BeginExecution` signals failure by returning **`long?` null** rather than throwing.
+   The same applies to `LogInputData`, whose `catch` around `JsonSerializer.Serialize` is
+   **deliberately unfiltered**. It used to filter on `JsonException`/`NotSupportedException`, which
+   covers what the serializer itself raises but not what it *propagates*: `System.Text.Json` does not
+   wrap an exception thrown by a property getter. A disposed lazy-loading proxy therefore escaped
+   `LogInputData`, escaped `ExecuteJob()`, and was reported as the job's own failure — the exact case
+   the README advertises as survivable. `SerializeUnavailable` guards the description too, because
+   `Exception.Message` is itself overridable and can throw.
 3. **A null execution id disables recording for that run.** `LoggedScheduledJobBase` keeps
    `_executionId` as a `long?` and every write is guarded on it, so an unreachable insights database
    costs the *history* of a run, never the run. Two details that are easy to break:
@@ -211,6 +234,15 @@ ordered by `(JobExecutionId, Sequence)` — **not** by `Timestamp` alone, since 
 produce timestamp collisions), and `JobMetric` (many rows per run — both automatic metrics and
 `RecordMetric()`-recorded custom ones share this one table for a uniform query surface). Child rows
 cascade-delete with their parent `JobExecution` at the DB level.
+
+Neither cleanup delete touches a `Running` row, whatever its age (`CleanupRepository`). A job can
+legitimately run for longer than its own retention — a 25-hour import under a one-day rule — and
+deleting the row underneath a live run destroys that run's history rather than trimming an old one:
+the still-buffered log lines then violate the FK, which poisons the batch they travel in and takes
+other jobs' lines with it, while `Complete`'s `ExecuteUpdate` matches nothing and reports nothing.
+Age alone cannot tell "stranded" from "still working" — that is what `MarkInterruptedExecutions` is
+for, and it runs first. Only `Running` is protected: `Interrupted` and `Stopped` runs are finished and
+must still age out, or a regularly-recycled process accumulates history nothing can remove.
 
 The fourth, `JobRetentionPolicy`, is configuration rather than history: one row per job type that an
 administrator has given an explicit retention, unique on `JobTypeName`, with `RetentionDays` nullable
@@ -267,7 +299,7 @@ Schema (`scheduled_jobs_insights`, a fixed constant on `ScheduledJobsInsightsDbC
 **not** runtime-configurable — deliberately, unlike Hangfire's own `SchemaName` option — because this
 package uses standard EF Core Migrations (`Data/Migrations/`), and a migration-baked schema name can't
 safely be made a runtime option without hand-rolled SQL scripting (which this package intentionally
-avoids in favor of the standard `dotnet ef` workflow). `UseOptiPowerToolScheduledJobsInsights(app)`
+avoids in favor of the standard `dotnet ef` workflow). `UseOptiPowerToolsScheduledJobsInsights(app)`
 calls `Database.Migrate()` at startup, gated by `AutoMigrateDatabase` (default `true`).
 `Data/ScheduledJobsInsightsDbContextFactory.cs` is a design-time-only `IDesignTimeDbContextFactory` that
 exists purely so `dotnet ef migrations add` works without a `Startup`/`Program` in this library project
@@ -303,7 +335,7 @@ Five things silently break this UI. Each was a real bug; none produce an obvious
    segment matches nothing, `data-epi-product-id` comes back empty, and the left-hand menu spins on
    its loading dots forever. `ScheduledJobsInsightsCmsRouteConvention` therefore maps `CmsShellPath`
    exactly, with no `{id?}`.
-5. **`UseOptiPowerToolScheduledJobsInsights()` must run before the host's own `UseEndpoints(...)`**,
+5. **`UseOptiPowerToolsScheduledJobsInsights()` must run before the host's own `UseEndpoints(...)`**,
    and must not call `MapControllers()` — mapping controllers from two `UseEndpoints` blocks registers
    every action twice and throws `AmbiguousMatchException` at request time.
 
@@ -321,7 +353,14 @@ Three pages, all hosted by that view rather than routed:
   polling every 2s via `PeriodicTimer` while the execution is still `Running`. `Id` arrives as a
   component parameter from the MVC route, not from Blazor routing. Log lines are fetched
   **incrementally** (`GetLogEntriesAsync(id, afterSequence)`) — re-reading a 5,000-line log on every
-  poll tick is quadratic. Polling and JS interop both start in `OnAfterRenderAsync(firstRender)`, which
+  poll tick is quadratic — and **bounded twice**, by `MaxLogEntriesPerExecution`: once in the query and
+  again in `LogEntryBuffer`. Both are needed. Incremental fetching means each call asks only for what
+  is new, so a query-side cap bounds one fetch while the buffer would still accumulate every line a
+  long run ever writes — in server memory, per circuit, per viewer. Once the buffer is full the page
+  stops fetching entirely (`LogEntryBuffer.IsFull`) rather than re-running a capped query every two
+  seconds to discard its rows, and `Truncated` renders a notice above the log. Saying so matters: the
+  lines dropped are the tail, which is where a failure's cause usually is.
+  Polling and JS interop both start in `OnAfterRenderAsync(firstRender)`, which
   does not run during prerendering. When a watched execution finishes, the loop renders the outcome
   immediately and then reads **once more** after `LogFlushInterval` + 500ms: `Complete` is a
   synchronous write but the final log lines and *all* the automatic metrics go through the buffered
@@ -516,7 +555,7 @@ CMS-shell constraints above; those are host-integration failures only a real bro
 These Sqlite tests validate the C#-side query/repository/cascade logic only — they do not validate the
 literal SQL Server migration SQL. **CI covers that separately**: the Build & Test workflow runs a real
 SQL Server service container, applies the migrations to an empty database, re-applies them to prove
-the run is a no-op (`UseOptiPowerToolScheduledJobsInsights` calls `Migrate()` on every startup, so a
+the run is a no-op (`UseOptiPowerToolsScheduledJobsInsights` calls `Migrate()` on every startup, so a
 non-idempotent migration breaks every existing installation on upgrade), and then executes
 `.github/sql/verify-schema.sql` to assert the schema that came out.
 

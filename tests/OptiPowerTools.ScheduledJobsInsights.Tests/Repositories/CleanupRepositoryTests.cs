@@ -32,6 +32,82 @@ public class CleanupRepositoryTests
     }
 
     [Fact]
+    public void DeleteExecutionsOlderThan_LeavesARunningExecutionAlone_HoweverOld()
+    {
+        // A job can legitimately run for longer than its own retention: a 25-hour import under a
+        // one-day rule. Deleting the row underneath it loses that run's history entirely — the
+        // still-buffered log lines then violate the foreign key, poisoning the batch they travel in.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "StillRunning", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Running, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Finished", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Succeeded, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
+
+        Assert.Equal(1, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        var remaining = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal("StillRunning", remaining.JobName);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_ForOneJobType_LeavesARunningExecutionAlone()
+    {
+        // The per-job-type overload is the one a short explicit retention actually goes through, so
+        // it is the more likely of the two to meet a run that outlives its own rule.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "StillRunning", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Running, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Finished", JobTypeName = "Slow", StartedAt = cutoff.AddDays(-3), Status = ExecutionStatus.Failed, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan("Slow", cutoff, batchSize: 100);
+
+        Assert.Equal(1, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        var remaining = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal(ExecutionStatus.Running, remaining.Status);
+    }
+
+    [Fact]
+    public void DeleteExecutionsOlderThan_StillDeletesInterruptedAndStoppedExecutions()
+    {
+        // Only Running is protected. An interrupted or stopped run is finished — it will never be
+        // written to again — so retention must still be able to age it out, or a process that
+        // recycles regularly accumulates history nothing can ever remove.
+        using var factory = new SqliteDbContextFactory();
+        var cutoff = DateTimeOffset.UtcNow;
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.AddRange(
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Interrupted", JobTypeName = "T", StartedAt = cutoff.AddDays(-1), Status = ExecutionStatus.Interrupted, MachineName = "m" },
+                new JobExecution { ScheduledJobId = Guid.NewGuid(), JobName = "Stopped", JobTypeName = "T", StartedAt = cutoff.AddDays(-1), Status = ExecutionStatus.Stopped, MachineName = "m" });
+            dbContext.SaveChanges();
+        }
+
+        var repository = new CleanupRepository(factory);
+        var deleted = repository.DeleteExecutionsOlderThan(cutoff, batchSize: 100, excludedJobTypeNames: []);
+
+        Assert.Equal(2, deleted);
+        using var verifyContext = factory.CreateDbContext();
+        Assert.Empty(verifyContext.JobExecutions);
+    }
+
+    [Fact]
     public void DeleteExecutionsOlderThan_RespectsBatchSize()
     {
         using var factory = new SqliteDbContextFactory();

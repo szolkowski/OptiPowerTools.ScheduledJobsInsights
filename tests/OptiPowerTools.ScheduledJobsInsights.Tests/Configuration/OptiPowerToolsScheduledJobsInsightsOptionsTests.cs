@@ -3,12 +3,12 @@ using OptiPowerTools.ScheduledJobsInsights.Logging;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Configuration;
 
-public class OptiPowerToolScheduledJobsInsightsOptionsTests
+public class OptiPowerToolsScheduledJobsInsightsOptionsTests
 {
     [Fact]
     public void Defaults_AreSensible()
     {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
 
         Assert.Equal("/ScheduledJobsInsightsCms/Index", options.CmsShellPath);
         Assert.True(options.EnableCmsMenu);

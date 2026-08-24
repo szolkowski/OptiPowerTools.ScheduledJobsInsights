@@ -47,7 +47,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
     public JobExecutionQueryService(
         IDbContextFactory<ScheduledJobsInsightsDbContext> dbContextFactory,
         TimeProvider timeProvider,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions>? options = null)
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions>? options = null)
     {
         _dbContextFactory = dbContextFactory;
         _timeProvider = timeProvider;
@@ -55,7 +55,7 @@ internal sealed class JobExecutionQueryService : IJobExecutionQueryService
         var configured = options?.Value.MaxLogEntriesPerExecution ?? 0;
         _maxLogEntries = configured > 0
             ? configured
-            : OptiPowerToolScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution;
+            : OptiPowerToolsScheduledJobsInsightsOptions.DefaultMaxLogEntriesPerExecution;
     }
 
     public async Task<ExecutionPage> GetExecutionsAsync(ExecutionFilter filter, ExecutionCursor? after, int pageSize, CancellationToken cancellationToken = default)

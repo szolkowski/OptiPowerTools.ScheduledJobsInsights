@@ -13,13 +13,13 @@ public class ScheduledJobsInsightsMenuProviderTests
     /// <summary>Path of the CMS's own "Data &amp; Sync Management" group, parent of the native Scheduled Jobs page.</summary>
     private const string DataSyncManagementItemPath = "/global/cms/admin/scheduledjobs/scheduledjobsinsights";
 
-    private static ScheduledJobsInsightsMenuProvider CreateProvider(OptiPowerToolScheduledJobsInsightsOptions options) =>
+    private static ScheduledJobsInsightsMenuProvider CreateProvider(OptiPowerToolsScheduledJobsInsightsOptions options) =>
         new(Options.Create(options), Substitute.For<IHttpContextAccessor>());
 
     [Fact]
     public void GetMenuItems_ReturnsEmpty_WhenMenuDisabled()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions { EnableCmsMenu = false });
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = false });
 
         Assert.Empty(provider.GetMenuItems());
     }
@@ -27,7 +27,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_ReturnsSingleItem_WhenPlacementIsCmsSectionAndDataSyncEntryDisabled()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CmsSection,
@@ -44,7 +44,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     {
         // Defaults deliberately surface the UI in two places: its own entry, plus one beside the
         // native Scheduled Jobs page where an administrator would look for a job's history.
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             ShowRetentionMenuItem = false
@@ -60,7 +60,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_OmitsDataSyncManagementEntry_WhenDisabled()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             ShowInDataSyncManagement = false
@@ -77,7 +77,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     {
         // The Data & Sync entry is additional, not an alternative placement, so it appears whichever
         // way the primary entry is positioned.
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = placement
@@ -89,7 +89,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_DataSyncManagementEntry_UsesCustomMenuItemNameAndShellPath()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             CustomMenuItemName = "Job History",
@@ -106,7 +106,7 @@ public class ScheduledJobsInsightsMenuProviderTests
         // Pins the literal paths. They are assembled by string concatenation from a separator, a slug
         // and a leaf, so a refactor of that assembly can quietly change them — and a menu path that
         // does not match what the shell expects simply fails to appear, with no error anywhere.
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.TopLevel,
@@ -125,7 +125,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_CustomSection_NestsTheItemUnderItsOwnSection()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CustomSection,
@@ -146,7 +146,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [InlineData("/custom/place", "/global/custom/place")]
     public void GetMenuItems_AnExplicitMenuPath_IsNormalised(string configured, string expected)
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPath = configured,
@@ -160,7 +160,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_AddsTheRetentionEntry_ByDefault()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions { EnableCmsMenu = true });
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true });
 
         Assert.Contains(
             provider.GetMenuItems(),
@@ -170,7 +170,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     [Fact]
     public void GetMenuItems_OmitsTheRetentionEntry_WhenDisabled()
     {
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             ShowRetentionMenuItem = false
@@ -184,7 +184,7 @@ public class ScheduledJobsInsightsMenuProviderTests
     {
         // A query string, not a path segment: an extra segment would stop the CMS shell resolving
         // which product's navigation to render, and the left-hand menu would spin forever.
-        var provider = CreateProvider(new OptiPowerToolScheduledJobsInsightsOptions
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             CmsShellPath = "/ScheduledJobsInsightsCms/Index"

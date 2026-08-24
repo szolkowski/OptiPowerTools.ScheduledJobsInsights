@@ -69,7 +69,7 @@ public class ConsumerIntegrationTests
         services.AddSingleton(Substitute.For<IScheduledJobRepository>());
         services.AddSingleton<IGreetingService, GreetingService>();
 
-        services.AddOptiPowerToolScheduledJobsInsights(options =>
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
         {
             options.ConnectionString = "Server=.;Database=NotUsed;Trusted_Connection=True;";
             options.LogFlushInterval = TimeSpan.FromMilliseconds(10);

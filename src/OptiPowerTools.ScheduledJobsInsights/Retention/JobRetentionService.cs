@@ -15,7 +15,7 @@ internal sealed class JobRetentionService : IJobRetentionService
     private readonly JobRetentionPolicyStore _policies;
     private readonly RegisteredJobNames _registeredJobs;
     private readonly LoggedJobTypeIndex _jobTypes;
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
     private readonly ILogger<JobRetentionService> _logger;
     private readonly TimeProvider _timeProvider;
 
@@ -34,7 +34,7 @@ internal sealed class JobRetentionService : IJobRetentionService
         JobRetentionPolicyStore policies,
         RegisteredJobNames registeredJobs,
         LoggedJobTypeIndex jobTypes,
-        IOptions<OptiPowerToolScheduledJobsInsightsOptions> options,
+        IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options,
         ILogger<JobRetentionService> logger,
         TimeProvider? timeProvider = null)
     {

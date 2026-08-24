@@ -19,10 +19,10 @@ namespace OptiPowerTools.ScheduledJobsInsights.Configuration;
 /// it has a stack trace at startup and no other context.
 /// </para>
 /// </remarks>
-internal sealed class OptiPowerToolScheduledJobsInsightsOptionsValidator
-    : IValidateOptions<OptiPowerToolScheduledJobsInsightsOptions>
+internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
+    : IValidateOptions<OptiPowerToolsScheduledJobsInsightsOptions>
 {
-    public ValidateOptionsResult Validate(string? name, OptiPowerToolScheduledJobsInsightsOptions options)
+    public ValidateOptionsResult Validate(string? name, OptiPowerToolsScheduledJobsInsightsOptions options)
     {
         // A plain list rather than a lazily-created one behind a local function: the closure made the
         // final null check unanalysable, and one always-allocated empty list at startup is nothing.

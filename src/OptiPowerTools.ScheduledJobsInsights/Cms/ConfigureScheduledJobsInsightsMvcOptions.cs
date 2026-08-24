@@ -6,13 +6,13 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 
 /// <summary>
 /// Configures MVC options to register the <see cref="ScheduledJobsInsightsCmsRouteConvention"/>
-/// using the resolved <see cref="OptiPowerToolScheduledJobsInsightsOptions.CmsShellPath"/>.
+/// using the resolved <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsShellPath"/>.
 /// </summary>
 internal sealed class ConfigureScheduledJobsInsightsMvcOptions : IConfigureOptions<MvcOptions>
 {
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
 
-    public ConfigureScheduledJobsInsightsMvcOptions(IOptions<OptiPowerToolScheduledJobsInsightsOptions> options) =>
+    public ConfigureScheduledJobsInsightsMvcOptions(IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options) =>
         _options = options.Value;
 
     public void Configure(MvcOptions mvcOptions) =>

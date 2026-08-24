@@ -5,7 +5,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 
 /// <summary>
 /// Application model convention that sets the CMS shell controller route
-/// from <see cref="OptiPowerToolScheduledJobsInsightsOptions.CmsShellPath"/> at startup.
+/// from <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsShellPath"/> at startup.
 /// </summary>
 internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationModelConvention
 {

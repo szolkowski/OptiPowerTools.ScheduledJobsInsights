@@ -5,7 +5,7 @@
 namespace OptiPowerTools.ScheduledJobsInsights.Data.Migrations
 {
     /// <inheritdoc />
-    public partial class AddJobNameIndex : Migration
+    internal partial class AddJobNameIndex : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

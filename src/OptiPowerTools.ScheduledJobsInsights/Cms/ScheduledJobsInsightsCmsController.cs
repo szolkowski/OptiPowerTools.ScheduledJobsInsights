@@ -14,12 +14,12 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 [Authorize(Policy = ScheduledJobsInsightsAuthorization.PolicyName)]
 public sealed class ScheduledJobsInsightsCmsController : Controller
 {
-    private readonly OptiPowerToolScheduledJobsInsightsOptions _options;
+    private readonly OptiPowerToolsScheduledJobsInsightsOptions _options;
 
     /// <summary>
     /// Initializes a new instance of <see cref="ScheduledJobsInsightsCmsController"/>.
     /// </summary>
-    public ScheduledJobsInsightsCmsController(IOptions<OptiPowerToolScheduledJobsInsightsOptions> options)
+    public ScheduledJobsInsightsCmsController(IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options)
     {
         _options = options.Value;
     }

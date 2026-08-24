@@ -7,12 +7,12 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Logging;
 internal static class TestWriterOptions
 {
     /// <summary>Everything left at its default.</summary>
-    public static IOptions<OptiPowerToolScheduledJobsInsightsOptions> Default =>
-        Options.Create(new OptiPowerToolScheduledJobsInsightsOptions());
+    public static IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Default =>
+        Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions());
 
     /// <summary>Defaults except for a summary limit, for exercising truncation cheaply.</summary>
-    public static IOptions<OptiPowerToolScheduledJobsInsightsOptions> WithSummaryLimit(int maxResultSummaryLength) =>
-        Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+    public static IOptions<OptiPowerToolsScheduledJobsInsightsOptions> WithSummaryLimit(int maxResultSummaryLength) =>
+        Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             MaxResultSummaryLength = maxResultSummaryLength
         });

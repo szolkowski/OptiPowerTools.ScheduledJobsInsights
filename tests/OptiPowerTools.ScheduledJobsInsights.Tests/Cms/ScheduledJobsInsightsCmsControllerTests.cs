@@ -12,7 +12,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Cms;
 public class ScheduledJobsInsightsCmsControllerTests
 {
     private static ScheduledJobsInsightsCmsController CreateController(
-        OptiPowerToolScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
+        OptiPowerToolsScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
     {
         var httpContext = new DefaultHttpContext { User = user };
         if (timeZoneCookie is not null)
@@ -31,7 +31,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The id arrives from the "id" query string rather than a route segment, so that the request
         // path keeps matching the registered CMS menu item and the shell navigation still resolves.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id);
@@ -57,7 +57,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     [Fact]
     public void Index_ReturnsViewWithOptionValues()
     {
-        var options = new OptiPowerToolScheduledJobsInsightsOptions
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions
         {
             AuthorizedRoles = ["Administrators"],
             PageTitle = "Title"
@@ -79,7 +79,7 @@ public class ScheduledJobsInsightsCmsControllerTests
         // Read here rather than inside the components: IHttpContextAccessor only has a context during
         // prerendering, so a component that looked it up itself would resolve the zone on the
         // prerender pass and lose it the moment the circuit took over.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()), "Europe/Warsaw");
 
         var result = controller.Index(id: null);
@@ -92,7 +92,7 @@ public class ScheduledJobsInsightsCmsControllerTests
     {
         // The first ever page view, before the view's inline script has set the cookie. The
         // components fall back to UTC rather than guessing.
-        var options = new OptiPowerToolScheduledJobsInsightsOptions();
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions();
         var controller = CreateController(options, new ClaimsPrincipal(new ClaimsIdentity()));
 
         var result = controller.Index(id: null);

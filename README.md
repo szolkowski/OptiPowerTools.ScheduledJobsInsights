@@ -11,7 +11,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 
 ## Features
 
-- One-liner DI bootstrap: `services.AddOptiPowerToolScheduledJobsInsights()`.
+- One-liner DI bootstrap: `services.AddOptiPowerToolsScheduledJobsInsights()`.
 - `LoggedScheduledJobBase` — a drop-in replacement for `ScheduledJobBase` that captures execution history automatically.
 - Per-run log lines with severity/color (`Default`/`Info`/`Success`/`Warning`/`Error`/`Debug`), plus a dedicated `LogInputData` call for capturing what a run started with.
 - Automatic execution metrics (duration, allocated bytes, CPU time, GC generation counts) and a `RecordMetric` API for custom domain metrics.
@@ -76,14 +76,14 @@ Applications that already contain their own `.razor` files get it automatically 
 
 ```csharp
 // Program.cs or Startup.cs
-services.AddOptiPowerToolScheduledJobsInsights(options =>
+services.AddOptiPowerToolsScheduledJobsInsights(options =>
 {
     options.ConnectionString = Configuration.GetConnectionString("EPiServerDB");
 });
 
 // ... then in the middleware pipeline, after UseAuthorization()
 // and BEFORE your own UseEndpoints(...) / MapXxx calls
-app.UseOptiPowerToolScheduledJobsInsights();
+app.UseOptiPowerToolsScheduledJobsInsights();
 
 app.UseEndpoints(endpoints =>
 {
@@ -94,7 +94,7 @@ app.UseEndpoints(endpoints =>
 
 Connection string can point to the same database as Optimizely or to a separate one — there is no fallback, it must be set explicitly.
 
-> `UseOptiPowerToolScheduledJobsInsights()` applies pending migrations and maps the Blazor Server hub
+> `UseOptiPowerToolsScheduledJobsInsights()` applies pending migrations and maps the Blazor Server hub
 > the UI connects over. Call it after `UseAuthorization()`; placing it ahead of your own
 > `UseEndpoints(...)` keeps the hub registered alongside everything else. It deliberately does **not**
 > call `MapControllers()` — your application already does, and mapping controllers from two separate
@@ -246,7 +246,7 @@ Recorded for every execution, alongside anything you record yourself via `Record
 ### Code configuration
 
 ```csharp
-services.AddOptiPowerToolScheduledJobsInsights(options =>
+services.AddOptiPowerToolsScheduledJobsInsights(options =>
 {
     // Required
     options.ConnectionString = "Server=.;Database=MyDb;Trusted_Connection=True;";
@@ -314,7 +314,7 @@ Code overrides configuration when both are used.
 | `ConnectionString` | `string` | `""` | **Required.** SQL Server connection string for job execution/log/metric storage. |
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
 | `MaxLogMessageLength` | `int` | `4000` | Longest log message stored; longer ones are truncated with an ellipsis. The column itself is unbounded, so this is what stops a job that logs a response body per iteration writing megabytes per row. |
-| `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer. |
+| `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads *and holds* for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer — and it bounds the total across all the polls of a running job, not just one read. A longer log is displayed truncated, with a notice above it saying so. |
 | `InterruptedExecutionThreshold` | `TimeSpan` | `24:00:00` | How long a run may sit unfinished before the cleanup job records it as **Interrupted**. `TimeSpan.Zero` disables the sweep. |
 | `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
@@ -327,7 +327,7 @@ Code overrides configuration when both are used.
 | `AuthorizedRoles` | `IList<string>` | `["Administrators", "CmsAdmins", "WebAdmins"]` | Optimizely roles allowed to reach the page, the retention screen and the menu entries. Ignored when `AuthorizationPolicy` or `AllowAnyAuthenticatedUser` is set. |
 | `AuthorizationPolicy` | `string?` | `null` | Name of an authorization policy **you** registered, used instead of the role check. Startup fails with a named error if no such policy exists. |
 | `AllowAnyAuthenticatedUser` | `bool` | `false` | Drops the role check entirely. ⚠️ On a site with front-end membership, "authenticated" includes ordinary visitors — who could then read execution history and any captured input data. |
-| `MapBlazorHub` | `bool?` | `null` | Whether `UseOptiPowerToolScheduledJobsInsights` maps the Blazor hub. `null` detects an existing `/_blazor` mapping and skips its own. |
+| `MapBlazorHub` | `bool?` | `null` | Whether `UseOptiPowerToolsScheduledJobsInsights` maps the Blazor hub. `null` detects an existing `/_blazor` mapping and skips its own. |
 | `EnableCmsMenu` | `bool` | `true` | Add a menu item to the Optimizely CMS navigation. |
 | `MenuPlacement` | `CmsMenuPlacement` | `CmsSection` | Where the menu item appears: `CmsSection`, `TopLevel`, or `CustomSection`. |
 | `MenuPath` | `string?` | `null` | Overrides the auto-derived menu path. |
@@ -399,10 +399,13 @@ reached:
 - **The CMS status column still updates**, because `OnStatusChanged` raises the native event before
   any recording is attempted.
 - **Nothing throws into job code.** No member of `IJobExecutionWriter` throws, and neither does
-  anything around it: capturing input data survives an object graph JSON cannot serialize (a cycle
-  through an EF navigation, say), and the automatic metrics are captured and recorded defensively, so
-  a counter this package cannot read costs a metric rather than the run. A metrics failure can no
-  longer report a successful job as failed, nor replace the job's own exception with its own.
+  anything around it. `LogInputData` survives anything the object you hand it can do — an object graph
+  JSON cannot serialize (a cycle through an EF navigation), *and* a property getter that throws on
+  access (a lazy-loading proxy whose `DbContext` is gone, a computed `IContent` property). Either way
+  the run records why the input could not be captured and carries on. The automatic metrics are
+  captured and recorded defensively too, so a counter this package cannot read costs a metric rather
+  than the run, and a metrics failure can no longer report a successful job as failed, nor replace the
+  job's own exception with its own.
 
 What you lose is the execution history for the affected period. The UI itself needs the database to
 show anything, so it reports that it could not read the history rather than rendering an empty list —
@@ -505,7 +508,7 @@ After installation, the job's run interval and enabled/disabled state are manage
 
 ### If your application already uses Blazor
 
-`UseOptiPowerToolScheduledJobsInsights` maps the Blazor Server hub the UI connects over. Mapping
+`UseOptiPowerToolsScheduledJobsInsights` maps the Blazor Server hub the UI connects over. Mapping
 `/_blazor` twice puts two endpoints on one route pattern and every Blazor request in the application
 then fails with `AmbiguousMatchException` — with nothing in the message naming this package.
 

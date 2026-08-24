@@ -12,6 +12,15 @@ namespace OptiPowerTools.ScheduledJobsInsights.Repositories;
 /// set, not to shrink it in any particular order.
 /// </para>
 /// <para>
+/// Neither delete touches a <see cref="ExecutionStatus.Running"/> row, whatever its age. A job can
+/// legitimately run for longer than its own retention — a 25-hour import under a one-day rule — and
+/// deleting the row underneath it loses the run's whole history: the still-buffered log lines then
+/// violate the foreign key, which poisons the batch they travel in and takes other jobs' lines with
+/// them, while <c>Complete</c> updates nothing and reports nothing. Age alone cannot distinguish
+/// "stranded" from "still working"; that is what <see cref="MarkInterruptedExecutions"/> is for, and
+/// it runs first.
+/// </para>
+/// <para>
 /// Cancellation is checked before a batch is issued rather than passed to EF Core. The synchronous
 /// <c>ExecuteDelete</c> has no token overload, and the async one would surface a stop as an
 /// exception thrown into a job this package is only supposed to observe. Declining to start the
@@ -38,7 +47,8 @@ internal sealed class CleanupRepository : ICleanupRepository
 
         using var dbContext = _dbContextFactory.CreateDbContext();
 
-        var query = dbContext.JobExecutions.Where(e => e.StartedAt < cutoff);
+        var query = dbContext.JobExecutions
+            .Where(e => e.StartedAt < cutoff && e.Status != ExecutionStatus.Running);
 
         // Translated to NOT IN. The list is the number of jobs with their own rule — a handful in
         // practice — so this stays a small predicate rather than a large parameter list.
@@ -62,7 +72,9 @@ internal sealed class CleanupRepository : ICleanupRepository
         // Seeks the (JobTypeName, StartedAt) index. Without it this scans the age range and filters,
         // which is the bad case whenever a job's retention is shorter than the default.
         return dbContext.JobExecutions
-            .Where(e => e.JobTypeName == jobTypeName && e.StartedAt < cutoff)
+            .Where(e => e.JobTypeName == jobTypeName
+                && e.StartedAt < cutoff
+                && e.Status != ExecutionStatus.Running)
             .Take(batchSize)
             .ExecuteDelete();
     }

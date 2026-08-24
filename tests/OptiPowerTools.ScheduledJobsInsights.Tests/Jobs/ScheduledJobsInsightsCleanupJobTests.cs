@@ -26,7 +26,7 @@ public class ScheduledJobsInsightsCleanupJobTests
             TestJobLoggingContext.For(writer),
             repository,
             retention,
-            Options.Create(new OptiPowerToolScheduledJobsInsightsOptions
+            Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
             {
                 RetentionDays = retentionDays,
                 CleanupBatchSize = batchSize,

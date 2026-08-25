@@ -22,7 +22,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Extensions;
 /// application down would be worse than the fault it describes.
 /// </para>
 /// </remarks>
-internal static class StartupDiagnostics
+internal static partial class StartupDiagnostics
 {
     /// <summary>The logger category every startup diagnostic writes under.</summary>
     public const string LoggerCategory = "OptiPowerTools.ScheduledJobsInsights";
@@ -83,23 +83,37 @@ internal static class StartupDiagnostics
     public static void ReportResolvedRetention(OptiPowerToolsScheduledJobsInsightsOptions options, ILogger logger)
     {
         if (options.RetentionDays > 0)
-        {
-            logger.LogInformation(
-                "ScheduledJobsInsights default retention: {RetentionDays} day(s). Jobs with a rule of their own are unaffected.",
-                options.RetentionDays);
-        }
+            LogRetentionInDays(logger, options.RetentionDays);
         else if (options.RetentionDays == 0)
-        {
-            logger.LogInformation(
-                "ScheduledJobsInsights default retention is indefinite (RetentionDays = 0), so the default sweep trims nothing. Only jobs with a rule of their own will be trimmed.");
-        }
+            LogRetentionIndefinite(logger);
         else
-        {
-            logger.LogWarning(
-                "ScheduledJobsInsights default retention is indefinite because RetentionDays is {RetentionDays}, which is negative. Zero is the documented way to ask for indefinite retention; if you meant a number of days, set a positive value — as written, execution history will grow without bound.",
-                options.RetentionDays);
-        }
+            LogRetentionNegative(logger, options.RetentionDays);
     }
+
+    /// <remarks>
+    /// Source-generated, like the rest of the logging here: passing the day count to
+    /// <c>LogInformation</c> boxes it into a <c>params object?[]</c> before the logger has decided
+    /// whether the level is even enabled, which is what <c>CA1873</c> objects to.
+    /// </remarks>
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "ScheduledJobsInsights default retention: {RetentionDays} day(s). Jobs with a rule of their own are unaffected.")]
+    private static partial void LogRetentionInDays(ILogger logger, int retentionDays);
+
+    /// <remarks>Zero is the documented way to ask for indefinite retention, so this is not a warning.</remarks>
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "ScheduledJobsInsights default retention is indefinite (RetentionDays = 0), so the default sweep trims nothing. Only jobs with a rule of their own will be trimmed.")]
+    private static partial void LogRetentionIndefinite(ILogger logger);
+
+    /// <remarks>
+    /// Warning rather than Information: a negative value behaves identically to zero, but zero is a
+    /// choice and a negative number is almost always a day count that lost its sign.
+    /// </remarks>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "ScheduledJobsInsights default retention is indefinite because RetentionDays is {RetentionDays}, which is negative. Zero is the documented way to ask for indefinite retention; if you meant a number of days, set a positive value — as written, execution history will grow without bound.")]
+    private static partial void LogRetentionNegative(ILogger logger, int retentionDays);
 
     /// <summary>
     /// Reports the host application missing the static web assets this package's UI needs.

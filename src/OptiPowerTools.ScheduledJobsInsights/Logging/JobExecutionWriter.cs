@@ -22,7 +22,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// <see cref="BeginExecution"/> reports failure by returning <c>null</c>, which disables recording
 /// for the rest of that run.
 /// </remarks>
-internal sealed class JobExecutionWriter : IJobExecutionWriter
+internal sealed partial class JobExecutionWriter : IJobExecutionWriter
 {
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly ChannelWriter<JobRecord> _channelWriter;
@@ -265,10 +265,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         // mistake a correct-looking job makes rather than an exotic input.
         if (!double.IsFinite(value))
         {
-            _logger.LogDebug(
-                "ScheduledJobsInsights discarded metric {MetricName} for execution {ExecutionId} because its value was not a finite number.",
-                name,
-                executionId);
+            LogDiscardedNonFiniteMetric(_logger, name, executionId);
             return;
         }
 
@@ -286,6 +283,17 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
             RecordedAt = record.RecordedAt
         }));
     }
+
+    /// <remarks>
+    /// Source-generated: the execution id would otherwise be boxed into a <c>params object?[]</c>
+    /// before the logger has decided whether Debug is enabled — which it usually is not — and this
+    /// sits on the metric path, where a job in a loop reaches it once per iteration. That is what
+    /// <c>CA1873</c> objects to.
+    /// </remarks>
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "ScheduledJobsInsights discarded metric {MetricName} for execution {ExecutionId} because its value was not a finite number.")]
+    private static partial void LogDiscardedNonFiniteMetric(ILogger logger, string metricName, long executionId);
 
     /// <summary>
     /// Writes a single record immediately, because the buffer was full. Never throws: this runs on the

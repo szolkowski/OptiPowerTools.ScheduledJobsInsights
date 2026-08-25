@@ -490,8 +490,3 @@ src/OptiPowerTools.ScheduledJobsInsights.Web/appsettings.*.json
 # Optimizely: CMS UI modules restored from NuGet at build time, and licence keys
 modules/
 *license.config
-
-# Pre-1.0 review working documents. Internal self-critique of the package, kept out of the repository
-# on purpose: this is a public repo, and `git add -A` on a release commit would publish them.
-PRE-1.0-REVIEW.md
-PRE-1.0-REVIEW-ROUND2.md

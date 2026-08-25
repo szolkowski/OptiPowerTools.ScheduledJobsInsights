@@ -1,3 +1,15 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.JSInterop
+@using Microsoft.Extensions.Options
+@using OptiPowerTools.ScheduledJobsInsights.Components
+@using OptiPowerTools.ScheduledJobsInsights.Components.Pages
+@* Inlined from what used to be _Imports.razor. That file generated a public Components._Imports type
+   with no meaning to any consumer, and 1.0 freezes the exported surface — so the @using set lives in
+   each component instead. *@
 @* Per-job retention. Hosted by ScheduledJobsInsightsCmsController's view inside the CMS shell, like
    the other two pages, so it is not routable and owns no document of its own.
 
@@ -122,7 +134,13 @@ else
                         <span class="tag tag-source" title="@SourceExplanation(source)">@SourceLabel(source)</span>
                     </td>
                     <td>
+                        @* Named per row: without this a screen reader announces one unlabelled combo
+                           box per job, with nothing to say which job it governs — on the one control
+                           here that performs a destructive write. The list page's own selects are
+                           wrapped in a label with a visually-hidden span; a table cell has nowhere to
+                           put that, so the name goes on the control. *@
                         <select value="@ChoiceFor(job)"
+                                aria-label="Retention for @job.DisplayName"
                                 @onchange="args => OnOverrideChangedAsync(job, args)"
                                 disabled="@(_savingJobTypeName == job.JobTypeName)">
                             <option value="@InheritChoice">Inherit</option>

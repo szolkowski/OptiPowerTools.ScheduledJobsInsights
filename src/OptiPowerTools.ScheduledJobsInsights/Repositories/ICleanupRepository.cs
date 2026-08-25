@@ -3,16 +3,14 @@ namespace OptiPowerTools.ScheduledJobsInsights.Repositories;
 /// <summary>Deletes aged-out job execution history. Child log/metric rows cascade at the database level.</summary>
 /// <remarks>
 /// <para>
-/// Public only because <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> must be public for
-/// Optimizely to discover it, which forces its constructor parameter types to be public too.
-/// </para>
-/// <para>
-/// <b>Not an extension point.</b> Do not implement it in consuming code. Members may be added in a
-/// minor version — which is precisely why implementing it is unsupported, and why no
-/// <c>[Obsolete]</c> shim or default implementation will be provided for one.
+/// Internal, and free to change. It was public for one reason only:
+/// <see cref="Jobs.ScheduledJobsInsightsCleanupJob"/> must be public for Optimizely to discover it,
+/// and a public constructor cannot take a less accessible parameter type. That job now takes an
+/// <see cref="IServiceProvider"/> and resolves this itself, which keeps an implementation detail off
+/// the frozen 1.0 surface rather than freezing a contract nobody outside this package implements.
 /// </para>
 /// </remarks>
-public interface ICleanupRepository
+internal interface ICleanupRepository
 {
     /// <summary>
     /// Deletes up to <paramref name="batchSize"/> finished executions older than

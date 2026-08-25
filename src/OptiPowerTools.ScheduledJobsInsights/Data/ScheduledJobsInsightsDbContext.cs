@@ -56,7 +56,11 @@ internal class ScheduledJobsInsightsDbContext : DbContext
             entity.Property(e => e.MachineName).HasMaxLength(200).IsRequired();
             // Serves the unfiltered list's keyset pagination.
             entity.HasIndex(e => new { e.StartedAt, e.Id }).IsDescending(true, true);
-            entity.HasIndex(e => e.ScheduledJobId);
+
+            // There is deliberately no index on ScheduledJobId. It is written on insert and projected
+            // on the detail page for the cross-link to the CMS's own job screen, but nothing filters
+            // or joins on it — so an index was pure write cost on the highest-insert-rate table this
+            // package owns, paid on every log line's parent row for a query nobody makes.
 
             // Serves both jobs the list page does with JobName, which without it were table scans on
             // the biggest table this package owns: the DISTINCT that fills the filter dropdown (run on

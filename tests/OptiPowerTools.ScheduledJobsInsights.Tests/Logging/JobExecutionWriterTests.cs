@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -305,5 +306,85 @@ public class JobExecutionWriterTests
 
         // Reaching here at all is the assertion; the count just confirms each one genuinely tried.
         Assert.Equal(3, factory.Attempts);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void RecordMetric_DiscardsANonFiniteValue(double value)
+    {
+        // SQL Server's float is IEEE-754 finite-only, so these fail the INSERT — and they do not fail
+        // alone: the batch they travel in carries the log lines of every other job running at that
+        // moment. A rate over an elapsed time that rounds to zero is the ordinary way to produce one.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        writer.RecordMetric(executionId, "RowsPerSecond", value, "rows/s");
+
+        Assert.Equal(0, channel.Reader.Count);
+    }
+
+    [Fact]
+    public void RecordMetric_KeepsAnOrdinaryValue()
+    {
+        // The other half of the guard: it rejects only what the column cannot hold.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, NullLogger<JobExecutionWriter>.Instance);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        writer.RecordMetric(executionId, "RowsPerSecond", 12.5, "rows/s");
+
+        Assert.Equal(1, channel.Reader.Count);
+    }
+
+    [Fact]
+    public void Complete_WhenTheExecutionRowIsGone_WarnsInsteadOfSucceedingSilently()
+    {
+        // ExecuteUpdate matching nothing is not an error, so the affected-row count is the only
+        // evidence that the row this run is finishing no longer exists — deleted by hand, lost to a
+        // restored backup, or taken by a retention sweep while the job was still going.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var logger = new RecordingLogger<JobExecutionWriter>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, logger);
+
+        writer.Complete(4242, ExecutionStatus.Succeeded, "done", exception: null);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("Complete", entry.Message, StringComparison.Ordinal);
+        Assert.Contains("4242", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetResultSummary_WhenTheExecutionRowIsGone_WarnsToo()
+    {
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var logger = new RecordingLogger<JobExecutionWriter>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, logger);
+
+        writer.SetResultSummary(4242, "a summary nobody will read");
+
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Entries).Level);
+    }
+
+    [Fact]
+    public void Complete_AgainstARowThatExists_LogsNothing()
+    {
+        // The other half: the warning must fire on a missing row, not on every write.
+        using var factory = new SqliteDbContextFactory();
+        var channel = Channel.CreateUnbounded<JobRecord>();
+        var logger = new RecordingLogger<JobExecutionWriter>();
+        var writer = new JobExecutionWriter(factory, channel, TestWriterOptions.Default, logger);
+        var executionId = writer.BeginExecution(Guid.NewGuid(), "My Job", "My.Job.Type")!.Value;
+
+        writer.Complete(executionId, ExecutionStatus.Succeeded, "done", exception: null);
+
+        Assert.Empty(logger.Entries);
     }
 }

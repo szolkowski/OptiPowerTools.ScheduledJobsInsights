@@ -14,7 +14,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - One-liner DI bootstrap: `services.AddOptiPowerToolsScheduledJobsInsights()`.
 - `LoggedScheduledJobBase` — a drop-in replacement for `ScheduledJobBase` that captures execution history automatically.
 - Per-run log lines with severity/color (`Default`/`Info`/`Success`/`Warning`/`Error`/`Debug`), plus a dedicated `LogInputData` call for capturing what a run started with.
-- Automatic execution metrics (duration, allocated bytes, CPU time, GC generation counts) and a `RecordMetric` API for custom domain metrics.
+- Automatic execution metrics — wall-clock duration, bytes allocated on the job's own thread, process CPU time and GC generation counts — plus a `RecordMetric` API for custom domain metrics. The names say whose thread and whose CPU they measure, because on a CMS serving requests the process-wide numbers include everything else the application was doing.
 - An optional per-run **result summary** — a multi-line report the job builds as it works, shown in its own collapsible section of the detail view, separate from the one-line message Optimizely shows in its admin grid.
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
 - Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
@@ -77,6 +77,8 @@ components live in the package, so the SDK does not notice. Without the setting 
 never becomes interactive, and the browser console shows a 404 for `blazor.server.js`.
 
 Applications that already contain their own `.razor` files get it automatically and can skip this.
+If it is missing, the package says so at startup with a warning naming this setting — the failure is
+otherwise silent, and looks like a page that renders but does nothing.
 
 ### Wiring it up
 
@@ -88,24 +90,36 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
 });
 
 // ... then in the middleware pipeline, after UseAuthorization()
-// and BEFORE your own UseEndpoints(...) / MapXxx calls
-app.UseOptiPowerToolsScheduledJobsInsights();
-
 app.UseEndpoints(endpoints =>
 {
+    // Map the hub on your own route builder, ahead of MapContent().
+    endpoints.MapOptiPowerToolsScheduledJobsInsights();
+
     endpoints.MapContent();
     endpoints.MapControllers();
 });
+
+// Migrations and startup diagnostics. The hub is already mapped, so this does not map it again.
+app.UseOptiPowerToolsScheduledJobsInsights();
 ```
 
 Connection string can point to the same database as Optimizely or to a separate one — there is no fallback, it must be set explicitly.
 
-> `UseOptiPowerToolsScheduledJobsInsights()` applies pending migrations and maps the Blazor Server hub
-> the UI connects over. Call it after `UseAuthorization()`; placing it ahead of your own
-> `UseEndpoints(...)` keeps the hub registered alongside everything else. It deliberately does **not**
-> call `MapControllers()` — your application already does, and mapping controllers from two separate
-> `UseEndpoints(...)` blocks registers every action twice, which fails at request time with
-> `AmbiguousMatchException`.
+> **Why the hub is mapped inside your own `UseEndpoints(...)` block.**
+> `UseOptiPowerToolsScheduledJobsInsights()` can map the hub itself, and on a simple host that is
+> fine. On an Optimizely host it is not always: called before your `UseEndpoints(...)`, it publishes
+> the hub through a `UseEndpoints` call of its own, and `MapContent()` then consolidates that
+> already-published data source into its own snapshot — so the hub ends up registered twice and
+> *every* Blazor request in the application fails with `AmbiguousMatchException`, this package's pages
+> and the host's alike. This was reported from a real CMS 13 + Commerce 15 site. Mapping it on your
+> route builder, before `MapContent()`, avoids the whole question.
+>
+> `UseOptiPowerToolsScheduledJobsInsights()` is still needed — it applies migrations and runs the
+> startup diagnostics — and it detects that the hub is already mapped, so calling both is safe and is
+> the recommended shape above.
+>
+> It deliberately does **not** call `MapControllers()`. See the note below on that, which is less
+> obvious than it looks.
 
 On a minimal-hosting app (`WebApplication`) there is also
 `app.MapOptiPowerToolsScheduledJobsInsights()`, which maps the hub *without* applying migrations —
@@ -113,6 +127,31 @@ On a minimal-hosting app (`WebApplication`) there is also
 into your own hands (`AutoMigrateDatabase = false` plus the shipped script); otherwise call `Use…`, or
 you get a working UI over an empty database with nothing anywhere saying why. Calling both is safe:
 the hub is mapped at most once per application.
+
+### If you get `AmbiguousMatchException`
+
+Endpoint matching runs *before* authentication, so this reproduces on an anonymous request and does
+not need a CMS login to diagnose. The package logs a named error at startup when it can see the
+duplication itself, which is usually faster than reading the exception.
+
+There are two independent causes, and they need opposite fixes.
+
+**The hub is registered twice.** Every Blazor request in the application fails, not only this
+package's pages. Cause: `UseOptiPowerToolsScheduledJobsInsights()` ran before your own
+`UseEndpoints(...)` on a host whose `MapContent()` consolidates already-published endpoints. Fix: use
+the wiring at the top of this section — `MapOptiPowerToolsScheduledJobsInsights()` inside your block,
+before `MapContent()`. If your host maps its own hub, set `MapBlazorHub` to `false`.
+
+**Every attribute-routed action is registered twice**, this package's page among them, along with
+Optimizely's and Commerce's own. Cause: on some stacks `MapContent()` already maps attribute-routed
+controllers, and an additional `MapControllers()` maps them a second time. This was reported on
+CMS 13 + Commerce 15.
+
+> **Do not simply delete `MapControllers()`.** Whether `MapContent()` maps controllers depends on the
+> stack, and getting it wrong fails in the other direction. Measured on a plain CMS 13 Alloy site with
+> no Commerce: removing `MapControllers()` leaves `MapContent()` alone, and this package's page then
+> returns **404** — the site still starts and nothing is logged, so the page has simply vanished.
+> Change one thing, restart, and check that the page still answers before you keep the change.
 
 ### Writing a logged job
 
@@ -220,17 +259,14 @@ on the detail page (`2026-08-19 17:37:16 UTC+02:00`). The browser's IANA zone is
 `sji-timezone` cookie by the page itself and applied server-side, so it survives prerendering rather
 than flickering into place after the circuit connects. Two consequences worth knowing:
 
-### Watching a job that is still running
+- **The very first page view renders in UTC**, labelled as such, because the cookie is written by that
+  page and does not exist until it has been served once. Every view afterwards is correct at prerender
+  with no flicker. Nothing reloads to avoid that single occurrence.
+- **Only the zone follows you; the format does not.** Dates stay ISO-ordered and numbers stay
+  invariant, so `2026-08-19` never has to be read as either August or the 19th month, and a duration
+  reads the same in a ticket as it does on the host that produced it.
 
-A still-running execution polls every two seconds and appends new lines live, marked with a **live**
-indicator; only lines newer than those already shown are fetched, so following a long run stays cheap.
-
-Leave that page open and the run finishes underneath you, and the page catches up on its own — no
-reload. The status badge flips, the duration and completion time fill in, and any section that did
-not exist yet appears: **Metrics** (the automatic ones are only recorded as the job ends) and
-**Result summary**, if the job wrote one without checkpointing it. Because log lines and metrics go
-through the buffered writer while completion is written straight through, the page reads once more a
-moment after the run ends, so the last batch of both lands too.
+### Log severities
 
 | Severity | Color |
 |---|---|
@@ -243,15 +279,30 @@ moment after the run ends, so the last batch of both lands too.
 
 ![Log severities in the console viewer](images/LogSeverities.jpg)
 
+### Watching a job that is still running
+
+A still-running execution re-reads itself every `DetailPollInterval` (two seconds by default) and
+appends new lines live, marked with a **live** indicator; only lines newer than those already shown
+are fetched, so following a long run stays cheap.
+
+Leave that page open and the run finishes underneath you, and the page catches up on its own — no
+reload. The status badge flips, the duration and completion time fill in, and any section that did
+not exist yet appears: **Metrics** (the automatic ones are only recorded as the job ends) and
+**Result summary**, if the job wrote one without checkpointing it. Because log lines and metrics go
+through the buffered writer while completion is written straight through, the page reads once more a
+moment after the run ends, so the last batch of both lands too.
+
 ## Automatic metrics
 
-Recorded for every execution, alongside anything you record yourself via `RecordMetric`:
+Recorded for every execution, alongside anything you record yourself via `RecordMetric`. The names
+are constants on the public `JobMetricNames` class, so a dashboard or alert can reference them without
+hard-coding strings:
 
 | Metric | Notes |
 |---|---|
 | `DurationMs` | Wall-clock time around `ExecuteJob()`. Always reliable — one dedicated thread per execution. |
-| `AllocatedBytes` | Thread-scoped allocation delta. Precise — the strongest automatic signal. |
-| `CpuTimeMs` | Process-wide CPU time delta. Noisy under concurrent job execution; most meaningful for longer-running jobs. |
+| `ThreadAllocatedBytes` | Bytes allocated on the job's own thread. Named for its scope: a job that fans work out to the thread pool under-reports, and the delta can even come out negative if it resumes on a different thread than it started on. |
+| `ProcessCpuTimeMs` | CPU time consumed by the *whole process* during the job's window. On a CMS serving requests this includes everything else the application did, and on a multi-core host it can exceed the job's own duration. Per-job CPU is not something this package can measure, so the name says whose CPU it is. |
 | `GcGen0Collections` / `GcGen1Collections` / `GcGen2Collections` | Process-wide GC collection count deltas. Same concurrency caveat as CPU time, but still a useful trend signal across repeated runs of the same job. |
 
 ## Configuration
@@ -276,9 +327,13 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
     options.PageSize = 50;
 
     options.PageTitle = "Scheduled Jobs Insights";
-    options.AuthorizedRoles = ["Administrators", "CmsAdmins", "WebAdmins"];
-    // Authorization: roles by default. Name a policy of your own with options.AuthorizationPolicy,
-    // or set options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
+
+    // Authorization. AuthorizedRoles starts empty, which means the built-in set —
+    // Administrators, CmsAdmins, WebAdmins. Assigning it REPLACES that set rather than adding to it,
+    // so the line below narrows access to one role rather than granting a fourth.
+    options.AuthorizedRoles = ["SecOps"];
+    // Or name a policy of your own with options.AuthorizationPolicy, or set
+    // options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
     options.EnableCmsMenu = true;
     options.MenuPlacement = CmsMenuPlacement.CmsSection;
     options.MenuPath = null;
@@ -306,7 +361,7 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
       "PageSize": 50,
       "MaxResultSummaryLength": 100000,
       "PageTitle": "Scheduled Jobs Insights",
-      "AuthorizedRoles": ["Administrators", "CmsAdmins", "WebAdmins"],
+      "AuthorizedRoles": ["SecOps"],
 
       "EnableCmsMenu": true,
       "MenuPlacement": "CmsSection",
@@ -320,6 +375,13 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
 
 Code overrides configuration when both are used.
 
+`AuthorizedRoles` is worth one note, because it is the one option where the obvious reading is wrong.
+Omit it and the built-in set applies — `Administrators`, `CmsAdmins`, `WebAdmins`. List roles, as
+above, and that set is **replaced**: the example authorizes `SecOps` alone, not `SecOps` plus the
+three. This is why the option's own default is empty rather than the three role names — a non-empty
+default could not be replaced from `appsettings.json` at all, because the configuration binder adds
+into an existing collection instead of clearing it.
+
 ### Options reference
 
 | Option | Type | Default | Description |
@@ -328,11 +390,12 @@ Code overrides configuration when both are used.
 | `AutoMigrateDatabase` | `bool` | `true` | Apply pending EF Core migrations automatically at startup. |
 | `MaxLogMessageLength` | `int` | `4000` | Longest log message stored; longer ones are truncated with an ellipsis. The column itself is unbounded, so this is what stops a job that logs a response body per iteration writing megabytes per row. |
 | `MaxLogEntriesPerExecution` | `int` | `20000` | Most log lines the detail page reads *and holds* for one execution. A Blazor circuit holds every line it is given for as long as the page is open, so this is a server-side memory bound, once per viewer — and it bounds the total across all the polls of a running job, not just one read. A longer log is displayed truncated, with a notice above it saying so. |
+| `MaxLogCharactersPerExecution` | `int` | `4000000` | The companion bound, and the one that actually describes the cost: about 8 MB of text per open page. A line count alone is only a proxy — multiplied by `MaxLogMessageLength` it permits far more than it appears to. Whichever bound is reached first stops the buffer, and ordinary logs reach neither. One line is always kept however long it is, so a single oversized line cannot leave the log looking empty. |
 | `DetailPollInterval` | `TimeSpan` | `00:00:02` | How often the detail page re-reads an execution that is still running. One query per open page per interval, so it scales with viewers rather than with history; each tick reads a narrow projection plus any new log lines, not the whole row. |
 | `ConfigureDbContext` | `Action<DbContextOptionsBuilder>?` | `null` | Applied to the insights `DbContext` after its connection string, for what this package does not decide: `EnableRetryOnFailure()`, a command timeout, a connection interceptor, a managed-identity token provider. Code-only — a delegate cannot come from `appsettings.json`. |
 | `AddBlazorServices` | `bool` | `true` | Whether to register Blazor Server and cascading authentication state. Set to `false` when the host registers Blazor itself — its registrations must be equivalent, or the retention screen loses the authorization re-check it makes before a destructive write. The service-side counterpart to `MapBlazorHub`. |
 | `InterruptedExecutionThreshold` | `TimeSpan` | `24:00:00` | How long a run may sit unfinished before the cleanup job records it as **Interrupted**. `TimeSpan.Zero` disables the sweep. |
-| `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely. |
+| `RetentionDays` | `int` | `30` | How many days of execution history to keep for jobs with no rule of their own. Enforced by the cleanup job; overridden per job by `[JobRetention]` or the retention screen. `0` or less means keep indefinitely — the resolved value is stated in the startup log, and a *negative* one is called out as a warning, since `0` is the documented way to ask for indefinite and a negative number is nearly always a typo for a day count. |
 | `CleanupBatchSize` | `int` | `500` | Max executions deleted per batch by the cleanup job. |
 | `LogChannelCapacity` | `int` | `10000` | Capacity of the in-memory buffer for log/metric writes before falling back to a synchronous insert. |
 | `LogBatchSize` | `int` | `100` | Max buffered records flushed to the database per batch. |
@@ -340,7 +403,7 @@ Code overrides configuration when both are used.
 | `PageSize` | `int` | `50` | Executions shown per page in the Blazor list. |
 | `MaxResultSummaryLength` | `int` | `100000` | Character limit for an execution's result summary. Appends past it are discarded and the stored text ends with a truncation notice. Values of zero or less fall back to the default. |
 | `PageTitle` | `string` | `"Scheduled Jobs Insights"` | Title shown in the CMS shell chrome and browser tab. |
-| `AuthorizedRoles` | `IList<string>` | `["Administrators", "CmsAdmins", "WebAdmins"]` | Optimizely roles allowed to reach the page, the retention screen and the menu entries. Ignored when `AuthorizationPolicy` or `AllowAnyAuthenticatedUser` is set. |
+| `AuthorizedRoles` | `IList<string>` | *empty* | Optimizely roles allowed to reach the page, the retention screen and the menu entries. Empty means the built-in set — `Administrators`, `CmsAdmins`, `WebAdmins` — so leaving it unset cannot lock you out. Naming any role **replaces** that set rather than adding to it, from `appsettings.json` and from code alike. Ignored when `AuthorizationPolicy` or `AllowAnyAuthenticatedUser` is set. |
 | `AuthorizationPolicy` | `string?` | `null` | Name of an authorization policy **you** registered, used instead of the role check. Startup fails with a named error if no such policy exists. |
 | `AllowAnyAuthenticatedUser` | `bool` | `false` | Drops the role check entirely. ⚠️ On a site with front-end membership, "authenticated" includes ordinary visitors — who could then read execution history and any captured input data. |
 | `MapBlazorHub` | `bool?` | `null` | Whether `UseOptiPowerToolsScheduledJobsInsights` maps the Blazor hub. `null` detects an existing `/_blazor` mapping and skips its own. |
@@ -520,14 +583,28 @@ Changes take effect on the next run of the cleanup job. Nothing is deleted at th
 
 Each run does three passes:
 
-1. **Give up on abandoned runs.** Executions still `Running` since longer ago than
+1. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
+2. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+3. **Give up on abandoned runs.** Executions still `Running` since longer ago than
    `InterruptedExecutionThreshold` are recorded as **Interrupted**. A process recycled mid-run writes
    nothing further, so nothing else would ever finish those rows — and until they are resolved, every
    count and status filter is wrong. `CompletedAt` stays empty: the end time is genuinely unknown.
-2. **The default sweep** — everything older than `RetentionDays`, *excluding* every job type that has a retention of its own. Jobs with their own rule are skipped whether that rule is shorter or longer than the default, so the default can never delete history a job explicitly asked to keep.
-3. **One pass per governed job type**, each against its own cutoff. Job types set to indefinite are skipped entirely.
+
+**Neither sweep ever deletes a row that is still `Running`**, however old it is, and the third pass
+runs last for that reason. A job may legitimately run longer than its own retention — a 25-hour import
+under a one-day rule — and age alone cannot tell a stranded run from a working one. Marking a row
+`Interrupted` moves it out of `Running` and so makes it deletable, so resolving abandoned runs *before*
+the sweeps would hand them the history of jobs that were still going. Doing it last costs a stranded
+row one extra cleanup interval before it ages out, which is the cheaper side of that trade.
 
 After installation, the job's run interval and enabled/disabled state are managed from the CMS Scheduled Jobs screen, not from options — `RetentionDays`/`CleanupBatchSize` are the only settings that keep working post-install. The job is itself a `LoggedScheduledJobBase`, so its own runs appear in the execution list like any other.
+
+Being a logged job, it records metrics of its own, alongside the automatic ones:
+
+| Metric | Notes |
+|---|---|
+| `ExecutionsDeleted` | Executions removed in that run, across the default sweep and every per-job rule. Their log and metric rows go with them, by database cascade. |
+| `ExecutionsMarkedInterrupted` | Executions given up on and moved from *Running* to *Interrupted* by the third pass. |
 
 ### If your application already uses Blazor
 
@@ -548,11 +625,12 @@ left exactly as the host configured it.
 ## Removing this package
 
 Unlike a fully self-contained storage layer, this package owns its own SQL Server tables. Removing it stops new executions from being recorded and drops the cleanup job from the CMS's Scheduled Jobs list, but existing `scheduled_jobs_insights.*` tables and their data are left in place until you drop them manually.
+
 ## Development
 
 Building the package, running the dev CMS in Docker, the submodule, seeding Alloy content and
 regenerating migrations are all covered in
-[CONTRIBUTING.md](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/blob/main/CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 None of it is needed to *use* the package.
 
 ## Versioning
@@ -565,7 +643,10 @@ promises is worth stating precisely, because the public surface here is delibera
 - `LoggedScheduledJobBase` and its protected members, including the `ExecuteJob()` /
   `OnStopRequested()` seams.
 - `JobLoggingContext` as a constructor parameter type, and `JobLoggingContext.ForWriter(...)`.
-- `JobResultSummary`, `RetentionPeriod`, `JobRetentionAttribute`.
+- `JobResultSummary`, `RetentionPeriod`, `JobRetentionAttribute`, `JobMetricNames`.
+- `IJobExecutionWriter`. Implementing or mocking it is supported — that is what
+  `JobLoggingContext.ForWriter(...)` is for — and **no member will be added to it outside a major
+  version**, so an implementation written against 1.0 keeps compiling for the whole of 1.x.
 - `OptiPowerToolsScheduledJobsInsightsOptions` and its option names, plus the
   `OptiPowerTools:ScheduledJobsInsights` configuration section.
 - The `Add…` / `Use…` / `Map…` extension methods.
@@ -575,13 +656,11 @@ promises is worth stating precisely, because the public surface here is delibera
 **Outside it** — these may change in any release:
 
 - Anything `internal`, which is most of the implementation.
-- `IJobExecutionWriter`, `ICleanupRepository` and `IJobRetentionPolicySource`. These are public only
-  so that types Optimizely must be able to construct can name them. **They are not extension points**
-  and members may be added to them in a minor version; resolve them from DI, do not implement them. To
-  substitute behaviour, replace this package's registration of the concrete service.
 - The Razor components. They are public because Razor generates them so, and are marked
   `[EditorBrowsable(Never)]`; render them through the package's own route, not directly.
 - The exact text of log messages, result messages and rendered markup.
+
+Released versions are listed in the [changelog](CHANGELOG.md).
 
 
 ## Compatibility

@@ -1,6 +1,7 @@
 using EPiServer.Shell.Navigation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
@@ -194,5 +195,93 @@ public class ScheduledJobsInsightsMenuProviderTests
             Assert.Single(provider.GetMenuItems(), i => i.Path.EndsWith("scheduledjobsinsightsretention", StringComparison.Ordinal)));
 
         Assert.Equal("/ScheduledJobsInsightsCms/Index?view=retention", item.Url);
+    }
+
+    /// <summary>
+    /// A provider whose menu items evaluate authorization against a real HttpContext.
+    /// </summary>
+    private static (ScheduledJobsInsightsMenuProvider Provider, IAuthorizationService Authorization) WithAuthorization(bool succeeds)
+    {
+        var authorization = Substitute.For<IAuthorizationService>();
+        authorization
+            .AuthorizeAsync(Arg.Any<System.Security.Claims.ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(succeeds ? AuthorizationResult.Success() : AuthorizationResult.Failed());
+
+        var services = new ServiceCollection();
+        services.AddSingleton(authorization);
+
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = services.BuildServiceProvider(),
+            User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity("Test"))
+        };
+
+        var accessor = Substitute.For<IHttpContextAccessor>();
+        accessor.HttpContext.Returns(httpContext);
+
+        var provider = new ScheduledJobsInsightsMenuProvider(
+            Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true }),
+            accessor);
+
+        return (provider, authorization);
+    }
+
+    [Fact]
+    public async Task IsAvailable_EvaluatesThePolicyOncePerRequest_NotOncePerMenuItem()
+    {
+        // MenuItem.IsAvailable has no async form, so the policy is evaluated synchronously on the
+        // request thread. The built-in policy answers from memory, but a host is invited to supply
+        // its own, and one that checks group membership against a directory does I/O — three times
+        // per back office page load without the cache.
+        var (provider, authorization) = WithAuthorization(succeeds: true);
+
+        var items = provider.GetMenuItems().ToList();
+        Assert.True(items.Count > 1, "this test is only meaningful with several contributed entries");
+
+        foreach (var item in items)
+            Assert.True(item.IsAvailable(null));
+
+        await authorization.Received(1).AuthorizeAsync(
+            Arg.Any<System.Security.Claims.ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task IsAvailable_WhenThePolicyDenies_EveryEntryIsHidden_AndStillEvaluatedOnce()
+    {
+        // The cached value has to be the answer, not merely "something was cached": caching a denial
+        // as an approval would show entries leading to a 403.
+        var (provider, authorization) = WithAuthorization(succeeds: false);
+
+        var items = provider.GetMenuItems().ToList();
+
+        Assert.All(items, item => Assert.False(item.IsAvailable(null)));
+        await authorization.Received(1).AuthorizeAsync(
+            Arg.Any<System.Security.Claims.ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void IsAvailable_WithNoHttpContext_IsUnavailableRatherThanThrowing()
+    {
+        // Menu providers are also constructed outside a request, where there is nobody to authorize.
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true });
+
+        Assert.All(provider.GetMenuItems(), item => Assert.False(item.IsAvailable(null)));
+    }
+
+    [Fact]
+    public void IsAvailable_WithNoAuthorizationServiceRegistered_IsUnavailableRatherThanThrowing()
+    {
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().BuildServiceProvider(),
+            User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity("Test"))
+        };
+        var accessor = Substitute.For<IHttpContextAccessor>();
+        accessor.HttpContext.Returns(httpContext);
+
+        var provider = new ScheduledJobsInsightsMenuProvider(
+            Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true }), accessor);
+
+        Assert.All(provider.GetMenuItems(), item => Assert.False(item.IsAvailable(null)));
     }
 }

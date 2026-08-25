@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -204,5 +205,128 @@ public class ServiceCollectionExtensionsTests
         services.AddOptiPowerToolsScheduledJobsInsights(_ => { });
 
         Assert.Single(services, d => d.ImplementationType == typeof(JobLogBackgroundWriter));
+    }
+
+    [Fact]
+    public void AddBlazorServicesFalse_IsHonouredWhenItComesFromFactoryRegisteredConfiguration()
+    {
+        // The shape every real host uses, and the one shape this was never tested against.
+        // WebApplicationBuilder, HostApplicationBuilder and HostBuilder all register IConfiguration
+        // through a factory rather than an instance — so an instance-only read came back null, the
+        // section was never bound, and AddServerSideBlazor plus AddCascadingAuthenticationState were
+        // grafted into a host that had asked in configuration for neither. Silently: the value binds
+        // into IOptions correctly, so nothing downstream disagreed.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OptiPowerTools:ScheduledJobsInsights:AddBlazorServices"] = "false"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(_ => configuration);
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
+            options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;");
+
+        Assert.DoesNotContain(services, IsBlazorServerRegistration);
+        Assert.DoesNotContain(services, IsCascadingAuthenticationStateRegistration);
+
+        // And the option really did bind, so the registration decision and IOptions agree.
+        var provider = services.BuildServiceProvider();
+        Assert.False(provider.GetRequiredService<IOptions<OptiPowerToolsScheduledJobsInsightsOptions>>().Value.AddBlazorServices);
+    }
+
+    /// <summary>Registers the package on a collection whose IConfiguration is shaped as given.</summary>
+    private static ServiceCollection RegisteredWithConfiguration(Action<ServiceCollection> registerConfiguration)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        registerConfiguration(services);
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
+            options.ConnectionString = "Server=localhost;Database=Test;Trusted_Connection=True;");
+        return services;
+    }
+
+    [Fact]
+    public void WithNoConfigurationRegisteredAtAll_RegistrationStillSucceeds()
+    {
+        // A host that registers the package before its configuration. Nothing to read, so the option
+        // keeps its default rather than the call failing.
+        var services = RegisteredWithConfiguration(_ => { });
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void WithConfigurationRegisteredByImplementationType_FallsBackToTheDefault()
+    {
+        // Neither an instance nor a factory to read: the descriptor names a type for the container to
+        // construct later, which cannot be done before one exists.
+        var services = RegisteredWithConfiguration(s => ((IServiceCollection)s).Add(
+            new ServiceDescriptor(typeof(IConfiguration), typeof(ConfigurationManager), ServiceLifetime.Singleton)));
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void WithAKeyedConfiguration_ItIsIgnoredRatherThanThrowing()
+    {
+        // Reading ImplementationInstance or ImplementationFactory off a keyed descriptor throws, and
+        // a keyed registration is not the host's ambient configuration in any case.
+        var services = RegisteredWithConfiguration(s => s.AddKeyedSingleton<IConfiguration>(
+            "somewhere-else", new ConfigurationBuilder().Build()));
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void WhenTheConfigurationFactoryThrows_TheRegistrationSurvives()
+    {
+        // Best-effort: an exotic factory that actually resolves something is allowed to fail, but it
+        // must not take down the whole AddOptiPowerTools... call with it.
+        var services = RegisteredWithConfiguration(s => s.AddSingleton<IConfiguration>(
+            _ => throw new InvalidOperationException("not yet available")));
+
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void AConfigurationFactoryThatUsesItsProvider_IsGivenAnEmptyOne()
+    {
+        // The standard hosts' factory closes over an already-built root and ignores the provider, so
+        // an empty one satisfies it. One that does ask gets null back rather than a half-built
+        // container — and the option falls back to its default.
+        IServiceProvider? seen = null;
+        var services = RegisteredWithConfiguration(s => s.AddSingleton<IConfiguration>(provider =>
+        {
+            seen = provider;
+            _ = provider.GetService(typeof(ILoggerFactory));
+            return new ConfigurationBuilder().Build();
+        }));
+
+        Assert.NotNull(seen);
+        Assert.Null(seen!.GetService(typeof(ILoggerFactory)));
+        Assert.Contains(services, IsBlazorServerRegistration);
+    }
+
+    [Fact]
+    public void TheLastConfigurationRegistrationWins()
+    {
+        // Hosts re-register IConfiguration; the effective one is the last, as the container resolves it.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OptiPowerTools:ScheduledJobsInsights:AddBlazorServices"] = "false"
+            })
+            .Build();
+
+        var services = RegisteredWithConfiguration(s =>
+        {
+            s.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+            s.AddSingleton<IConfiguration>(_ => configuration);
+        });
+
+        Assert.DoesNotContain(services, IsBlazorServerRegistration);
     }
 }

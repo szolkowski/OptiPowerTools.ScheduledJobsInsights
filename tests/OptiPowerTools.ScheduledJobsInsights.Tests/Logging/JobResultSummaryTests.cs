@@ -157,4 +157,45 @@ public class JobResultSummaryTests
         Assert.All(lines, line => Assert.Matches(@"^line-\d{3}$", line));
         Assert.Equal(200, lines.Distinct().Count());
     }
+
+    /// <summary>Whether any surrogate in the text is missing its partner.</summary>
+    private static bool HasLoneSurrogate(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (char.IsHighSurrogate(text[i]))
+            {
+                if (i + 1 >= text.Length || !char.IsLowSurrogate(text[i + 1]))
+                    return true;
+
+                i++;
+            }
+            else if (char.IsLowSurrogate(text[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public void Truncation_NeverSplitsASurrogatePair(int extraBudget)
+    {
+        // This is the truncation that runs on the normal path — the writer only ever sees text this
+        // type has already bounded. Cutting between a high and a low surrogate stores half a code
+        // point, which renders as a replacement glyph. The budget is varied so that at least one case
+        // lands the cut inside a two-char emoji.
+        var overhead = Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length;
+        var summary = new JobResultSummary(overhead + extraBudget);
+
+        summary.Append(string.Concat(Enumerable.Repeat("\U0001F600", 20)));
+
+        Assert.False(HasLoneSurrogate(summary.ToString()));
+    }
 }

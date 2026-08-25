@@ -51,3 +51,11 @@ csharp_new_line_before_open_brace = all
 # DisplayFormat.cs is where the UI's formatting decisions live.
 [*.cs]
 dotnet_diagnostic.CA1305.severity = error
+
+# Logging. Off by default because it is INFO severity, which meant SonarCloud reported it on a pull
+# request while a clean local build said nothing — the worst order to find out. Elevated so the build
+# catches it first. It fires when a logging call's arguments are evaluated and boxed into a
+# params object?[] before the logger has decided whether the level is enabled; the fix is a
+# source-generated [LoggerMessage] partial method, as used in Cms/ScheduledJobsInsightsAuthorization.cs
+# and Extensions/StartupDiagnostics.cs. TreatWarningsAsErrors is on repo-wide, so this fails the build.
+dotnet_diagnostic.CA1873.severity = warning

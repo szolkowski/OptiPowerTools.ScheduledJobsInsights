@@ -32,7 +32,11 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 public sealed class JobResultSummary
 {
     /// <summary>Character limit applied when no explicit one is given — 100,000.</summary>
-    public const int DefaultMaxLength = 100_000;
+    /// <remarks>
+    /// <c>static readonly</c> rather than <c>const</c>: a <c>const</c> is inlined into every consumer
+    /// assembly that reads it, so revising this later would reach only the consumers that recompiled.
+    /// </remarks>
+    public static readonly int DefaultMaxLength = 100_000;
 
     /// <summary>
     /// Appended when content had to be dropped. Internal rather than private so
@@ -200,8 +204,10 @@ public sealed class JobResultSummary
         }
 
         // Keep whatever still fits rather than dropping the whole append — a partial last line reads
-        // better than a summary that stops one character short of the limit.
-        _builder.Append(text, 0, Math.Max(0, remaining));
+        // better than a summary that stops one character short of the limit. Cut through TextBounds
+        // so the partial line cannot end in half a surrogate pair; this is the site that truncates on
+        // the normal path, since the writer only sees text this type has already bounded.
+        _builder.Append(text, 0, TextBounds.CutAt(text, Math.Max(0, remaining)));
         _truncated = true;
     }
 }

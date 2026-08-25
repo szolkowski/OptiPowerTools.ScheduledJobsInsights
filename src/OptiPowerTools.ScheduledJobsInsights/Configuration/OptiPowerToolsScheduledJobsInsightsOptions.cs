@@ -3,7 +3,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Configuration;
 /// <summary>
 /// Configuration options for the OptiPowerTools ScheduledJobsInsights Blazor integration.
 /// </summary>
-public class OptiPowerToolsScheduledJobsInsightsOptions
+public sealed class OptiPowerToolsScheduledJobsInsightsOptions
 {
     /// <summary>
     /// The configuration section these options bind from — <c>"OptiPowerTools:ScheduledJobsInsights"</c>.
@@ -77,7 +77,11 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     public int PageSize { get; set; } = 50;
 
     /// <summary>Default for <see cref="MaxLogMessageLength"/>.</summary>
-    public const int DefaultMaxLogMessageLength = 4_000;
+    /// <remarks>
+    /// <c>static readonly</c> rather than <c>const</c>: a <c>const</c> is inlined into every consumer
+    /// assembly that reads it, so revising this later would reach only the consumers that recompiled.
+    /// </remarks>
+    public static readonly int DefaultMaxLogMessageLength = 4_000;
 
     /// <summary>
     /// Longest log message stored, in characters. Longer messages are truncated with an ellipsis.
@@ -93,7 +97,8 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     public int MaxLogMessageLength { get; set; } = DefaultMaxLogMessageLength;
 
     /// <summary>Default for <see cref="MaxLogEntriesPerExecution"/>.</summary>
-    public const int DefaultMaxLogEntriesPerExecution = 20_000;
+    /// <remarks><c>static readonly</c> for the reason given on <see cref="DefaultMaxLogMessageLength"/>.</remarks>
+    public static readonly int DefaultMaxLogEntriesPerExecution = 20_000;
 
     /// <summary>
     /// Most log lines the detail page will read for one execution. Defaults to 20,000.
@@ -106,6 +111,34 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     /// execution. A run that exceeds it is displayed truncated, and says so above the log.
     /// </remarks>
     public int MaxLogEntriesPerExecution { get; set; } = DefaultMaxLogEntriesPerExecution;
+
+    /// <summary>Default for <see cref="MaxLogCharactersPerExecution"/>: 4,000,000 (about 8 MB).</summary>
+    /// <remarks><c>static readonly</c> for the reason given on <see cref="DefaultMaxLogMessageLength"/>.</remarks>
+    public static readonly int DefaultMaxLogCharactersPerExecution = 4_000_000;
+
+    /// <summary>
+    /// Most log text the detail page will hold for one execution, in characters.
+    /// Defaults to 4,000,000 — roughly 8 MB of UTF-16, per open page.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The companion bound to <see cref="MaxLogEntriesPerExecution"/>, and the one that actually
+    /// describes the cost. A line count is only a proxy for memory: multiplied by
+    /// <see cref="MaxLogMessageLength"/> it permits far more than it appears to, and the product is
+    /// what a Blazor Server circuit holds for as long as the tab is open, once per viewer.
+    /// </para>
+    /// <para>
+    /// Whichever bound is reached first stops the buffer, and the page renders the same truncation
+    /// notice either way. Ordinary logs reach neither: a typical line is a couple of hundred
+    /// characters, so this budget accommodates well beyond the line cap and only bites when lines are
+    /// unusually long — which is exactly the case a line count fails to catch.
+    /// </para>
+    /// <para>
+    /// One line is always held, however long it is, so a single oversized line cannot leave the log
+    /// looking empty.
+    /// </para>
+    /// </remarks>
+    public int MaxLogCharactersPerExecution { get; set; } = DefaultMaxLogCharactersPerExecution;
 
     /// <summary>
     /// How long an execution may sit unfinished before the cleanup job records it as
@@ -129,13 +162,34 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
 
     /// <summary>
     /// The Optimizely/EPiServer roles authorized to access the page and the retention screen.
-    /// Defaults to Administrators, CmsAdmins, and WebAdmins.
+    /// Leave empty — the default — to authorize the built-in set: Administrators, CmsAdmins and
+    /// WebAdmins.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Naming any role here <em>replaces</em> the built-in set rather than adding to it, from
+    /// <c>appsettings.json</c> and from code alike.
+    /// </para>
+    /// <para>
+    /// The property starts empty for that reason, rather than carrying the built-in roles as its
+    /// default value: <c>ConfigurationBinder</c> adds into an existing collection instead of clearing
+    /// it, so a non-empty default cannot be replaced from configuration at all. Written the other way,
+    /// <c>"AuthorizedRoles": [ "SecOps" ]</c> authorized four roles rather than one — silently
+    /// widening access for an administrator who was trying to narrow it.
+    /// </para>
+    /// <para>
     /// Ignored when <see cref="AuthorizationPolicy"/> names a policy of your own, or when
     /// <see cref="AllowAnyAuthenticatedUser"/> is set.
+    /// </para>
     /// </remarks>
-    public IList<string> AuthorizedRoles { get; set; } = ["Administrators", "CmsAdmins", "WebAdmins"];
+    public IList<string> AuthorizedRoles { get; set; } = [];
+
+    /// <summary>
+    /// The roles authorized when <see cref="AuthorizedRoles"/> is left empty. Not an option in its own
+    /// right — it is the value <see cref="AuthorizedRoles"/> documents as its default, held separately
+    /// so that configuration replaces it rather than appending to it.
+    /// </summary>
+    internal static readonly string[] DefaultAuthorizedRoles = ["Administrators", "CmsAdmins", "WebAdmins"];
 
     /// <summary>
     /// Name of an authorization policy registered by the host, used instead of the built-in role
@@ -248,6 +302,13 @@ public class OptiPowerToolsScheduledJobsInsightsOptions
     /// authentication state. Defaults to <c>true</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Deliberately <c>bool</c> where <see cref="MapBlazorHub"/> is <c>bool?</c>. The nullable third
+    /// state there means "detect an existing mapping and skip my own", which is answerable at map
+    /// time by inspecting the endpoints. There is nothing equivalent to detect at registration time —
+    /// a host that has called <c>AddServerSideBlazor</c> leaves no signal this could read — so a
+    /// third state here would be a value with no defined behaviour.
+    /// </para>
     /// <para>
     /// The service-side counterpart to <see cref="MapBlazorHub"/>, and needed for the same reason:
     /// this package's UI is Blazor Server, but the host may already have made its own choices.

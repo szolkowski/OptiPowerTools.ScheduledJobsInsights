@@ -78,7 +78,16 @@ internal sealed partial class ConfigureScheduledJobsInsightsAuthorization : IPos
         var builder = new AuthorizationPolicyBuilder().RequireAuthenticatedUser();
 
         if (!_options.AllowAnyAuthenticatedUser)
-            builder = builder.RequireRole(_options.AuthorizedRoles);
+        {
+            // Empty means "use the built-in set", not "authorize nobody" — the option cannot carry the
+            // built-in roles as its own default without making itself unreplaceable from
+            // configuration. See OptiPowerToolsScheduledJobsInsightsOptions.AuthorizedRoles.
+            var roles = _options.AuthorizedRoles.Count > 0
+                ? _options.AuthorizedRoles
+                : OptiPowerToolsScheduledJobsInsightsOptions.DefaultAuthorizedRoles;
+
+            builder = builder.RequireRole(roles);
+        }
 
         return builder.Build();
     }

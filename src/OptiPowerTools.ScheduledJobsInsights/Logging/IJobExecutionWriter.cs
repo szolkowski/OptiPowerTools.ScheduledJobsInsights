@@ -10,11 +10,18 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Not an extension point.</b> Resolve it from DI to record executions that are not scheduled
-/// jobs; do not implement it in consuming code. Members may be added in a minor version — which is
-/// precisely why implementing it is unsupported, and why no <c>[Obsolete]</c> shim or default
-/// implementation will be provided for one. To send execution data somewhere else, replace the
-/// registration of the concrete writer rather than implementing this.
+/// Resolve it from DI to record executions that are not scheduled jobs. Implementing it is also
+/// supported, and is the intended way to unit-test a job — see
+/// <see cref="JobLoggingContext.ForWriter"/>, which takes one. <b>No member will be added outside a
+/// major version</b>, so an implementation or a mock written against 1.0 keeps compiling for the
+/// whole of 1.x.
+/// </para>
+/// <para>
+/// That is a commitment rather than a mechanism, deliberately. Default implementations would make
+/// additions technically safe, but they also make the interface unmockable by Castle-based libraries
+/// such as NSubstitute — which would break the very unit-testing scenario
+/// <see cref="JobLoggingContext.ForWriter"/> exists to support. A promise that costs nothing is
+/// worth more here than a mechanism that costs that.
 /// </para>
 /// <b>No member of this interface throws.</b> Implementations report failures out of band and carry
 /// on. A job is running when these are called, and this package's contract is that it only

@@ -182,8 +182,8 @@ public class ConsumerIntegrationTests
     [Fact]
     public void TheRetentionSourceAndTheScreenService_AreOneInstance()
     {
-        // Deliberate: the public, cleanup-facing face and the internal, screen-facing one are the
-        // same object, so a cache or scan inside it is not paid for twice.
+        // Deliberate: the narrow, cleanup-facing face and the wider, screen-facing one are the same
+        // object, so a cache or scan inside it is not paid for twice.
         using var database = new SqliteDbContextFactory();
         using var provider = BuildConsumerHost(database);
 

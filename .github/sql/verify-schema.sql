@@ -17,6 +17,8 @@ SET NOCOUNT ON;
 DECLARE @failures int = 0;
 DECLARE @tbl nvarchar(200) = 'scheduled_jobs_insights.JobExecutions';
 DECLARE @policies nvarchar(200) = 'scheduled_jobs_insights.JobRetentionPolicies';
+DECLARE @log nvarchar(200) = 'scheduled_jobs_insights.JobLogEntries';
+DECLARE @metrics nvarchar(200) = 'scheduled_jobs_insights.JobMetrics';
 
 IF SCHEMA_ID('scheduled_jobs_insights') IS NULL
 BEGIN PRINT 'FAIL: schema scheduled_jobs_insights missing'; SET @failures += 1; END
@@ -129,11 +131,83 @@ IF NOT EXISTS (SELECT 1 FROM sys.columns
 BEGIN PRINT 'FAIL: JobExecutions.JobName is not nvarchar(400)'; SET @failures += 1; END
 
 -- Child rows must cascade with their parent execution; the cleanup job relies on it.
-IF (SELECT COUNT(*) FROM sys.foreign_keys
-    WHERE parent_object_id IN (OBJECT_ID('scheduled_jobs_insights.JobLogEntries'),
-                               OBJECT_ID('scheduled_jobs_insights.JobMetrics'))
-      AND delete_referential_action_desc = 'CASCADE') <> 2
-BEGIN PRINT 'FAIL: JobLogEntries/JobMetrics are not both ON DELETE CASCADE'; SET @failures += 1; END
+--
+-- Checked per table rather than by counting two across both. The counting form passed when
+-- JobLogEntries happened to carry two cascading keys and JobMetrics none -- which is precisely the
+-- shape that would leave orphaned metrics behind every delete the cleanup job makes.
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys
+               WHERE parent_object_id = OBJECT_ID(@log)
+                 AND delete_referential_action_desc = 'CASCADE')
+BEGIN PRINT 'FAIL: JobLogEntries has no ON DELETE CASCADE foreign key'; SET @failures += 1; END
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys
+               WHERE parent_object_id = OBJECT_ID(@metrics)
+                 AND delete_referential_action_desc = 'CASCADE')
+BEGIN PRINT 'FAIL: JobMetrics has no ON DELETE CASCADE foreign key'; SET @failures += 1; END
+
+-- ---------------------------------------------------------------------------
+-- The child tables' own shape. None of this was asserted, and the log ordering contract in
+-- particular is something the whole detail page depends on.
+-- ---------------------------------------------------------------------------
+
+-- Log lines are ordered by (JobExecutionId, Sequence), never by Timestamp alone -- a tight logging
+-- loop produces timestamp collisions. Uniqueness is what makes the ordering total, and the keyset
+-- resume point in LogEntryBuffer assumes it.
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes i
+    JOIN sys.index_columns ic1 ON ic1.object_id = i.object_id AND ic1.index_id = i.index_id AND ic1.key_ordinal = 1
+    JOIN sys.columns c1 ON c1.object_id = i.object_id AND c1.column_id = ic1.column_id
+    JOIN sys.index_columns ic2 ON ic2.object_id = i.object_id AND ic2.index_id = i.index_id AND ic2.key_ordinal = 2
+    JOIN sys.columns c2 ON c2.object_id = i.object_id AND c2.column_id = ic2.column_id
+    WHERE i.object_id = OBJECT_ID(@log) AND i.is_unique = 1
+      AND c1.name = 'JobExecutionId' AND c2.name = 'Sequence')
+BEGIN PRINT 'FAIL: JobLogEntries has no unique index on (JobExecutionId, Sequence)'; SET @failures += 1; END
+
+-- Serves the detail page's metrics read.
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes i
+    JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal = 1
+    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
+    WHERE i.object_id = OBJECT_ID(@metrics) AND c.name = 'JobExecutionId')
+BEGIN PRINT 'FAIL: JobMetrics has no index leading with JobExecutionId'; SET @failures += 1; END
+
+-- The remaining unbounded columns. A job logging a response body per iteration writes megabytes into
+-- Message, and a truncated-to-4000 column would silently cut every one of them.
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@log) AND name = 'Message'
+                 AND system_type_id = @nvarchar AND max_length = -1)
+BEGIN PRINT 'FAIL: JobLogEntries.Message is not an nvarchar(max)'; SET @failures += 1; END
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'ExceptionMessage'
+                 AND system_type_id = @nvarchar AND max_length = -1)
+BEGIN PRINT 'FAIL: JobExecutions.ExceptionMessage is not an nvarchar(max)'; SET @failures += 1; END
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'ResultMessage'
+                 AND system_type_id = @nvarchar AND max_length = -1)
+BEGIN PRINT 'FAIL: JobExecutions.ResultMessage is not an nvarchar(max)'; SET @failures += 1; END
+
+-- datetimeoffset is exactly what the Sqlite converter hides: under Sqlite these round-trip through a
+-- binary converter, so nothing else in the build would notice if the real column were a datetime2.
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@tbl) AND name = 'StartedAt'
+                 AND system_type_id = TYPE_ID('datetimeoffset'))
+BEGIN PRINT 'FAIL: JobExecutions.StartedAt is not a datetimeoffset'; SET @failures += 1; END
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns
+               WHERE object_id = OBJECT_ID(@log) AND name = 'Timestamp'
+                 AND system_type_id = TYPE_ID('datetimeoffset'))
+BEGIN PRINT 'FAIL: JobLogEntries.Timestamp is not a datetimeoffset'; SET @failures += 1; END
+
+-- Dropped by DropUnusedScheduledJobIdIndex. Asserted absent rather than simply unlisted: the column
+-- is still written on every insert, so an index re-added by accident would cost exactly what
+-- dropping it was meant to save, on the highest-insert-rate table here.
+IF EXISTS (SELECT 1 FROM sys.indexes
+           WHERE object_id = OBJECT_ID(@tbl) AND name = 'IX_JobExecutions_ScheduledJobId')
+BEGIN PRINT 'FAIL: IX_JobExecutions_ScheduledJobId is back; it is unused write cost'; SET @failures += 1; END
 
 -- Per-job retention, added by AddJobRetentionPolicies. The unique index is what the resolver relies
 -- on to guarantee one policy per job type.
@@ -146,12 +220,46 @@ BEGIN
                      AND name = 'RetentionDays' AND is_nullable = 1)
     BEGIN PRINT 'FAIL: JobRetentionPolicies.RetentionDays must be nullable (null means indefinite)'; SET @failures += 1; END
 
+    -- key_ordinal = 1 and exactly one key column. Without both, a unique index on
+    -- (SomethingElse, JobTypeName) satisfies the check while allowing two policies for one job type
+    -- -- the precise thing the uniqueness is there to prevent.
     IF NOT EXISTS (SELECT 1 FROM sys.indexes i
                    JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
                    JOIN sys.columns c ON c.object_id = i.object_id AND c.column_id = ic.column_id
                    WHERE i.object_id = OBJECT_ID(@policies)
-                     AND i.is_unique = 1 AND c.name = 'JobTypeName')
-    BEGIN PRINT 'FAIL: JobRetentionPolicies.JobTypeName is not uniquely indexed'; SET @failures += 1; END
+                     AND i.is_unique = 1 AND c.name = 'JobTypeName' AND ic.key_ordinal = 1
+                     AND (SELECT COUNT(*) FROM sys.index_columns k
+                          WHERE k.object_id = i.object_id AND k.index_id = i.index_id AND k.key_ordinal > 0) = 1)
+    BEGIN PRINT 'FAIL: JobRetentionPolicies has no single-column unique index on JobTypeName'; SET @failures += 1; END
+END
+
+-- Every migration recorded. Migrate() runs on every startup, so a migration that applied but was not
+-- recorded would be re-applied on the next boot of every installation.
+--
+-- The table is located by name rather than by schema. HasDefaultSchema should put it alongside the
+-- rest, but that is an EF implementation detail this script has no business asserting -- and getting
+-- it wrong would fail CI for a schema that is perfectly correct.
+--
+-- The expected count is deliberately exact: bump it in the same commit that adds a migration.
+DECLARE @history nvarchar(300) = (
+    SELECT TOP 1 QUOTENAME(s.name) + '.' + QUOTENAME(t.name)
+    FROM sys.tables t
+    JOIN sys.schemas s ON s.schema_id = t.schema_id
+    WHERE t.name = '__EFMigrationsHistory');
+
+IF @history IS NULL
+BEGIN PRINT 'FAIL: __EFMigrationsHistory not found in any schema'; SET @failures += 1; END
+ELSE
+BEGIN
+    DECLARE @migrations int;
+    DECLARE @sql nvarchar(600) = N'SELECT @c = COUNT(*) FROM ' + @history + N';';
+    EXEC sp_executesql @sql, N'@c int OUTPUT', @c = @migrations OUTPUT;
+
+    IF @migrations <> 6
+    BEGIN
+        PRINT 'FAIL: expected 6 recorded migrations, found ' + CAST(@migrations AS varchar(4));
+        SET @failures += 1;
+    END
 END
 
 IF @failures > 0

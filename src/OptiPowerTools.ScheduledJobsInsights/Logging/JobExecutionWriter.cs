@@ -22,7 +22,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 /// <see cref="BeginExecution"/> reports failure by returning <c>null</c>, which disables recording
 /// for the rest of that run.
 /// </remarks>
-internal sealed class JobExecutionWriter : IJobExecutionWriter
+internal sealed partial class JobExecutionWriter : IJobExecutionWriter
 {
     private readonly IDbContextFactory<ScheduledJobsInsightsDbContext> _dbContextFactory;
     private readonly ChannelWriter<JobRecord> _channelWriter;
@@ -158,9 +158,8 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     /// interface documented as never throwing.
     /// </para>
     /// <para>
-    /// Surrogate-safe, like <see cref="Truncate"/>: cutting between a high and low surrogate stores
-    /// half a code point, which renders as a replacement glyph. The two used to disagree about this,
-    /// in the same file.
+    /// Surrogate-safe via <see cref="TextBounds.CutAt"/>, which every truncation in this package now
+    /// shares.
     /// </para>
     /// </remarks>
     private static string Clamp(string? value, int maxLength)
@@ -171,10 +170,7 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         if (value.Length <= maxLength)
             return value;
 
-        var budget = Math.Max(1, maxLength - Ellipsis.Length);
-
-        if (budget < value.Length && char.IsHighSurrogate(value[budget - 1]))
-            budget--;
+        var budget = TextBounds.CutAt(value, Math.Max(1, maxLength - Ellipsis.Length));
 
         return value[..budget] + Ellipsis;
     }
@@ -190,10 +186,9 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         if (summary.Length <= maxLength)
             return summary;
 
-        var budget = Math.Max(1, maxLength - (Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length));
-
-        if (budget < summary.Length && char.IsHighSurrogate(summary[budget - 1]))
-            budget--;
+        var budget = TextBounds.CutAt(
+            summary,
+            Math.Max(1, maxLength - (Environment.NewLine.Length + JobResultSummary.TruncationNotice.Length)));
 
         return summary[..budget] + Environment.NewLine + JobResultSummary.TruncationNotice;
     }
@@ -202,12 +197,28 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
     /// Runs an immediate write, swallowing and logging any failure. Every one of these happens while
     /// a job is executing, so none of them may throw into it.
     /// </summary>
-    private void Write(long executionId, string operation, Action<ScheduledJobsInsightsDbContext> write)
+    /// <remarks>
+    /// The delegate returns the affected-row count rather than nothing, so that a write which
+    /// succeeds against a row that no longer exists can be reported. That case is silent otherwise:
+    /// <c>ExecuteUpdate</c> matching zero rows is not an error.
+    /// </remarks>
+    private void Write(long executionId, string operation, Func<ScheduledJobsInsightsDbContext, int> write)
     {
         try
         {
             using var dbContext = _dbContextFactory.CreateDbContext();
-            write(dbContext);
+
+            if (write(dbContext) == 0)
+            {
+                // The row this run is writing to is gone — deleted by hand, lost to a restored
+                // backup, or taken by a retention sweep that ran while the job was still going. The
+                // count is the only evidence there is, so discarding it left an execution that
+                // vanished mid-run looking exactly like one that recorded correctly.
+                _logger.LogWarning(
+                    "ScheduledJobsInsights recorded {Operation} for execution {ExecutionId}, but no row with that id exists. Its history was removed while the job was still running; the job itself is unaffected.",
+                    operation,
+                    executionId);
+            }
         }
         catch (Exception ex)
         {
@@ -245,6 +256,19 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
         // carries the log lines of every other job running at that moment.
         name = Clamp(name, MaxMetricNameLength);
         unit = unit is null ? null : Clamp(unit, MaxMetricUnitLength);
+
+        // Same reasoning as the clamps above, for the same reason. SQL Server's float is IEEE-754
+        // finite-only, so NaN and infinity fail the INSERT — and not just their own row: they fail the
+        // whole batch they travel in, which carries the log lines of every other job running at that
+        // moment. The batch is then retried, dropped, and salvaged one row at a time. A rate computed
+        // over an elapsed time that rounds to zero is the ordinary way to produce one, so this is a
+        // mistake a correct-looking job makes rather than an exotic input.
+        if (!double.IsFinite(value))
+        {
+            LogDiscardedNonFiniteMetric(_logger, name, executionId);
+            return;
+        }
+
         var record = new MetricRecordItem(executionId, name, value, unit, DateTimeOffset.UtcNow);
         if (_channelWriter.TryWrite(record))
             return;
@@ -259,6 +283,17 @@ internal sealed class JobExecutionWriter : IJobExecutionWriter
             RecordedAt = record.RecordedAt
         }));
     }
+
+    /// <remarks>
+    /// Source-generated: the execution id would otherwise be boxed into a <c>params object?[]</c>
+    /// before the logger has decided whether Debug is enabled — which it usually is not — and this
+    /// sits on the metric path, where a job in a loop reaches it once per iteration. That is what
+    /// <c>CA1873</c> objects to.
+    /// </remarks>
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "ScheduledJobsInsights discarded metric {MetricName} for execution {ExecutionId} because its value was not a finite number.")]
+    private static partial void LogDiscardedNonFiniteMetric(ILogger logger, string metricName, long executionId);
 
     /// <summary>
     /// Writes a single record immediately, because the buffer was full. Never throws: this runs on the

@@ -6,6 +6,12 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0
 RUN useradd --create-home appuser
 USER appuser
 
+# Created here, owned by appuser, so that the named volume docker-compose.yml mounts over it is
+# initialised with appuser's ownership. A volume mounted onto a path that does not exist in the image
+# is created owned by root, and the app - which runs as appuser - then cannot write its DataProtection
+# keys at all: every request needing one fails with UnauthorizedAccessException.
+RUN mkdir -p /home/appuser/.aspnet/DataProtection-Keys
+
 WORKDIR /src
 
 # Copy only the manifests, so the restore layer is cached independently of the

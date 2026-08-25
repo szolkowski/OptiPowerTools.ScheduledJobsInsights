@@ -194,15 +194,66 @@ public static class ServiceCollectionExtensions
     {
         var options = new OptiPowerToolsScheduledJobsInsightsOptions();
 
-        var configuration = services
-            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(IConfiguration))?
-            .ImplementationInstance as IConfiguration;
-
-        configuration?.GetSection(OptiPowerToolsScheduledJobsInsightsOptions.ConfigurationSectionName).Bind(options);
+        ReadConfiguration(services)?
+            .GetSection(OptiPowerToolsScheduledJobsInsightsOptions.ConfigurationSectionName)
+            .Bind(options);
 
         // Same precedence as the real binding: configuration first, then code.
         setupAction(options);
 
         return options;
+    }
+
+    /// <summary>
+    /// The host's <see cref="IConfiguration"/>, read straight off its service descriptor because no
+    /// service provider exists yet.
+    /// </summary>
+    /// <remarks>
+    /// Both registration shapes have to be handled. Reading only <c>ImplementationInstance</c> looks
+    /// sufficient and is not: <c>WebApplicationBuilder</c>, <c>HostApplicationBuilder</c> and
+    /// <c>HostBuilder</c> all register configuration through a <em>factory</em> — deliberately, so the
+    /// configuration root disposes with the provider — so an instance-only read comes back
+    /// <c>null</c> in every real host. Whatever the consumer wrote in <c>appsettings.json</c> was then
+    /// ignored for the one option that decides what gets registered, with no error to say so.
+    /// </remarks>
+    private static IConfiguration? ReadConfiguration(IServiceCollection services)
+    {
+        // Keyed descriptors throw from both accessors below, and a keyed registration is not the
+        // host's ambient configuration in any case.
+        var descriptor = services.LastOrDefault(candidate =>
+            candidate.ServiceType == typeof(IConfiguration) && !candidate.IsKeyedService);
+
+        if (descriptor is null)
+            return null;
+
+        if (descriptor.ImplementationInstance is IConfiguration instance)
+            return instance;
+
+        if (descriptor.ImplementationFactory is not { } factory)
+            return null;
+
+        try
+        {
+            // The standard hosts' factory closes over an already-built configuration root and ignores
+            // the provider it is handed, so an empty one satisfies it. Anything more exotic that
+            // actually resolves a dependency falls back to the option's default rather than taking
+            // the whole registration call down with it.
+            return factory(EmptyServiceProvider.Instance) as IConfiguration;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Hands back <c>null</c> for everything. Exists only to satisfy a configuration factory that
+    /// ignores its argument; see <see cref="ReadConfiguration"/>.
+    /// </summary>
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public static readonly EmptyServiceProvider Instance = new();
+
+        public object? GetService(Type serviceType) => null;
     }
 }

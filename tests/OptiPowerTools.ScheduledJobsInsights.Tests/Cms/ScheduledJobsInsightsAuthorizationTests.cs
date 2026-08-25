@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -132,5 +133,55 @@ public class ScheduledJobsInsightsAuthorizationTests
 
         Assert.Contains(logger.Entries, entry =>
             entry.Level == LogLevel.Critical && entry.Message.Contains("NoSuchPolicy", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AuthorizedRolesLeftEmpty_AuthorizesTheBuiltInRoles()
+    {
+        // Empty is the default. It means "the built-in set", not "nobody" — the roles cannot live on
+        // the option as a default value without making it unreplaceable from configuration.
+        var provider = Host(_ => { });
+        var authorization = provider.GetRequiredService<IAuthorizationService>();
+
+        foreach (var role in OptiPowerToolsScheduledJobsInsightsOptions.DefaultAuthorizedRoles)
+        {
+            Assert.True((await authorization.AuthorizeAsync(
+                User(role), null, ScheduledJobsInsightsAuthorization.PolicyName)).Succeeded, role);
+        }
+
+        Assert.False((await authorization.AuthorizeAsync(
+            User("Editors"), null, ScheduledJobsInsightsAuthorization.PolicyName)).Succeeded);
+    }
+
+    [Fact]
+    public async Task AuthorizedRolesFromConfiguration_ReplaceTheBuiltInRoles_RatherThanAddingToThem()
+    {
+        // The regression: ConfigurationBinder adds into an existing collection instead of clearing it,
+        // so while the option carried the built-in roles as its default value, naming one role in
+        // appsettings.json authorized four. An administrator narrowing access silently widened it.
+        // This is the configuration path specifically — the code path assigns, and always worked.
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OptiPowerTools:ScheduledJobsInsights:AuthorizedRoles:0"] = "SecOps"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddOptiPowerToolsScheduledJobsInsights(options =>
+            options.ConnectionString = "Server=.;Database=x;Trusted_Connection=True;");
+
+        var authorization = services.BuildServiceProvider().GetRequiredService<IAuthorizationService>();
+
+        Assert.True((await authorization.AuthorizeAsync(
+            User("SecOps"), null, ScheduledJobsInsightsAuthorization.PolicyName)).Succeeded);
+
+        foreach (var role in OptiPowerToolsScheduledJobsInsightsOptions.DefaultAuthorizedRoles)
+        {
+            Assert.False((await authorization.AuthorizeAsync(
+                User(role), null, ScheduledJobsInsightsAuthorization.PolicyName)).Succeeded, role);
+        }
     }
 }

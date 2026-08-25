@@ -3,6 +3,11 @@ name: Build & Test
 on:
   push:
     branches: [main]
+    # Tags too. publish.yml gates only on `dotnet test`, so before this a tag push skipped the
+    # non-invariant-culture leg, the dev-host compile, the SQL Server migration/idempotency check and
+    # the schema verification — every one of which exists to catch something the unit tests cannot,
+    # and all of which matter most on the commit that is about to become a release nobody can unpublish.
+    tags: ['v*']
   pull_request:
     branches: [main]
 

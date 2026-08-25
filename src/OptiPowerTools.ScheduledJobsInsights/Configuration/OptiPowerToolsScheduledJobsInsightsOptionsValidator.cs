@@ -39,6 +39,7 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
         RequirePositive(options.PageSize, nameof(options.PageSize), failures);
         RequirePositive(options.CleanupBatchSize, nameof(options.CleanupBatchSize), failures);
         RequirePositive(options.MaxLogEntriesPerExecution, nameof(options.MaxLogEntriesPerExecution), failures);
+        RequirePositive(options.MaxLogCharactersPerExecution, nameof(options.MaxLogCharactersPerExecution), failures);
 
         if (options.InterruptedExecutionThreshold < TimeSpan.Zero)
             failures.Add($"InterruptedExecutionThreshold cannot be negative (was {options.InterruptedExecutionThreshold}); use TimeSpan.Zero to disable the sweep.");
@@ -69,14 +70,9 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
                  + "menu URL and the base for the UI's own links at the same time.");
         }
 
-        if (!options.AllowAnyAuthenticatedUser
-            && string.IsNullOrWhiteSpace(options.AuthorizationPolicy)
-            && options.AuthorizedRoles.Count == 0)
-        {
-            failures.Add("AuthorizedRoles is empty, so nobody could reach the UI. Name at least one role, set "
-                 + "AuthorizationPolicy to a policy of your own, or set AllowAnyAuthenticatedUser if "
-                 + "access is already restricted elsewhere.");
-        }
+        // AuthorizedRoles being empty is no longer a misconfiguration: it is the default, and it
+        // resolves to the built-in role set. Nobody can lock themselves out by leaving it unset, and a
+        // host that wants a narrower rule than "one of these roles" names a policy instead.
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

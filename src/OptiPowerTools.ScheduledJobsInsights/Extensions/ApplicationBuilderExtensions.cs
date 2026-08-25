@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiPowerTools.ScheduledJobsInsights.Cms;
@@ -117,6 +119,9 @@ public static class ApplicationBuilderExtensions
             TryMigrate(app.ApplicationServices);
 
         ResolveAuthorizationPolicyEarly(app.ApplicationServices);
+        ReportResolvedRetention(app.ApplicationServices, options);
+        ReportMissingWebAssets(app.ApplicationServices);
+        ReportDuplicateEndpointsWhenStarted(app.ApplicationServices, options);
 
         app.UseEndpoints(endpoints => endpoints.MapOptiPowerToolsScheduledJobsInsights());
 
@@ -152,6 +157,64 @@ public static class ApplicationBuilderExtensions
                 .LogCritical(ex, "ScheduledJobsInsights could not resolve its authorization policy at startup. Access to the insights pages may be denied.");
         }
     }
+
+    /// <summary>
+    /// Runs the startup checks that need the application's endpoints, once those exist.
+    /// </summary>
+    /// <remarks>
+    /// Deferred to <c>ApplicationStarted</c> because endpoints are still being built while
+    /// <c>Configure</c> runs, so nothing useful can be counted yet. Best-effort throughout: no
+    /// lifetime, no data source or no logger simply means no diagnostic, and anything thrown while
+    /// inspecting the host's own endpoints is swallowed to Debug rather than allowed to escape into
+    /// startup.
+    /// </remarks>
+    private static void ReportDuplicateEndpointsWhenStarted(
+        IServiceProvider services,
+        OptiPowerToolsScheduledJobsInsightsOptions options)
+    {
+        var lifetime = services.GetService<IHostApplicationLifetime>();
+
+        if (lifetime is null)
+            return;
+
+        lifetime.ApplicationStarted.Register(() =>
+        {
+            try
+            {
+                var endpoints = services.GetService<EndpointDataSource>()?.Endpoints;
+
+                if (endpoints is null || Logger(services) is not { } logger)
+                    return;
+
+                StartupDiagnostics.ReportDuplicateEndpoints(endpoints, options, logger);
+            }
+            catch (Exception ex)
+            {
+                Logger(services)?.LogDebug(
+                    ex, "ScheduledJobsInsights could not inspect the application's endpoints for duplicates.");
+            }
+        });
+    }
+
+    /// <summary>States the resolved installation-wide retention in the startup log.</summary>
+    private static void ReportResolvedRetention(
+        IServiceProvider services,
+        OptiPowerToolsScheduledJobsInsightsOptions options)
+    {
+        if (Logger(services) is { } logger)
+            StartupDiagnostics.ReportResolvedRetention(options, logger);
+    }
+
+    /// <summary>Warns when the host application is missing the static web assets the UI needs.</summary>
+    private static void ReportMissingWebAssets(IServiceProvider services)
+    {
+        if (Logger(services) is { } logger)
+            StartupDiagnostics.ReportMissingWebAssets(services.GetService<IWebHostEnvironment>()?.WebRootFileProvider, logger);
+    }
+
+    /// <summary>The package's own logger, or <c>null</c> if the host has no logging.</summary>
+    private static ILogger? Logger(IServiceProvider services) =>
+        services.GetService<ILoggerFactory>()?.CreateLogger(StartupDiagnostics.LoggerCategory);
 
     /// <summary>
     /// Applies pending migrations, logging and continuing if the insights database cannot be reached.

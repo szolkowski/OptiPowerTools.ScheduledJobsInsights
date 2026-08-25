@@ -1,10 +1,18 @@
 namespace OptiPowerTools.ScheduledJobsInsights.Logging;
 
 /// <summary>
-/// Well-known names for the metrics <see cref="LoggedScheduledJobBase"/> records automatically for every execution.
+/// Well-known names for the metrics <see cref="LoggedScheduledJobBase"/> records automatically for
+/// every execution, and for those the cleanup job records for itself.
 /// </summary>
-internal static class JobMetricNames
+/// <remarks>
+/// Public because these names are a data contract, not an implementation detail: they are written to
+/// the <c>Name</c> column of the metrics table and rendered on the execution detail page, so anything
+/// querying that table or building an alert on it has to match them. Naming them here is what stops
+/// that being a hard-coded string on the consumer's side.
+/// </remarks>
+public static class JobMetricNames
 {
+    /// <summary>Wall-clock duration of the run, in milliseconds.</summary>
     public const string DurationMs = "DurationMs";
 
     /// <summary>
@@ -30,8 +38,16 @@ internal static class JobMetricNames
     /// the honest fix is to say whose CPU it is rather than to imply one it cannot.
     /// </remarks>
     public const string ProcessCpuTimeMs = "ProcessCpuTimeMs";
+    /// <summary>Gen 0 garbage collections that occurred during the run, process-wide.</summary>
+    /// <remarks>
+    /// A count of collections, not of the job's own garbage: the GC is per process, so anything else
+    /// the application was doing is included. Useful as a relative signal between runs of the same
+    /// job on the same host, not as an absolute measure of what the job allocated.
+    /// </remarks>
     public const string GcGen0Collections = "GcGen0Collections";
+    /// <summary>Gen 1 garbage collections during the run, process-wide. See <see cref="GcGen0Collections"/>.</summary>
     public const string GcGen1Collections = "GcGen1Collections";
+    /// <summary>Gen 2 garbage collections during the run, process-wide. See <see cref="GcGen0Collections"/>.</summary>
     public const string GcGen2Collections = "GcGen2Collections";
 
     /// <summary>Recorded by the cleanup job for the number of executions it removed.</summary>

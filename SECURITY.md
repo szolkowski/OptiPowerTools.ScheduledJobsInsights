@@ -11,6 +11,26 @@ just a request for a private channel — and you will be contacted.
 Please include the package version, the CMS version, and enough detail to reproduce. You will get an
 acknowledgement within a few days; a fix or a decision follows in the release after triage.
 
+## How a report is handled
+
+So you know what to expect, and by when. This is a single-maintainer project, so these are honest
+targets rather than a contractual SLA.
+
+| Stage | Target |
+|---|---|
+| Acknowledgement that the report arrived | 3 working days |
+| Triage: confirmed or declined, with reasoning | 10 working days |
+| Fix released for a confirmed vulnerability | 30 days from triage, sooner where the severity warrants |
+
+Confirmed vulnerabilities are published as a [GitHub Security Advisory](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/security/advisories)
+against this package, which is what makes them visible to `dotnet list package --vulnerable` and to
+consumers' own auditing. A CVE is requested through GitHub as the CNA where the issue affects
+consumers rather than only this repository's own tooling.
+
+Disclosure is coordinated: the advisory is published together with the fixed release, and credit is
+given to the reporter unless they ask otherwise. If a fix is going to miss the target above, you will
+be told rather than left waiting. If a report is declined, you are free to disclose it publicly.
+
 ## Supported versions
 
 The latest released 1.x version receives security fixes. Older minor versions do not — upgrade within

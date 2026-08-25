@@ -1,4 +1,5 @@
 using EPiServer.DataAbstraction;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
@@ -7,6 +8,8 @@ using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Tests.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
 using OptiPowerTools.ScheduledJobsInsights.Retention;
+using OptiPowerTools.ScheduledJobsInsights.Data.Entities;
+using OptiPowerTools.ScheduledJobsInsights.Tests.Data;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Tests.Jobs;
 
@@ -22,10 +25,16 @@ public class ScheduledJobsInsightsCleanupJobTests
         var writer = Substitute.For<IJobExecutionWriter>();
         writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
 
+        // The job resolves its two collaborators from the container rather than taking them as
+        // constructor parameters, so that neither interface has to be public. See the constructor's
+        // own remarks.
+        var services = new ServiceCollection();
+        services.AddSingleton(repository);
+        services.AddSingleton(retention);
+
         return new ScheduledJobsInsightsCleanupJob(
             TestJobLoggingContext.For(writer),
-            repository,
-            retention,
+            services.BuildServiceProvider(),
             Options.Create(new OptiPowerToolsScheduledJobsInsightsOptions
             {
                 RetentionDays = retentionDays,
@@ -252,5 +261,80 @@ public class ScheduledJobsInsightsCleanupJobTests
         var result = CreateJob(repository, RetentionOf(RetentionPeriod.OfDays(30))).Execute();
 
         Assert.Contains("0 job execution(s)", result);
+    }
+
+    [Fact]
+    public void Execute_DoesNotDeleteALiveRunsHistoryInTheSamePassThatMarksItInterrupted()
+    {
+        // The seam no substituted-repository test can see: the ORDER of the two passes, run against
+        // one real database. MarkInterruptedExecutions moves a row out of Running, and only Running is
+        // protected from the sweep — so marking first handed the delete the very rows the guard exists
+        // to keep. A 25-hour import under a one-day rule was marked interrupted at 24 hours and
+        // deleted moments later, in the same ExecuteJob call, taking with it the history of a job that
+        // was still working.
+        using var factory = new SqliteDbContextFactory();
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Catalog sync",
+                JobTypeName = "CatalogSyncJob",
+                StartedAt = DateTimeOffset.UtcNow.AddHours(-25),
+                Status = ExecutionStatus.Running,
+                MachineName = "m"
+            });
+            dbContext.SaveChanges();
+        }
+
+        var job = CreateJob(
+            new CleanupRepository(factory),
+            RetentionOf(RetentionPeriod.OfDays(1), ("CatalogSyncJob", RetentionPeriod.OfDays(1))),
+            retentionDays: 1,
+            interruptedThreshold: TimeSpan.FromHours(24));
+
+        job.Execute();
+
+        using var verifyContext = factory.CreateDbContext();
+        var survivor = Assert.Single(verifyContext.JobExecutions);
+        Assert.Equal("Catalog sync", survivor.JobName);
+
+        // Marked, because by age alone it does look stranded — but marked after the sweep had already
+        // passed over it, so the row is still here to be marked at all.
+        Assert.Equal(ExecutionStatus.Interrupted, survivor.Status);
+    }
+
+    [Fact]
+    public void Execute_StillDeletesAFinishedExecutionThatHasOutlivedItsRetention()
+    {
+        // The other half of the ordering change: moving the mark to the end must not make the sweep
+        // itself timid. A genuinely finished row of the same age and job type still goes.
+        using var factory = new SqliteDbContextFactory();
+
+        using (var dbContext = factory.CreateDbContext())
+        {
+            dbContext.JobExecutions.Add(new JobExecution
+            {
+                ScheduledJobId = Guid.NewGuid(),
+                JobName = "Catalog sync",
+                JobTypeName = "CatalogSyncJob",
+                StartedAt = DateTimeOffset.UtcNow.AddHours(-25),
+                Status = ExecutionStatus.Succeeded,
+                MachineName = "m"
+            });
+            dbContext.SaveChanges();
+        }
+
+        var job = CreateJob(
+            new CleanupRepository(factory),
+            RetentionOf(RetentionPeriod.OfDays(1), ("CatalogSyncJob", RetentionPeriod.OfDays(1))),
+            retentionDays: 1,
+            interruptedThreshold: TimeSpan.FromHours(24));
+
+        job.Execute();
+
+        using var verifyContext = factory.CreateDbContext();
+        Assert.Empty(verifyContext.JobExecutions);
     }
 }

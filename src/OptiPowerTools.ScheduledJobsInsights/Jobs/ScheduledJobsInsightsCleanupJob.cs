@@ -1,6 +1,8 @@
 using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 using OptiPowerTools.ScheduledJobsInsights.Repositories;
@@ -35,23 +37,31 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
 
     /// <summary>Initializes a new instance of <see cref="ScheduledJobsInsightsCleanupJob"/>.</summary>
     /// <param name="context">Collaborators the base class records this job's own runs with.</param>
-    /// <param name="cleanupRepository">Performs the batched deletes.</param>
-    /// <param name="retentionService">Resolves the retention in force for each job type.</param>
+    /// <param name="services">
+    /// Supplies the deletion and retention services this job runs on. Both are internal to the
+    /// package.
+    /// </param>
     /// <param name="options">Package options; supplies the batch size.</param>
     /// <exception cref="ArgumentNullException">Any argument is <c>null</c>.</exception>
+    /// <remarks>
+    /// Takes an <see cref="IServiceProvider"/> rather than its two collaborators directly, which is a
+    /// service locator and is the point. Optimizely discovers this job by type, so the class and this
+    /// constructor must be public — and a public constructor cannot take a less accessible parameter
+    /// type. Naming the collaborators here would therefore force two implementation-detail interfaces
+    /// onto the permanently frozen 1.0 surface, purely as a side effect of how the CMS constructs
+    /// jobs. One awkward constructor is the cheaper price.
+    /// </remarks>
     public ScheduledJobsInsightsCleanupJob(
         JobLoggingContext context,
-        ICleanupRepository cleanupRepository,
-        IJobRetentionPolicySource retentionService,
+        IServiceProvider services,
         IOptions<OptiPowerToolsScheduledJobsInsightsOptions> options)
         : base(context)
     {
-        ArgumentNullException.ThrowIfNull(cleanupRepository);
-        ArgumentNullException.ThrowIfNull(retentionService);
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
 
-        _cleanupRepository = cleanupRepository;
-        _retentionService = retentionService;
+        _cleanupRepository = services.GetRequiredService<ICleanupRepository>();
+        _retentionService = services.GetRequiredService<IJobRetentionPolicySource>();
         _options = options.Value;
 
         // A first run against years of accumulated history can take a long time; an administrator
@@ -74,10 +84,6 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
             _options.CleanupBatchSize,
             JobsWithOwnRetention = perJob.ToDictionary(x => x.Key, x => Describe(x.Value))
         });
-
-        // Before deleting anything: a row left at Running by a recycled process is never finished by
-        // anything else, and until it is resolved every count and status filter is wrong.
-        var interrupted = MarkInterruptedExecutions(now, cancellationToken);
 
         var totalDeleted = 0;
 
@@ -114,15 +120,29 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
                 cancellationToken);
         }
 
+        // After the deletes, never before. Marking a row Interrupted makes it deletable — Interrupted
+        // is a finished state, and only Running is protected — so a pass that marked first stripped
+        // the guard off the very rows the guard exists for, and the sweep that followed deleted the
+        // history of a job that was still working. A job may legitimately outlive its own retention
+        // (a 25-hour import under a one-day rule), and age alone cannot tell "stranded" from "still
+        // working". Resolving stranded rows last costs them one extra interval before they age out,
+        // which is the cheap side of this trade: the alternative loses a live run's history outright.
+        //
+        // Skipped entirely when the run was stopped: nothing here is urgent, and a half-applied sweep
+        // followed by a status rewrite is a worse thing to leave behind than an unresolved row.
+        var interrupted = cancellationToken.IsCancellationRequested
+            ? 0
+            : MarkInterruptedExecutions(now, cancellationToken);
+
         RecordMetric(JobMetricNames.ExecutionsDeleted, totalDeleted);
         RecordMetric(JobMetricNames.ExecutionsMarkedInterrupted, interrupted);
 
         Summary.AppendLine($"Default retention: {Describe(defaultPeriod)}");
         Summary.AppendLine($"Jobs with their own retention: {perJob.Count}");
-        Summary.AppendLine($"Executions deleted: {totalDeleted:N0}");
+        Summary.AppendLine($"Executions deleted: {DisplayFormat.Number(totalDeleted)}");
 
         if (interrupted > 0)
-            Summary.AppendLine($"Unfinished executions marked interrupted: {interrupted:N0}");
+            Summary.AppendLine($"Unfinished executions marked interrupted: {DisplayFormat.Number(interrupted)}");
 
         if (cancellationToken.IsCancellationRequested)
         {
@@ -180,7 +200,7 @@ public sealed class ScheduledJobsInsightsCleanupJob : LoggedScheduledJobBase
         } while (deletedThisBatch > 0);
 
         if (deletedForThisRule > 0)
-            Summary.AppendLine($"  {what}: {deletedForThisRule:N0} deleted");
+            Summary.AppendLine($"  {what}: {DisplayFormat.Number(deletedForThisRule)} deleted");
 
         return deletedForThisRule;
     }

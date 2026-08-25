@@ -178,14 +178,25 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// <remarks>
     /// Previously this rolled its own role check, which meant the menu and the controller could
     /// disagree — with <c>EnableStandardAuthorization</c> off, the page was reachable by URL while
-    /// its own menu entry stayed hidden from the very users allowed to open it. Evaluating the
-    /// policy is synchronous in practice: the requirements are in-memory and no handler here does
-    /// I/O. <see cref="MenuItem.IsAvailable"/> gives no async form to await from.
+    /// its own menu entry stayed hidden from the very users allowed to open it.
+    /// <see cref="MenuItem.IsAvailable"/> gives no async form to await from, so the policy has to be
+    /// evaluated synchronously here.
+    /// </remarks>
+    /// <remarks>
+    /// The result is cached for the request. The built-in policy is in-memory and answers instantly,
+    /// but a host is invited to substitute its own through
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.AuthorizationPolicy"/>, and a policy that
+    /// checks group membership against a directory or a database does I/O — blocking a request thread
+    /// each time. This method is called once per contributed entry, so up to three times per back
+    /// office page load; caching makes that one evaluation instead of three.
     /// </remarks>
     private bool IsCurrentUserAuthorized()
     {
         if (_httpContextAccessor.HttpContext is not { } httpContext)
             return false;
+
+        if (httpContext.Items.TryGetValue(AuthorizationCacheKey, out var cached) && cached is bool decided)
+            return decided;
 
         // From the request's scope, not a captured one — see the constructor.
         var authorizationService = httpContext.RequestServices.GetService<IAuthorizationService>();
@@ -193,12 +204,22 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
         if (authorizationService is null || httpContext.User is not { } principal)
             return false;
 
-        return authorizationService
+        var authorized = authorizationService
             .AuthorizeAsync(principal, resource: null, ScheduledJobsInsightsAuthorization.PolicyName)
             .GetAwaiter()
             .GetResult()
             .Succeeded;
+
+        httpContext.Items[AuthorizationCacheKey] = authorized;
+
+        return authorized;
     }
+
+    /// <summary>
+    /// Key for the per-request authorization result. An object instance rather than a string so it
+    /// cannot collide with anything else in <c>HttpContext.Items</c>.
+    /// </summary>
+    private static readonly object AuthorizationCacheKey = new();
 
     private static string NormalizePath(string path) =>
         path.StartsWith(MenuPathSeparator) ? path : MenuPathSeparator + path;

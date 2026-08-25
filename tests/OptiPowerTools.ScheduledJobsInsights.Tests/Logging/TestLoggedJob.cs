@@ -30,6 +30,12 @@ internal sealed class TestLoggedJob : LoggedScheduledJobBase
     /// <summary>When true, <c>ExecuteJob</c> calls <c>Stop()</c> on itself part-way through.</summary>
     public bool StopMidRun { get; set; }
 
+    /// <summary>
+    /// Registers a <c>StopToken</c> callback that throws — the shape of a job cancelling an
+    /// already-disposed HttpClient. Cancel() runs registrations synchronously on the caller's thread.
+    /// </summary>
+    public bool RegisterThrowingStopCallback { get; set; }
+
     public TestLoggedJob(
         IJobExecutionWriter writer,
         IScheduledJobRepository? scheduledJobRepository = null,
@@ -46,6 +52,9 @@ internal sealed class TestLoggedJob : LoggedScheduledJobBase
 
     protected override string ExecuteJob()
     {
+        if (RegisterThrowingStopCallback)
+            StopToken.Register(static () => throw new InvalidOperationException("stop callback boom"));
+
         if (StopMidRun)
             Stop();
 

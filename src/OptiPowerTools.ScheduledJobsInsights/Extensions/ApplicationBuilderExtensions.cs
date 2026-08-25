@@ -159,31 +159,14 @@ public static class ApplicationBuilderExtensions
     }
 
     /// <summary>
-    /// Warns, once the application has started, if this package's endpoints resolve more than once.
+    /// Runs the startup checks that need the application's endpoints, once those exist.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Duplicate endpoints surface as <c>AmbiguousMatchException</c> at request time, from
-    /// <c>DefaultEndpointSelector</c>, naming two identical-looking candidates and nothing else. The
-    /// exception arrives during endpoint <em>matching</em> — before authentication — so it is not
-    /// even necessarily a logged-in administrator who finds it, and nothing in it points at this
-    /// package or at the wiring that caused it.
-    /// </para>
-    /// <para>
-    /// Two wirings are known to cause it on an Optimizely host, and both were reported from a real
-    /// site. Calling <c>UseOptiPowerToolsScheduledJobsInsights()</c> <em>before</em> the host's own
-    /// <c>UseEndpoints(...)</c> publishes the hub, and <c>MapContent()</c> then consolidates the
-    /// already-published source into its own snapshot — so the hub is registered twice. Separately,
-    /// on some stacks (Commerce was the reported one) <c>MapContent()</c> already maps attribute-routed
-    /// controllers, and an additional <c>MapControllers()</c> duplicates every one of them, this
-    /// package's page included. Neither is detectable while <c>Configure</c> is still running, which
-    /// is why this waits for <c>ApplicationStarted</c>.
-    /// </para>
-    /// <para>
-    /// Reported rather than thrown. The endpoints belong to the host, this package only observes,
-    /// and a site that is limping is better than a site that will not boot — the same rule the write
-    /// path follows. Everything here is best-effort: no data source, no message.
-    /// </para>
+    /// Deferred to <c>ApplicationStarted</c> because endpoints are still being built while
+    /// <c>Configure</c> runs, so nothing useful can be counted yet. Best-effort throughout: no
+    /// lifetime, no data source or no logger simply means no diagnostic, and anything thrown while
+    /// inspecting the host's own endpoints is swallowed to Debug rather than allowed to escape into
+    /// startup.
     /// </remarks>
     private static void ReportDuplicateEndpointsWhenStarted(
         IServiceProvider services,
@@ -200,122 +183,38 @@ public static class ApplicationBuilderExtensions
             {
                 var endpoints = services.GetService<EndpointDataSource>()?.Endpoints;
 
-                if (endpoints is null)
+                if (endpoints is null || Logger(services) is not { } logger)
                     return;
 
-                if (services.GetService<ILoggerFactory>()?.CreateLogger("OptiPowerTools.ScheduledJobsInsights") is not { } logger)
-                    return;
-
-                var page = endpoints
-                    .OfType<RouteEndpoint>()
-                    .Count(endpoint => string.Equals(
-                        "/" + endpoint.RoutePattern.RawText?.TrimStart('/'),
-                        "/" + options.CmsShellPath.TrimStart('/'),
-                        StringComparison.OrdinalIgnoreCase));
-
-                if (page > 1)
-                {
-                    logger.LogError(
-                        "ScheduledJobsInsights' page is registered {Count} times at {Path}, so every request to it fails with AmbiguousMatchException. The usual cause is calling both MapContent() and MapControllers(): on some Optimizely stacks MapContent() already maps attribute-routed controllers, and the second call duplicates all of them. Remove MapControllers() if your host is one of those — but check first, because on a plain CMS host it is required and removing it makes this page return 404 instead.",
-                        page,
-                        options.CmsShellPath);
-                }
-
-                var hub = endpoints
-                    .OfType<RouteEndpoint>()
-                    .Count(endpoint => endpoint.RoutePattern.RawText?.Equals("_blazor", StringComparison.OrdinalIgnoreCase) == true
-                        || endpoint.RoutePattern.RawText?.Equals("/_blazor", StringComparison.OrdinalIgnoreCase) == true);
-
-                if (hub > 1)
-                {
-                    logger.LogError(
-                        "The Blazor hub is registered {Count} times at /_blazor, so every Blazor request in this application fails with AmbiguousMatchException — not only this package's pages. Map the hub inside the host's own UseEndpoints(...) block with endpoints.MapOptiPowerToolsScheduledJobsInsights(), placed before MapContent(), and keep UseOptiPowerToolsScheduledJobsInsights() after that block for migrations. If the host maps its own hub, set MapBlazorHub to false.",
-                        hub);
-                }
+                StartupDiagnostics.ReportDuplicateEndpoints(endpoints, options, logger);
             }
             catch (Exception ex)
             {
-                services.GetService<ILoggerFactory>()?
-                    .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
-                    .LogDebug(ex, "ScheduledJobsInsights could not inspect the application's endpoints for duplicates.");
+                Logger(services)?.LogDebug(
+                    ex, "ScheduledJobsInsights could not inspect the application's endpoints for duplicates.");
             }
         });
     }
 
-    /// <summary>
-    /// States the resolved installation-wide retention in the startup log.
-    /// </summary>
-    /// <remarks>
-    /// <c>RetentionDays</c> is the one sizing option the validator cannot reject, because zero or less
-    /// is a documented, supported value meaning "keep indefinitely". That makes a typo
-    /// indistinguishable from an intention: somebody writing <c>-30</c> for "thirty days" gets
-    /// unbounded growth, silently, and the symptom shows up months later as a table nothing trims.
-    /// Saying which of the two was resolved costs one line at startup. A negative value is called out
-    /// separately from zero — zero is the documented way to ask for indefinite, a negative number is
-    /// almost always a mistake.
-    /// </remarks>
+    /// <summary>States the resolved installation-wide retention in the startup log.</summary>
     private static void ReportResolvedRetention(
         IServiceProvider services,
         OptiPowerToolsScheduledJobsInsightsOptions options)
     {
-        if (services.GetService<ILoggerFactory>()?.CreateLogger("OptiPowerTools.ScheduledJobsInsights") is not { } logger)
-            return;
-
-        if (options.RetentionDays > 0)
-        {
-            logger.LogInformation(
-                "ScheduledJobsInsights default retention: {RetentionDays} day(s). Jobs with a rule of their own are unaffected.",
-                options.RetentionDays);
-        }
-        else if (options.RetentionDays == 0)
-        {
-            logger.LogInformation(
-                "ScheduledJobsInsights default retention is indefinite (RetentionDays = 0), so the default sweep trims nothing. Only jobs with a rule of their own will be trimmed.");
-        }
-        else
-        {
-            logger.LogWarning(
-                "ScheduledJobsInsights default retention is indefinite because RetentionDays is {RetentionDays}, which is negative. Zero is the documented way to ask for indefinite retention; if you meant a number of days, set a positive value — as written, execution history will grow without bound.",
-                options.RetentionDays);
-        }
+        if (Logger(services) is { } logger)
+            StartupDiagnostics.ReportResolvedRetention(options, logger);
     }
 
-    /// <summary>
-    /// Warns when the host application is missing the static web assets this package's UI needs.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The one hosting requirement a consumer owns and can silently get wrong. <c>blazor.server.js</c>
-    /// comes from <c>Microsoft.AspNetCore.App.Internal.Assets</c>, which the Web SDK pulls in only
-    /// when <c>RequiresAspNetWebAssets</c> is set — and it sets it automatically only when the
-    /// *application* contains <c>.razor</c> files. This package's live in the package, so a consumer
-    /// whose own project has none never gets it. This package cannot set it for them either: NuGet
-    /// resolves that implicit reference during restore, before package MSBuild assets are imported.
-    /// </para>
-    /// <para>
-    /// The failure mode is silent and hard to place: the script 404s, the circuit never starts, the
-    /// page stays as prerendered HTML, and the log viewer renders as an empty black box. Nothing
-    /// errors. One line at startup turns that into a five-second diagnosis.
-    /// </para>
-    /// <para>
-    /// Warning rather than Critical, and skipped entirely when the file provider cannot be reached:
-    /// this is a probe of the host's asset pipeline, and a diagnostic that cried wolf on a
-    /// correctly-configured host would be worse than no diagnostic at all.
-    /// </para>
-    /// </remarks>
+    /// <summary>Warns when the host application is missing the static web assets the UI needs.</summary>
     private static void ReportMissingWebAssets(IServiceProvider services)
     {
-        if (services.GetService<IWebHostEnvironment>()?.WebRootFileProvider is not { } fileProvider)
-            return;
-
-        if (fileProvider.GetFileInfo("_framework/blazor.server.js").Exists)
-            return;
-
-        services.GetService<ILoggerFactory>()?
-            .CreateLogger("OptiPowerTools.ScheduledJobsInsights")
-            .LogWarning(
-                "ScheduledJobsInsights could not find _framework/blazor.server.js among the application's static web assets. Its pages will render but will not become interactive: the Blazor circuit cannot start, and the log viewer will appear empty. Add <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets> to the hosting application's project file and rebuild.");
+        if (Logger(services) is { } logger)
+            StartupDiagnostics.ReportMissingWebAssets(services.GetService<IWebHostEnvironment>()?.WebRootFileProvider, logger);
     }
+
+    /// <summary>The package's own logger, or <c>null</c> if the host has no logging.</summary>
+    private static ILogger? Logger(IServiceProvider services) =>
+        services.GetService<ILoggerFactory>()?.CreateLogger(StartupDiagnostics.LoggerCategory);
 
     /// <summary>
     /// Applies pending migrations, logging and continuing if the insights database cannot be reached.

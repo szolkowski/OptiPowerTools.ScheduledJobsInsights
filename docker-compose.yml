@@ -40,12 +40,19 @@ services:
     image: sjinsights-web:local
     container_name: sjinsights-web
     environment:
-      ASPNETCORE_URLS: http://*:80
+      # ASPNETCORE_HTTP_PORTS rather than ASPNETCORE_URLS: the aspnet base image already sets
+      # HTTP_PORTS=8080, and URLS overrides it with a warning on every boot.
+      ASPNETCORE_HTTP_PORTS: 80
       ASPNETCORE_ENVIRONMENT: Development
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       # These override appsettings.Development.json, which points at the host
       # port so that `dotnet run` on the host reaches the same database.
       CONNECTIONSTRINGS__EPISERVERDB: Server=db;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
+      # Commerce reads its own connection string, separately from the CMS one, and fails startup
+      # without it: CommerceDatabaseSchemaUpdater opens a SqlConnection that was never given one.
+      # Pointed at the same database as the CMS, which is what appsettings.Development.json does for
+      # `dotnet run` on the host; Commerce creates its own tables alongside the CMS ones.
+      CONNECTIONSTRINGS__ECFSQLCONNECTION: Server=db;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
       OptiPowerTools__ScheduledJobsInsights__ConnectionString: Server=db;Database=${DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
     ports:
       - ${WEB_HOST_PORT}:80
@@ -54,6 +61,11 @@ services:
       # new code. Container build output is kept apart from the host's by the
       # DOTNET_RUNNING_IN_CONTAINER switch in Directory.Build.props.
       - .:/src:rw
+      # DataProtection keys. Without this they live in the container's filesystem and are discarded
+      # with it, so every recreate invalidates the antiforgery tokens and auth cookies of anyone with
+      # the site open - which surfaces as a `fail:` line about a token that could not be decrypted,
+      # and as being logged out for no visible reason.
+      - sjinsights-dpkeys:/home/appuser/.aspnet/DataProtection-Keys
     networks:
       - sjinsights-net
     restart: unless-stopped
@@ -61,6 +73,8 @@ services:
 volumes:
   sjinsights-sqldata:
     name: sjinsights-sqldata
+  sjinsights-dpkeys:
+    name: sjinsights-dpkeys
 
 networks:
   sjinsights-net:

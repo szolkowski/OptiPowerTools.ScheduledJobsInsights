@@ -55,13 +55,26 @@ public class Startup
         app.UseAuthentication();
         app.UseAuthorization();
 
-        // Must precede the UseEndpoints below - see the remarks above.
-        app.UseOptiPowerToolsScheduledJobsInsights();
-
         app.UseEndpoints(endpoints =>
         {
+            // Mapped on the host's own route builder, ahead of MapContent(). Letting
+            // UseOptiPowerToolsScheduledJobsInsights() map it publishes the hub through a UseEndpoints
+            // call of its own, and MapContent() then consolidates that already-published data source
+            // into its snapshot - so the hub is registered twice and every Blazor request in the
+            // application fails with AmbiguousMatchException, not only this package's pages.
+            endpoints.MapOptiPowerToolsScheduledJobsInsights();
+
             endpoints.MapContent();
-            endpoints.MapControllers();
+
+            // No MapControllers(), deliberately, and this is stack-specific rather than a general
+            // rule. With Commerce installed, MapContent() already maps attribute-routed controllers,
+            // so calling MapControllers() as well duplicates every one of them - this package's page,
+            // Optimizely's own and Commerce's. On a plain CMS host without Commerce the opposite is
+            // true: MapContent() maps none of them, and dropping this line makes the Insights page
+            // return 404. Measured both ways on this host.
         });
+
+        // Migrations and startup diagnostics. The hub is already mapped, so this does not map it again.
+        app.UseOptiPowerToolsScheduledJobsInsights();
     }
 }

@@ -64,7 +64,12 @@ public sealed class ScheduledJobsInsightsCmsController : Controller
     /// <summary>
     /// Renders the shell view with the model both actions build the same way.
     /// </summary>
-    private IActionResult Shell(long? executionId, bool showRetention)
+    /// <remarks>
+    /// Returns the concrete <see cref="ViewResult"/> rather than <see cref="IActionResult"/> (CA1859):
+    /// nothing here is polymorphic, and the interface only cost an interface dispatch. The actions
+    /// themselves still return <see cref="IActionResult"/> — that is their contract with MVC.
+    /// </remarks>
+    private ViewResult Shell(long? executionId, bool showRetention)
     {
         // Authorization is the policy on the class, enforced by the framework before this runs —
         // not a check written out here, which the menu could then disagree with.

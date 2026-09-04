@@ -25,7 +25,7 @@ public static class ApplicationBuilderExtensions
     /// <remarks>
     /// <para>
     /// The components themselves are not routable endpoints. They are hosted inside the CMS shell
-    /// view (<c>Views/ScheduledJobsInsightsCms/Index.cshtml</c>) through the Component Tag Helper,
+    /// view (<c>Views/ScheduledJobsInsightsCms/Shell.cshtml</c>) through the Component Tag Helper,
     /// so they render within the Optimizely chrome and inherit its styling; this hub is only what
     /// makes them interactive afterwards.
     /// </para>

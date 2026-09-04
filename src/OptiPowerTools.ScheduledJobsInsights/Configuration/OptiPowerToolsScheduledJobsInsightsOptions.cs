@@ -220,10 +220,27 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     public bool EnableCmsMenu { get; set; } = true;
 
     /// <summary>
-    /// Controls where the menu item is placed in the CMS navigation.
-    /// Defaults to <see cref="CmsMenuPlacement.CmsSection"/>.
+    /// Controls where the menu entries are placed in the CMS navigation. Selects exactly one
+    /// location. Defaults to <see cref="CmsMenuPlacement.DataSyncManagement"/>.
     /// </summary>
-    public CmsMenuPlacement MenuPlacement { get; set; } = CmsMenuPlacement.CmsSection;
+    /// <remarks>
+    /// <para>
+    /// One location, not several — the CMS shell identifies a menu entry by its <em>URL</em>: it
+    /// matches the request path against every registered item and cannot know which entry the
+    /// reader clicked. Two entries pointing at this package's page were therefore resolved
+    /// differently by different CMS UI versions. On 13.0.2 and later the first subtree match wins,
+    /// which happened to be the Settings one; on 13.0.0 a later top-level self-match overwrote it,
+    /// leaving a chosen entry with no children — so the shell rendered no sub-navigation at all and
+    /// the admin tree disappeared, on a page that had rendered perfectly. A single entry per URL is
+    /// deterministic on every version.
+    /// </para>
+    /// <para>
+    /// <see cref="ShowRetentionMenuItem"/> adds a second entry beside this one, which is safe
+    /// because the retention screen is a different page with a URL of its own
+    /// (<see cref="CmsRetentionPath"/>).
+    /// </para>
+    /// </remarks>
+    public CmsMenuPlacement MenuPlacement { get; set; } = CmsMenuPlacement.DataSyncManagement;
 
     /// <summary>
     /// Overrides the full menu path. When null (the default), the path is derived from <see cref="MenuPlacement"/>.
@@ -248,26 +265,13 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     public string CustomMenuItemName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Whether to also add a menu item under the CMS's own <em>Settings &gt; Data &amp; Sync
-    /// Management</em> group, directly below the native <em>Scheduled Jobs</em> page. Defaults to
-    /// <c>true</c>.
-    /// </summary>
-    /// <remarks>
-    /// This is independent of <see cref="MenuPlacement"/>, which positions the primary entry: with
-    /// both enabled the UI is reachable from two places, which is usually what you want since an
-    /// administrator looking at Scheduled Jobs expects to find its history alongside it. Set to
-    /// <c>false</c> to keep a single entry.
-    /// </remarks>
-    public bool ShowInDataSyncManagement { get; set; } = true;
-
-    /// <summary>
-    /// Whether to add a menu item for the <em>Job Retention</em> screen, beside the insights entry
-    /// under <em>Settings &gt; Data &amp; Sync Management</em>. Defaults to <c>true</c>.
+    /// Whether to add a menu item for the <em>Job Retention</em> screen, as a sibling of the insights
+    /// entry wherever <see cref="MenuPlacement"/> puts it. Defaults to <c>true</c>.
     /// </summary>
     /// <remarks>
     /// Set to <c>false</c> to keep retention governed purely by configuration and
     /// <see cref="Retention.JobRetentionAttribute"/>. The screen itself remains reachable at
-    /// <c>?view=retention</c>; this only controls its discoverability in the CMS navigation.
+    /// <see cref="CmsRetentionPath"/>; this only controls its discoverability in the CMS navigation.
     /// </remarks>
     public bool ShowRetentionMenuItem { get; set; } = true;
 
@@ -284,6 +288,36 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     /// base for the UI's own cross-links.
     /// </remarks>
     public string CmsShellPath { get; set; } = "/ScheduledJobsInsightsCms/Index";
+
+    /// <summary>
+    /// The URL path where the <em>Job Retention</em> screen is served, separately from
+    /// <see cref="CmsShellPath"/>. Defaults to "/ScheduledJobsInsightsCms/Retention".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A path of its own rather than a query string on <see cref="CmsShellPath"/>, and the reason is
+    /// the CMS navigation: the shell decides which menu entry to highlight by comparing the request
+    /// <em>path</em> against each registered item's URL, ignoring the query string entirely — server
+    /// side in <c>MenuItem.IsSelected</c>, and again client side in the navigation bundle, which
+    /// matches against <c>location.pathname</c> alone. A retention entry whose URL was
+    /// <c>…/Index?view=retention</c> could therefore never match, while the execution list's entry
+    /// matched every time, so opening retention highlighted the list.
+    /// </para>
+    /// <para>
+    /// Deliberately a sibling of <see cref="CmsShellPath"/> rather than a segment beneath it. An
+    /// unmapped extra segment leaves the shell unable to resolve a product at all (which is why an
+    /// execution id is still a query string), and a nested one that <em>is</em> mapped puts the two
+    /// URLs in a prefix relationship the navigation resolves through its "closest match" fallback
+    /// rather than an exact match.
+    /// </para>
+    /// <para>
+    /// Validated at startup by the same rule as <see cref="CmsShellPath"/>, and additionally must
+    /// differ from it. Set it alongside <see cref="CmsShellPath"/> when customising where the UI
+    /// lives: the two are independent route templates, so changing only one leaves the retention
+    /// screen at this default.
+    /// </para>
+    /// </remarks>
+    public string CmsRetentionPath { get; set; } = "/ScheduledJobsInsightsCms/Retention";
 
     /// <summary>
     /// Whether <c>UseOptiPowerToolsScheduledJobsInsights</c> maps the Blazor Server hub.

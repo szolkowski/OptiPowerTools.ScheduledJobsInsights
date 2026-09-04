@@ -4,17 +4,26 @@ using OptiPowerTools.ScheduledJobsInsights.Configuration;
 namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 
 /// <summary>
-/// Application model convention that sets the CMS shell controller route
-/// from <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsShellPath"/> at startup.
+/// Application model convention that sets the CMS shell controller's routes from
+/// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsShellPath"/> and
+/// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsRetentionPath"/> at startup.
 /// </summary>
 internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationModelConvention
 {
     private readonly string _path;
+    private readonly string _retentionPath;
 
     /// <summary>The configured route template applied to the CMS shell controller's Index action.</summary>
     internal string Path => _path;
 
-    public ScheduledJobsInsightsCmsRouteConvention(string path) => _path = path;
+    /// <summary>The configured route template applied to the controller's Retention action.</summary>
+    internal string RetentionPath => _retentionPath;
+
+    public ScheduledJobsInsightsCmsRouteConvention(string path, string retentionPath)
+    {
+        _path = path;
+        _retentionPath = retentionPath;
+    }
 
     public void Apply(ApplicationModel application)
     {
@@ -24,7 +33,18 @@ internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationMode
         if (controller is null)
             return;
 
-        var action = controller.Actions.FirstOrDefault(a => a.ActionName == nameof(ScheduledJobsInsightsCmsController.Index));
+        SetRoute(controller, nameof(ScheduledJobsInsightsCmsController.Index), _path);
+
+        // Its own path, not a query string on the one above: the CMS shell highlights the menu entry
+        // whose URL equals the request path and ignores the query string, so a retention screen sharing
+        // the list's path could only ever highlight the list. A sibling path rather than a segment
+        // beneath it — see CmsRetentionPath.
+        SetRoute(controller, nameof(ScheduledJobsInsightsCmsController.Retention), _retentionPath);
+    }
+
+    private static void SetRoute(ControllerModel controller, string actionName, string template)
+    {
+        var action = controller.Actions.FirstOrDefault(a => a.ActionName == actionName);
 
         if (action is null)
             return;
@@ -43,7 +63,7 @@ internal sealed class ScheduledJobsInsightsCmsRouteConvention : IApplicationMode
                 // navigation to show by matching the request path against the registered menu items,
                 // so any extra path segment leaves it unable to find one and the left-hand menu spins
                 // on its loading dots forever.
-                Template = _path
+                Template = template
             }
         };
 

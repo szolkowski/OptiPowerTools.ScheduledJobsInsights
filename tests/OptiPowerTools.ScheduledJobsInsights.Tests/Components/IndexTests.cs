@@ -218,12 +218,16 @@ public class IndexTests : ComponentTestBase
         // Only the first two were covered, so a link that quietly kept the default path would have
         // shipped: it 404s on any installation that moved the page.
         Options.CmsShellPath = "/custom/insights";
+        Options.CmsRetentionPath = "/custom/retention";
         GivenPage(ARow(id: 7));
 
         var page = RenderList();
 
         Assert.Equal("/custom/insights?id=7", page.Find(".executions-table tbody a").GetAttribute("href"));
-        Assert.Equal("/custom/insights?view=retention", page.Find("a.action-link").GetAttribute("href"));
+        // The retention link is CmsRetentionPath, not a query string on CmsShellPath: the CMS shell
+        // highlights the menu entry whose URL equals the request path and never reads the query
+        // string, so a shared path highlighted the execution list while retention was open.
+        Assert.Equal("/custom/retention", page.Find("a.action-link").GetAttribute("href"));
     }
 
 

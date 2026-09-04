@@ -19,6 +19,9 @@ public class ScheduledJobsInsightsCmsControllerTests
     /// </remarks>
     private static ScheduledJobsInsightsPageModel ModelOf(IActionResult result) =>
         Assert.IsType<ScheduledJobsInsightsPageModel>(Assert.IsType<ViewResult>(result).Model);
+
+    /// <summary>The view name the result renders.</summary>
+    private static string? ViewNameOf(IActionResult result) => Assert.IsType<ViewResult>(result).ViewName;
     private static ScheduledJobsInsightsCmsController CreateController(
         OptiPowerToolsScheduledJobsInsightsOptions options, ClaimsPrincipal user, string? timeZoneCookie = null)
     {
@@ -105,5 +108,60 @@ public class ScheduledJobsInsightsCmsControllerTests
         var result = controller.Index(id: null);
 
         Assert.Null(ModelOf(result).ViewerTimeZone);
+    }
+
+    [Fact]
+    public void Retention_RendersTheRetentionScreen()
+    {
+        // Its own action on its own route, not a "view" query string on Index. The CMS shell resolves
+        // the highlighted menu entry and the product whose navigation to render by comparing the
+        // request path with each registered menu item's URL, ignoring the query string — so while
+        // retention lived on Index's path, the execution list's entry was the one that matched and the
+        // list stayed highlighted with retention open.
+        var controller = CreateController(
+            new OptiPowerToolsScheduledJobsInsightsOptions(), new ClaimsPrincipal(new ClaimsIdentity()));
+
+        var model = ModelOf(controller.Retention());
+
+        Assert.True(model.ShowRetention);
+        Assert.Null(model.ExecutionId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(42L)]
+    public void Index_NeverRendersTheRetentionScreen(long? id)
+    {
+        var controller = CreateController(
+            new OptiPowerToolsScheduledJobsInsightsOptions(), new ClaimsPrincipal(new ClaimsIdentity()));
+
+        Assert.False(ModelOf(controller.Index(id)).ShowRetention);
+    }
+
+    [Fact]
+    public void BothActions_RenderTheSharedShellView()
+    {
+        // One view for both: it is the CMS shell document that hosts whichever component the model
+        // asks for, so neither action owns it and neither is named in it.
+        var controller = CreateController(
+            new OptiPowerToolsScheduledJobsInsightsOptions(), new ClaimsPrincipal(new ClaimsIdentity()));
+
+        Assert.Equal(ScheduledJobsInsightsCmsController.ShellView, ViewNameOf(controller.Index(id: null)));
+        Assert.Equal(ScheduledJobsInsightsCmsController.ShellView, ViewNameOf(controller.Retention()));
+    }
+
+    [Fact]
+    public void Retention_PassesTheCurrentUserAndTimeZoneToView()
+    {
+        // The retention screen audits who changed a rule, and a component has no HttpContext once the
+        // circuit takes over — so both values travel as parameters from here.
+        var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, "admin")], authenticationType: "Test");
+        var controller = CreateController(
+            new OptiPowerToolsScheduledJobsInsightsOptions(), new ClaimsPrincipal(identity), "Europe/Warsaw");
+
+        var model = ModelOf(controller.Retention());
+
+        Assert.Equal("admin", model.CurrentUser);
+        Assert.Equal("Europe/Warsaw", model.ViewerTimeZone);
     }
 }

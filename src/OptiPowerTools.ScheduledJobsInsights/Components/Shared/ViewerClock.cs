@@ -12,7 +12,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Components.Shared;
 /// This is a server-rendered UI, so the only zone it can reach for unaided is the *server's* — which
 /// is rarely the reader's, and on a UTC container meant an administrator elsewhere was shown UTC
 /// dressed up as local time. The browser's IANA zone id arrives instead as a component parameter
-/// from the hosting view (see <c>Views/ScheduledJobsInsightsCms/Index.cshtml</c>), the same route the
+/// from the hosting view (see <c>Views/ScheduledJobsInsightsCms/Shell.cshtml</c>), the same route the
 /// execution id already takes; a small inline script stores it in a cookie for the view to read.
 /// </para>
 /// <para>

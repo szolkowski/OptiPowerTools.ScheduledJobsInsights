@@ -11,6 +11,12 @@ namespace OptiPowerTools.ScheduledJobsInsights.Cms;
 /// The view hosts the Blazor components directly through the Component Tag Helper, so they render
 /// within the CMS navigation and inherit the shell's styling.
 /// </summary>
+/// <remarks>
+/// Two actions, on two routes set by <see cref="ScheduledJobsInsightsCmsRouteConvention"/> from
+/// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsShellPath"/> and
+/// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsRetentionPath"/>. They share one view,
+/// which is the shell document rather than a page — see <see cref="ShellView"/>.
+/// </remarks>
 [Authorize(Policy = ScheduledJobsInsightsAuthorization.PolicyName)]
 public sealed class ScheduledJobsInsightsCmsController : Controller
 {
@@ -24,21 +30,41 @@ public sealed class ScheduledJobsInsightsCmsController : Controller
         _options = options.Value;
     }
 
-    /// <summary>Query-string value of <c>view</c> that selects the retention screen.</summary>
-    internal const string RetentionView = "retention";
+    /// <summary>
+    /// The view both actions render.
+    /// </summary>
+    /// <remarks>
+    /// Named for what it is — the CMS shell document that hosts whichever component the model asks
+    /// for — rather than after either action, since neither owns it.
+    /// </remarks>
+    internal const string ShellView = "Shell";
 
     /// <summary>
-    /// Renders the execution list, a single execution's detail when <paramref name="id"/> is
-    /// supplied, or the retention screen when <paramref name="view"/> is <c>retention</c>.
+    /// Renders the execution list, or a single execution's detail when <paramref name="id"/> is
+    /// supplied.
     /// </summary>
     /// <param name="id">Execution id from the <c>id</c> query string, or <c>null</c> for the list.</param>
-    /// <param name="view">
-    /// Which screen to render. A query string rather than a route segment for the same reason as
-    /// <paramref name="id"/>: the CMS shell resolves its navigation by matching the request path
-    /// against registered menu items, and any extra segment matches none of them.
-    /// </param>
     [HttpGet]
-    public IActionResult Index(long? id, string? view = null)
+    public IActionResult Index(long? id) => Shell(executionId: id, showRetention: false);
+
+    /// <summary>
+    /// Renders the per-job retention screen.
+    /// </summary>
+    /// <remarks>
+    /// A route of its own rather than a <c>view</c> query string on <see cref="Index"/>, because the
+    /// CMS shell resolves both the highlighted menu entry and the product whose navigation to render
+    /// by comparing the request <em>path</em> with each registered menu item's URL — the query string
+    /// is ignored on both sides, server side in <c>MenuItem.IsSelected</c> and client side against
+    /// <c>location.pathname</c>. With the retention screen on the list's path, the list's entry
+    /// matched and the retention entry could not, so opening retention highlighted the list.
+    /// </remarks>
+    [HttpGet]
+    public IActionResult Retention() => Shell(executionId: null, showRetention: true);
+
+    /// <summary>
+    /// Renders the shell view with the model both actions build the same way.
+    /// </summary>
+    private IActionResult Shell(long? executionId, bool showRetention)
     {
         // Authorization is the policy on the class, enforced by the framework before this runs —
         // not a check written out here, which the menu could then disagree with.
@@ -49,10 +75,10 @@ public sealed class ScheduledJobsInsightsCmsController : Controller
         // the prerender pass and null once the circuit takes over, flipping the page back to UTC. The
         // current user travels the same way, because retention changes are audited and a component has
         // no HttpContext once the circuit owns the page.
-        return View(new ScheduledJobsInsightsPageModel(
-            ExecutionId: id,
+        return View(ShellView, new ScheduledJobsInsightsPageModel(
+            ExecutionId: executionId,
             ViewerTimeZone: Request.Cookies[ViewerClock.CookieName],
-            ShowRetention: string.Equals(view, RetentionView, StringComparison.OrdinalIgnoreCase),
+            ShowRetention: showRetention,
             CurrentUser: User.Identity?.Name,
             PageTitle: _options.PageTitle));
     }

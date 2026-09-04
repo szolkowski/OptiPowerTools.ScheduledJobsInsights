@@ -11,6 +11,10 @@ public class OptiPowerToolsScheduledJobsInsightsOptionsTests
         var options = new OptiPowerToolsScheduledJobsInsightsOptions();
 
         Assert.Equal("/ScheduledJobsInsightsCms/Index", options.CmsShellPath);
+        // A path of its own, not a query string on the one above: the CMS shell highlights the menu
+        // entry whose URL equals the request path, and never looks at the query string.
+        Assert.Equal("/ScheduledJobsInsightsCms/Retention", options.CmsRetentionPath);
+        Assert.NotEqual(options.CmsShellPath, options.CmsRetentionPath);
         Assert.True(options.EnableCmsMenu);
         Assert.False(options.AllowAnyAuthenticatedUser);
         Assert.Null(options.AuthorizationPolicy);

@@ -1,7 +1,7 @@
 /*
  * Layout for the Scheduled Jobs Insights UI.
  *
- * The components render inside the CMS shell document (Views/ScheduledJobsInsightsCms/Index.cshtml),
+ * The components render inside the CMS shell document (Views/ScheduledJobsInsightsCms/Shell.cshtml),
  * not in an iframe, so the Optimizely theme already supplies the font, colours and base element
  * styling. This file only adds what the shell has no opinion about: the content well's spacing and a
  * few affordances for the console log viewer.

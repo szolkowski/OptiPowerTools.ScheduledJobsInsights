@@ -13,9 +13,11 @@
 @* Per-job retention. Hosted by ScheduledJobsInsightsCmsController's view inside the CMS shell, like
    the other two pages, so it is not routable and owns no document of its own.
 
-   Reached at CmsShellPath?view=retention. A query string rather than a path segment for the same
-   reason the execution id is one: the CMS shell resolves which product's navigation to render by
-   matching the request path against registered menu items, and any extra segment matches nothing. *@
+   Reached at CmsRetentionPath, a route of its own — unlike an execution id, which stays a query
+   string on CmsShellPath. The CMS shell resolves both the highlighted menu entry and the product
+   whose navigation to render by matching the request path against registered menu items, ignoring
+   the query string; this screen has a registered menu item of its own, so it needs the path to
+   match one. An execution has none, which is why an id would only match nothing. *@
 @implements IAsyncDisposable
 @attribute [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 @using System.Globalization

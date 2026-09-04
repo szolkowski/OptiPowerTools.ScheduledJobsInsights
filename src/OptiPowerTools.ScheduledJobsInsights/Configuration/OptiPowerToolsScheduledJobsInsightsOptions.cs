@@ -267,7 +267,7 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     /// <remarks>
     /// Set to <c>false</c> to keep retention governed purely by configuration and
     /// <see cref="Retention.JobRetentionAttribute"/>. The screen itself remains reachable at
-    /// <c>?view=retention</c>; this only controls its discoverability in the CMS navigation.
+    /// <see cref="CmsRetentionPath"/>; this only controls its discoverability in the CMS navigation.
     /// </remarks>
     public bool ShowRetentionMenuItem { get; set; } = true;
 
@@ -284,6 +284,36 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     /// base for the UI's own cross-links.
     /// </remarks>
     public string CmsShellPath { get; set; } = "/ScheduledJobsInsightsCms/Index";
+
+    /// <summary>
+    /// The URL path where the <em>Job Retention</em> screen is served, separately from
+    /// <see cref="CmsShellPath"/>. Defaults to "/ScheduledJobsInsightsCms/Retention".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A path of its own rather than a query string on <see cref="CmsShellPath"/>, and the reason is
+    /// the CMS navigation: the shell decides which menu entry to highlight by comparing the request
+    /// <em>path</em> against each registered item's URL, ignoring the query string entirely — server
+    /// side in <c>MenuItem.IsSelected</c>, and again client side in the navigation bundle, which
+    /// matches against <c>location.pathname</c> alone. A retention entry whose URL was
+    /// <c>…/Index?view=retention</c> could therefore never match, while the execution list's entry
+    /// matched every time, so opening retention highlighted the list.
+    /// </para>
+    /// <para>
+    /// Deliberately a sibling of <see cref="CmsShellPath"/> rather than a segment beneath it. An
+    /// unmapped extra segment leaves the shell unable to resolve a product at all (which is why an
+    /// execution id is still a query string), and a nested one that <em>is</em> mapped puts the two
+    /// URLs in a prefix relationship the navigation resolves through its "closest match" fallback
+    /// rather than an exact match.
+    /// </para>
+    /// <para>
+    /// Validated at startup by the same rule as <see cref="CmsShellPath"/>, and additionally must
+    /// differ from it. Set it alongside <see cref="CmsShellPath"/> when customising where the UI
+    /// lives: the two are independent route templates, so changing only one leaves the retention
+    /// screen at this default.
+    /// </para>
+    /// </remarks>
+    public string CmsRetentionPath { get; set; } = "/ScheduledJobsInsightsCms/Retention";
 
     /// <summary>
     /// Whether <c>UseOptiPowerToolsScheduledJobsInsights</c> maps the Blazor Server hub.

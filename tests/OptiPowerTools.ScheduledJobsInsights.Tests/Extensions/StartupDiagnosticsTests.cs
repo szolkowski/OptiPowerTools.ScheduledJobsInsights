@@ -57,6 +57,43 @@ public class StartupDiagnosticsTests
     }
 
     [Fact]
+    public void DuplicateEndpoints_TheRetentionPageTwice_IsReportedToo()
+    {
+        // A duplicated controller duplicates every action on it, so the retention route fails the same
+        // way as the list. Reporting only the list would have named one symptom and left the other to
+        // be found by clicking Retention.
+        var (logger, options) = Setup();
+
+        StartupDiagnostics.ReportDuplicateEndpoints(
+            [Route(options.CmsShellPath), Route(options.CmsRetentionPath), Route(options.CmsRetentionPath)],
+            options,
+            logger);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Error, entry.Level);
+        Assert.Contains("registered 2 times", entry.Message, StringComparison.Ordinal);
+        Assert.Contains(options.CmsRetentionPath, entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DuplicateEndpoints_BothPagesTwice_ReportsEachOne()
+    {
+        var (logger, options) = Setup();
+
+        StartupDiagnostics.ReportDuplicateEndpoints(
+            [
+                Route(options.CmsShellPath), Route(options.CmsShellPath),
+                Route(options.CmsRetentionPath), Route(options.CmsRetentionPath)
+            ],
+            options,
+            logger);
+
+        Assert.Equal(2, logger.Entries.Count);
+        Assert.Contains(logger.Entries, e => e.Message.Contains(options.CmsShellPath, StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, e => e.Message.Contains(options.CmsRetentionPath, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DuplicateEndpoints_ThePageMessage_WarnsAgainstDeletingMapControllersBlindly()
     {
         // The fix inverts by stack: on a Commerce host MapContent() already maps attribute-routed

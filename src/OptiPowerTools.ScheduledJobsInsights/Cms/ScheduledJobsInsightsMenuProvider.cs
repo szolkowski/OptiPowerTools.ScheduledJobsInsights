@@ -103,10 +103,18 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
     /// Builds the entry for the retention screen. Sits under <em>Data &amp; Sync Management</em>
     /// beside the insights entry, since it configures the same data.
     /// </summary>
+    /// <remarks>
+    /// The URL is <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsRetentionPath"/> — a path
+    /// of its own, and it has to be. <c>MenuItem.IsSelected</c> compares this URL with the request
+    /// path and the shell's navigation script compares it with <c>location.pathname</c>: both drop
+    /// the query string, so while this pointed at <c>CmsShellPath?view=retention</c> it could never
+    /// match, and the execution list's entry — whose URL <em>is</em> the request path — was
+    /// highlighted instead whenever the retention screen was open.
+    /// </remarks>
     private UrlMenuItem BuildRetentionItem() =>
         new($"{(string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName)} - Retention",
             DataSyncManagementPath + RetentionLeafSegment,
-            $"{_options.CmsShellPath}?view={ScheduledJobsInsightsCmsController.RetentionView}")
+            _options.CmsRetentionPath)
         {
             IsAvailable = _ => IsCurrentUserAuthorized(),
             SortIndex = SortIndex.Last - 9

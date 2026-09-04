@@ -70,6 +70,26 @@ internal sealed class OptiPowerToolsScheduledJobsInsightsOptionsValidator
                  + "menu URL and the base for the UI's own links at the same time.");
         }
 
+        if (!IsUsableShellPath(options.CmsRetentionPath))
+        {
+            failures.Add($"CmsRetentionPath must be an absolute path with at least one segment and no query string "
+                 + $"or fragment — \"{options.CmsRetentionPath}\" is not. It is a route template and a menu URL, "
+                 + "like CmsShellPath.");
+        }
+
+        // Not implied by the two checks above: both values can be individually valid and still be the
+        // same path. Two actions on one route template is an AmbiguousMatchException on every request
+        // to the UI, and the CMS shell — which highlights the entry whose URL equals the request path —
+        // would have two entries claiming the same one.
+        if (IsUsableShellPath(options.CmsShellPath)
+            && IsUsableShellPath(options.CmsRetentionPath)
+            && string.Equals(options.CmsShellPath, options.CmsRetentionPath, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add($"CmsRetentionPath must differ from CmsShellPath (both are \"{options.CmsShellPath}\"). "
+                 + "The retention screen has a path of its own so the CMS menu can highlight it: the shell matches "
+                 + "the request path against each menu item's URL and ignores the query string.");
+        }
+
         // AuthorizedRoles being empty is no longer a misconfiguration: it is the default, and it
         // resolves to the built-in role set. Nobody can lock themselves out by leaving it unset, and a
         // host that wants a narrower rule than "one of these roles" names a policy instead.

@@ -6,7 +6,7 @@
     <!-- NuGet Package Metadata -->
     <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
          value here is only what a local `dotnet pack` produces. -->
-    <Version>1.0.0-rc.3</Version>
+    <Version>1.0.0-rc.4</Version>
 
     <!-- A local `dotnet pack` must not produce a package claiming a real version string. NuGet keys
          its global cache on id+version and never re-checks, so a local build that lands there under a

@@ -342,6 +342,7 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
     options.CustomMenuItemName = string.Empty;
     options.ShowInDataSyncManagement = true;
     options.CmsShellPath = "/ScheduledJobsInsightsCms/Index";
+    options.CmsRetentionPath = "/ScheduledJobsInsightsCms/Retention";
 });
 ```
 
@@ -367,7 +368,8 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
       "MenuPlacement": "CmsSection",
       "ShowInDataSyncManagement": true,
       "CustomSectionName": "OptiPowerTools",
-      "CmsShellPath": "/ScheduledJobsInsightsCms/Index"
+      "CmsShellPath": "/ScheduledJobsInsightsCms/Index",
+      "CmsRetentionPath": "/ScheduledJobsInsightsCms/Retention"
     }
   }
 }
@@ -414,8 +416,9 @@ into an existing collection instead of clearing it.
 | `CustomSectionName` | `string` | `"OptiPowerTools"` | Section name for `TopLevel`/`CustomSection` placement. |
 | `CustomMenuItemName` | `string` | *(empty)* | Overrides the menu item label; falls back to `PageTitle`. |
 | `ShowInDataSyncManagement` | `bool` | `true` | Also adds an entry under **Settings › Data & Sync Management**, directly below the CMS's own **Scheduled Jobs** page. Independent of `MenuPlacement` — see below. |
-| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen beside the insights one. The screen stays reachable at `?view=retention` either way. |
-| `CmsShellPath` | `string` | `"/ScheduledJobsInsightsCms/Index"` | URL path where the UI is served. A single execution is addressed with an `id` query string, e.g. `/ScheduledJobsInsightsCms/Index?id=42`. |
+| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen beside the insights one. The screen stays reachable at `CmsRetentionPath` either way. |
+| `CmsShellPath` | `string` | `"/ScheduledJobsInsightsCms/Index"` | URL path where the execution list and detail view are served. A single execution is addressed with an `id` query string, e.g. `/ScheduledJobsInsightsCms/Index?id=42`. |
+| `CmsRetentionPath` | `string` | `"/ScheduledJobsInsightsCms/Retention"` | URL path where the **Job Retention** screen is served — a route of its own, so the CMS menu highlights it. Must differ from `CmsShellPath`; set it alongside `CmsShellPath` if you move the UI, since the two are independent route templates. |
 
 ### Data & Sync Management entry
 
@@ -560,9 +563,9 @@ override it can see what the job's author intended and why.
 ### The Job Retention screen
 
 Reached from the **Retention** link on the execution list, or from its own entry under **Settings ›
-Data & Sync Management**. For every job it shows the declared value and its rationale, what is
-actually in force and where that came from, how many executions are currently stored, and who last
-changed the setting.
+Data & Sync Management**, at `CmsRetentionPath` (`/ScheduledJobsInsightsCms/Retention` by default).
+For every job it shows the declared value and its rationale, what is actually in force and where that
+came from, how many executions are currently stored, and who last changed the setting.
 
 The list covers every job deriving from `LoggedScheduledJobBase` — so a job can be configured before
 its first run — plus every job type that only exists in history, so records left behind by deleted

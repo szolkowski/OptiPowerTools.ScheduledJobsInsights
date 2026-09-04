@@ -337,7 +337,7 @@ exists purely so `dotnet ef migrations add` works without a `Startup`/`Program` 
 
 Unlike `OptiPowerTools.Hangfire`, which iframes a third-party dashboard it does not own, this package
 owns its markup and renders **inline inside the CMS chrome** — no iframe. The MVC controller + view
-(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Index.cshtml`) draws the
+(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Shell.cshtml`) draws the
 Optimizely shell and hosts the components through the Component Tag Helper, so they inherit the
 shell's Axiom styling instead of needing a stand-in stylesheet. That means **Blazor Server**
 (`AddServerSideBlazor()` + `MapBlazorHub()`), not the Blazor Web App model — the latter wants to own
@@ -363,6 +363,17 @@ Five things silently break this UI. Each was a real bug; none produce an obvious
    segment matches nothing, `data-epi-product-id` comes back empty, and the left-hand menu spins on
    its loading dots forever. `ScheduledJobsInsightsCmsRouteConvention` therefore maps `CmsShellPath`
    exactly, with no `{id?}`.
+   **The mirror image of the same rule: anything that has a menu entry needs a path of its own.** The
+   comparison is *path against menu URL*, and the query string is discarded on both sides —
+   server-side `MenuItem.IsSelected` does `Url.Trim('/')` vs `Request.Path`, and the client
+   navigation bundle matches `location.pathname` alone (`useMenuItems.tsx` / `helpers/url-matcher.ts`
+   in `Shell.zip`, whose source maps are the readable copy). So the retention screen is a **second
+   route**, `CmsRetentionPath`, not `CmsShellPath?view=retention`: on the query-string form the
+   execution list's entry matched every request and the retention entry could match none, so opening
+   Retention highlighted the list. A *sibling* path, not a segment under `CmsShellPath` — the client
+   resolver would then have the two URLs in a prefix relationship and reach retention through its
+   `closestMatch` fallback instead of an exact match. Selection propagates up the menu tree
+   (`MenuNode.IsSelected` sets its parent), so a matched leaf still resolves the product.
 5. **`UseOptiPowerToolsScheduledJobsInsights()` must run before the host's own `UseEndpoints(...)`**,
    and must not call `MapControllers()` — mapping controllers from two `UseEndpoints` blocks registers
    every action twice and throws `AmbiguousMatchException` at request time.
@@ -405,7 +416,8 @@ Three pages, all hosted by that view rather than routed:
   time a summary appears, above `SummaryAutoCollapseLines`). A job checkpointing with `FlushSummary`
   grows its summary across polls, and an unlatched threshold would snap the section shut under the
   reader. The size badge, being informational, does keep updating.
-- `Components/Pages/Retention.razor` — per-job retention settings, reached at `?view=retention`. One
+- `Components/Pages/Retention.razor` — per-job retention settings, reached at `CmsRetentionPath`
+  (`ScheduledJobsInsightsCmsController.Retention`, a second action on the same controller and view). One
   row per job, each with a `<select>` of the day presets plus *Inherit* and *Keep forever*; choosing
   saves immediately (there is no Save button, so there is no half-applied state to reason about).
   `DayChoicesFor` folds a non-preset override — someone may have set 42 days directly in the database
@@ -492,10 +504,10 @@ primary one (`CmsSection`/`TopLevel`/`CustomSection`); `ShowInDataSyncManagement
 independently adds a second under the CMS's own **Settings > Data & Sync Management**, as a sibling of
 the native Scheduled Jobs page at `/global/cms/admin/scheduledjobs/scheduledjobsinsights`. The parent
 group is Optimizely's, so only the leaf is contributed. `ShowRetentionMenuItem` (default `true`) adds
-a third leaf beside it for the retention screen, pointing at `CmsShellPath?view=retention` — the menu
-*path* has its own segment (`.../scheduledjobsinsightsretention`) so the shell can highlight it, while
-the *URL* stays on the one mapped route, since an extra path segment there would break the shell's
-navigation resolution (see above). All three entries are gated on `EnableCmsMenu` and on the same
+a third leaf beside it for the retention screen at `.../scheduledjobsinsightsretention`, pointing at
+`CmsRetentionPath` — its own *URL* as well as its own menu path, because the shell highlights the
+entry whose URL equals the request path and ignores the query string (see constraint 4 above). All
+three entries are gated on `EnableCmsMenu` and on the same
 authorization policy the pages themselves use — `ScheduledJobsInsightsAuthorization.PolicyName`,
 which resolves from `AuthorizationPolicy`, `AllowAnyAuthenticatedUser` or `AuthorizedRoles` in that
 order. Asking the same question the endpoint asks is the point: a menu that decided for itself could
@@ -539,10 +551,11 @@ indefinite. The order is expressed in exactly one place — `JobRetention.Resolv
   exists for that and nothing else; a substituted type list would not exercise the index at all.
 - **The cleanup job excludes governed job types from the default sweep** whether their rule is shorter
   or longer. Otherwise the default would delete history a job explicitly asked to keep.
-- The screen is a third component on the same route, `?view=retention` — a query string for the same
-  reason the execution id is one (see the CMS-shell constraints above). The current user arrives as a
-  parameter from the hosting view, like `Id` and `ViewerTimeZone`, because the audit trail needs it and
-  a component has no `HttpContext` once the circuit takes over.
+- The screen is a third component on the same controller and view, but on a **route of its own**
+  (`CmsRetentionPath`) rather than a query string — it has a menu entry, and the shell can only
+  highlight an entry whose URL equals the request path (see the CMS-shell constraints above). The
+  current user arrives as a parameter from the hosting view, like `Id` and `ViewerTimeZone`, because
+  the audit trail needs it and a component has no `HttpContext` once the circuit takes over.
 
 ### Cleanup job
 

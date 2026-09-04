@@ -47,14 +47,20 @@ internal static partial class StartupDiagnostics
     {
         var routes = endpoints.OfType<RouteEndpoint>().ToArray();
 
-        var page = routes.Count(endpoint => IsSamePath(endpoint.RoutePattern.RawText, options.CmsShellPath));
-
-        if (page > 1)
+        // Both of the package's pages, because a duplicated controller duplicates every action on it:
+        // reporting only the list would have named one of the two symptoms and left the other to be
+        // discovered by clicking Retention.
+        foreach (var path in new[] { options.CmsShellPath, options.CmsRetentionPath })
         {
-            logger.LogError(
-                "ScheduledJobsInsights' page is registered {Count} times at {Path}, so every request to it fails with AmbiguousMatchException. The usual cause is calling both MapContent() and MapControllers(): on some Optimizely stacks MapContent() already maps attribute-routed controllers, and the second call duplicates all of them. Remove MapControllers() if your host is one of those — but check first, because on a plain CMS host it is required and removing it makes this page return 404 instead.",
-                page,
-                options.CmsShellPath);
+            var page = routes.Count(endpoint => IsSamePath(endpoint.RoutePattern.RawText, path));
+
+            if (page > 1)
+            {
+                logger.LogError(
+                    "ScheduledJobsInsights' page is registered {Count} times at {Path}, so every request to it fails with AmbiguousMatchException. The usual cause is calling both MapContent() and MapControllers(): on some Optimizely stacks MapContent() already maps attribute-routed controllers, and the second call duplicates all of them. Remove MapControllers() if your host is one of those — but check first, because on a plain CMS host it is required and removing it makes this page return 404 instead.",
+                    page,
+                    path);
+            }
         }
 
         var hub = routes.Count(endpoint => IsSamePath(endpoint.RoutePattern.RawText, "/_blazor"));

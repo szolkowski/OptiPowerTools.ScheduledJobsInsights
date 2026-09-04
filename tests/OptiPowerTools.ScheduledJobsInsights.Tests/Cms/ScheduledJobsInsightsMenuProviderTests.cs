@@ -181,20 +181,71 @@ public class ScheduledJobsInsightsMenuProviderTests
     }
 
     [Fact]
-    public void GetMenuItems_RetentionEntry_PointsAtTheRetentionView()
+    public void GetMenuItems_RetentionEntry_PointsAtTheRetentionPath()
     {
-        // A query string, not a path segment: an extra segment would stop the CMS shell resolving
-        // which product's navigation to render, and the left-hand menu would spin forever.
         var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
-            CmsShellPath = "/ScheduledJobsInsightsCms/Index"
+            CmsShellPath = "/ScheduledJobsInsightsCms/Index",
+            CmsRetentionPath = "/ScheduledJobsInsightsCms/Retention"
         });
 
         var item = Assert.IsType<UrlMenuItem>(
             Assert.Single(provider.GetMenuItems(), i => i.Path.EndsWith("scheduledjobsinsightsretention", StringComparison.Ordinal)));
 
-        Assert.Equal("/ScheduledJobsInsightsCms/Index?view=retention", item.Url);
+        Assert.Equal("/ScheduledJobsInsightsCms/Retention", item.Url);
+    }
+
+    [Fact]
+    public void GetMenuItems_RetentionEntry_IsSelectedByTheRetentionRequestPath()
+    {
+        // The bug this pins: the CMS shell decides which entry to highlight by comparing the item's
+        // URL with the request *path*, dropping the query string (MenuItem.IsSelected server side, and
+        // location.pathname client side). While the retention entry's URL was "…/Index?view=retention"
+        // it could never match, and the execution list's entry matched instead — so opening retention
+        // highlighted the list. Asserting through IsSelected rather than on the string, because that is
+        // the comparison the shell actually makes.
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            CmsShellPath = "/ScheduledJobsInsightsCms/Index",
+            CmsRetentionPath = "/ScheduledJobsInsightsCms/Retention"
+        };
+        var provider = CreateProvider(options);
+        var items = provider.GetMenuItems().ToList();
+
+        var onRetention = new DefaultHttpContext();
+        onRetention.Request.Path = options.CmsRetentionPath;
+
+        var retentionItem = Assert.Single(
+            items, i => i.Path.EndsWith("scheduledjobsinsightsretention", StringComparison.Ordinal));
+
+        Assert.True(retentionItem.IsSelected(onRetention));
+        Assert.All(
+            items.Where(i => i.Path != retentionItem.Path),
+            i => Assert.False(i.IsSelected(onRetention)));
+    }
+
+    [Fact]
+    public void GetMenuItems_ExecutionEntries_AreSelectedByTheShellRequestPath()
+    {
+        // The other half of the same rule: the list's entries still match their own path, and the
+        // retention entry does not claim it.
+        var options = new OptiPowerToolsScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            CmsShellPath = "/ScheduledJobsInsightsCms/Index",
+            CmsRetentionPath = "/ScheduledJobsInsightsCms/Retention"
+        };
+        var items = CreateProvider(options).GetMenuItems().ToList();
+
+        var onList = new DefaultHttpContext();
+        onList.Request.Path = options.CmsShellPath;
+
+        Assert.Contains(items, i => i.IsSelected(onList));
+        Assert.False(
+            Assert.Single(items, i => i.Path.EndsWith("scheduledjobsinsightsretention", StringComparison.Ordinal))
+                .IsSelected(onList));
     }
 
     /// <summary>

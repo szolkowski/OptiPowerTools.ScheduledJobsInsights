@@ -111,6 +111,46 @@ public class OptiPowerToolsScheduledJobsInsightsOptionsValidatorTests
     public void AUsableCmsShellPath_Passes(string path) =>
         Assert.True(Validate(options => options.CmsShellPath = path).Succeeded);
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("ScheduledJobsInsightsCms/Retention")]  // relative
+    [InlineData("/")]                                   // no segment
+    [InlineData("/Retention/")]                         // trailing slash
+    [InlineData("/Insights?view=retention")]            // query string
+    [InlineData("/Retention#top")]                      // fragment
+    public void AnUnusableCmsRetentionPath_Fails(string path)
+    {
+        // Held to the same rule as CmsShellPath, because it is the same kind of value: a route
+        // template and a menu URL at once.
+        var result = Validate(options => options.CmsRetentionPath = path);
+
+        Assert.True(result.Failed);
+        Assert.Contains("CmsRetentionPath", result.FailureMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACmsRetentionPathEqualToTheShellPath_Fails()
+    {
+        // Both individually valid, and still wrong together: two actions on one route template is an
+        // AmbiguousMatchException on every request, and two menu entries would claim the same path.
+        var result = Validate(options =>
+        {
+            options.CmsShellPath = "/Insights";
+            options.CmsRetentionPath = "/insights";
+        });
+
+        Assert.True(result.Failed);
+        Assert.Contains("CmsRetentionPath must differ from CmsShellPath", result.FailureMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DistinctUsablePaths_Pass() =>
+        Assert.True(Validate(options =>
+        {
+            options.CmsShellPath = "/custom/insights";
+            options.CmsRetentionPath = "/custom/retention";
+        }).Succeeded);
+
     [Fact]
     public void NoRolesAndNoPolicy_Passes_BecauseEmptyMeansTheBuiltInRoles()
     {

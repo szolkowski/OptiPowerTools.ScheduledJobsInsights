@@ -26,13 +26,68 @@ public class ScheduledJobsInsightsMenuProviderTests
     }
 
     [Fact]
-    public void GetMenuItems_ReturnsSingleItem_WhenPlacementIsCmsSectionAndDataSyncEntryDisabled()
+    public void GetMenuItems_ByDefault_ContributesOneEntryPerPageAndNoMore()
+    {
+        // The bug this pins: the package used to contribute a second entry for the *same* page — its
+        // own placement plus one under Data & Sync Management. The shell identifies an entry by its
+        // URL, matching the request path against every registered item, and never learns which one
+        // was clicked; two entries on one URL were resolved differently by different CMS UI versions.
+        // On 13.0.0 the winner came out as a childless top-level leaf, so the shell rendered no
+        // sub-navigation and the admin tree disappeared on a page that had rendered correctly.
+        var items = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true })
+            .GetMenuItems()
+            .ToList();
+
+        Assert.Equal(
+            [DataSyncManagementItemPath, "/global/cms/admin/scheduledjobs/scheduledjobsinsightsretention"],
+            items.Select(i => i.Path).Order(StringComparer.Ordinal));
+
+        // One URL each, which is what makes the resolution deterministic.
+        Assert.Equal(items.Count, items.Select(i => i.Url).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Theory]
+    [InlineData(CmsMenuPlacement.DataSyncManagement)]
+    [InlineData(CmsMenuPlacement.CmsSection)]
+    [InlineData(CmsMenuPlacement.TopLevel)]
+    [InlineData(CmsMenuPlacement.CustomSection)]
+    public void GetMenuItems_WhateverThePlacement_NoTwoEntriesShareAUrl(CmsMenuPlacement placement)
+    {
+        // The invariant, not just the default: a second entry for one page is exactly what broke the
+        // admin navigation, so no placement may reintroduce one.
+        var items = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            MenuPlacement = placement
+        }).GetMenuItems().ToList();
+
+        var urls = items.Select(i => i.Url).Where(u => !string.IsNullOrEmpty(u) && !u.StartsWith('#')).ToList();
+
+        Assert.Equal(urls.Count, urls.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void GetMenuItems_DefaultPlacement_IsDataSyncManagement()
+    {
+        // Beside the native Scheduled Jobs page, and the only placement that keeps the reader inside
+        // the admin tree: these are leaves of the CMS's Settings branch, so the shell resolves that
+        // branch and its sub-navigation stays on screen.
+        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            ShowRetentionMenuItem = false
+        });
+
+        Assert.Equal(DataSyncManagementItemPath, Assert.Single(provider.GetMenuItems()).Path);
+    }
+
+    [Fact]
+    public void GetMenuItems_CmsSectionPlacement_ContributesOnlyThatEntry()
     {
         var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CmsSection,
-            ShowInDataSyncManagement = false,
             ShowRetentionMenuItem = false
         });
 
@@ -40,51 +95,19 @@ public class ScheduledJobsInsightsMenuProviderTests
         Assert.Equal("/global/cms/scheduledjobsinsights", item.Path);
     }
 
-    [Fact]
-    public void GetMenuItems_AddsDataSyncManagementEntry_ByDefault()
-    {
-        // Defaults deliberately surface the UI in two places: its own entry, plus one beside the
-        // native Scheduled Jobs page where an administrator would look for a job's history.
-        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
-        {
-            EnableCmsMenu = true,
-            ShowRetentionMenuItem = false
-        });
-
-        var items = provider.GetMenuItems().ToList();
-
-        Assert.Equal(2, items.Count);
-        Assert.Contains(items, i => i.Path == DataSyncManagementItemPath);
-        Assert.Contains(items, i => i.Path == "/global/cms/scheduledjobsinsights");
-    }
-
-    [Fact]
-    public void GetMenuItems_OmitsDataSyncManagementEntry_WhenDisabled()
-    {
-        var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
-        {
-            EnableCmsMenu = true,
-            ShowInDataSyncManagement = false
-        });
-
-        Assert.DoesNotContain(provider.GetMenuItems(), i => i.Path == DataSyncManagementItemPath);
-    }
-
     [Theory]
     [InlineData(CmsMenuPlacement.CmsSection)]
     [InlineData(CmsMenuPlacement.TopLevel)]
     [InlineData(CmsMenuPlacement.CustomSection)]
-    public void GetMenuItems_AddsDataSyncManagementEntry_IndependentlyOfPlacement(CmsMenuPlacement placement)
+    public void GetMenuItems_ANonDefaultPlacement_DoesNotAlsoAppearUnderDataSyncManagement(CmsMenuPlacement placement)
     {
-        // The Data & Sync entry is additional, not an alternative placement, so it appears whichever
-        // way the primary entry is positioned.
         var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
             MenuPlacement = placement
         });
 
-        Assert.Contains(provider.GetMenuItems(), i => i.Path == DataSyncManagementItemPath);
+        Assert.DoesNotContain(provider.GetMenuItems(), i => i.Path.StartsWith("/global/cms/admin/", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -99,6 +122,7 @@ public class ScheduledJobsInsightsMenuProviderTests
 
         var item = Assert.Single(provider.GetMenuItems(), i => i.Path == DataSyncManagementItemPath);
         Assert.Equal("Job History", item.Text);
+        Assert.Equal("/custom/shell", item.Url);
     }
 
     [Fact]
@@ -112,7 +136,6 @@ public class ScheduledJobsInsightsMenuProviderTests
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.TopLevel,
             CustomSectionName = "OptiPowerTools",
-            ShowInDataSyncManagement = false,
             ShowRetentionMenuItem = false
         });
 
@@ -131,7 +154,6 @@ public class ScheduledJobsInsightsMenuProviderTests
             EnableCmsMenu = true,
             MenuPlacement = CmsMenuPlacement.CustomSection,
             CustomSectionName = "My Tools",
-            ShowInDataSyncManagement = false,
             ShowRetentionMenuItem = false
         });
 
@@ -150,8 +172,8 @@ public class ScheduledJobsInsightsMenuProviderTests
         var provider = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
         {
             EnableCmsMenu = true,
+            MenuPlacement = CmsMenuPlacement.CmsSection,
             MenuPath = configured,
-            ShowInDataSyncManagement = false,
             ShowRetentionMenuItem = false
         });
 
@@ -166,6 +188,41 @@ public class ScheduledJobsInsightsMenuProviderTests
         Assert.Contains(
             provider.GetMenuItems(),
             i => i.Path == "/global/cms/admin/scheduledjobs/scheduledjobsinsightsretention");
+    }
+
+    [Theory]
+    [InlineData(CmsMenuPlacement.DataSyncManagement, "/global/cms/admin/scheduledjobs")]
+    [InlineData(CmsMenuPlacement.CmsSection, "/global/cms")]
+    [InlineData(CmsMenuPlacement.TopLevel, "/global/optipowertools")]
+    [InlineData(CmsMenuPlacement.CustomSection, "/global/optipowertools")]
+    public void GetMenuItems_TheRetentionEntry_IsASiblingOfTheInsightsEntry(
+        CmsMenuPlacement placement, string expectedParent)
+    {
+        // The two screens read and configure the same data, so splitting them across the navigation
+        // would be arbitrary — and under a section placement the retention entry used to be left
+        // behind under Settings, in a different branch from the entry it belongs beside.
+        var items = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions
+        {
+            EnableCmsMenu = true,
+            MenuPlacement = placement,
+            CustomSectionName = "OptiPowerTools"
+        }).GetMenuItems().ToList();
+
+        Assert.Contains(items, i => i.Path == expectedParent + "/scheduledjobsinsights");
+        Assert.Contains(items, i => i.Path == expectedParent + "/scheduledjobsinsightsretention");
+    }
+
+    [Fact]
+    public void GetMenuItems_TheRetentionEntry_SortsImmediatelyAfterTheInsightsEntry()
+    {
+        var items = CreateProvider(new OptiPowerToolsScheduledJobsInsightsOptions { EnableCmsMenu = true })
+            .GetMenuItems()
+            .ToList();
+
+        var insights = Assert.Single(items, i => i.Path == DataSyncManagementItemPath);
+        var retention = Assert.Single(items, i => i.Path.EndsWith("retention", StringComparison.Ordinal));
+
+        Assert.Equal(insights.SortIndex + 1, retention.SortIndex);
     }
 
     [Fact]

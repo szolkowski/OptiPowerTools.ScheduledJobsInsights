@@ -19,7 +19,9 @@ public class OptiPowerToolsScheduledJobsInsightsOptionsTests
         Assert.False(options.AllowAnyAuthenticatedUser);
         Assert.Null(options.AuthorizationPolicy);
         Assert.Null(options.MapBlazorHub);
-        Assert.Equal(CmsMenuPlacement.CmsSection, options.MenuPlacement);
+        // Beside the CMS's own Scheduled Jobs page, and one place only: a second entry for the same
+        // page cannot be resolved by the shell, which identifies an entry by its URL.
+        Assert.Equal(CmsMenuPlacement.DataSyncManagement, options.MenuPlacement);
         // Empty on purpose, and not the same thing as "nobody": it resolves to the built-in role set
         // when the policy is built. A non-empty default could not be replaced from appsettings.json,
         // because ConfigurationBinder adds into an existing collection rather than clearing it.

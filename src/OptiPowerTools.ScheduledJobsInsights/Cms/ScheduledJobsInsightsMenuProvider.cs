@@ -60,79 +60,64 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
     private const string RetentionLeafSegment = "/scheduledjobsinsightsretention";
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Contributes the insights entry in exactly one place, chosen by
+    /// <see cref="OptiPowerToolsScheduledJobsInsightsOptions.MenuPlacement"/>, plus the retention
+    /// entry beside it when enabled — and the "exactly one" is load-bearing rather than tidiness.
+    /// The shell identifies an entry by its URL: it matches the request path against every
+    /// registered item and never learns which one was clicked. Two entries for this one page were
+    /// therefore resolved differently by different CMS UI versions — on 13.0.0 the chosen entry came
+    /// out as a childless top-level leaf, so no sub-navigation was rendered and the admin tree
+    /// vanished on an otherwise correct page. The retention entry is safe alongside it because it is
+    /// a different page with a URL of its own.
+    /// </remarks>
     public IEnumerable<MenuItem> GetMenuItems()
     {
         if (!_options.EnableCmsMenu)
             return Enumerable.Empty<MenuItem>();
 
-        var items = _options.MenuPlacement switch
+        return _options.MenuPlacement switch
         {
+            CmsMenuPlacement.CmsSection => BuildCmsSection(),
             CmsMenuPlacement.TopLevel => BuildTopLevel(),
             CmsMenuPlacement.CustomSection => BuildCustomSection(),
-            _ => BuildCmsSection()
-        };
-
-        // Independent of MenuPlacement — these are additional entries, not alternative ones.
-        if (_options.ShowInDataSyncManagement)
-            items.Add(BuildDataSyncManagementItem());
-
-        if (_options.ShowRetentionMenuItem)
-            items.Add(BuildRetentionItem());
-
-        return items;
-    }
-
-    /// <summary>
-    /// Builds the entry that sits under <em>Data &amp; Sync Management</em>, below the native
-    /// Scheduled Jobs page. The parent group is the CMS's own, so only the leaf is contributed here.
-    /// </summary>
-    private UrlMenuItem BuildDataSyncManagementItem()
-    {
-        var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
-
-        return new UrlMenuItem(menuItemName, DataSyncManagementPath + LeafSegment, _options.CmsShellPath)
-        {
-            IsAvailable = _ => IsCurrentUserAuthorized(),
-            // Sorts after the native Scheduled Jobs entry, so this reads as a companion to it rather
-            // than displacing it.
-            SortIndex = SortIndex.Last - 10
+            _ => BuildDataSyncManagement()
         };
     }
 
     /// <summary>
-    /// Builds the entry for the retention screen. Sits under <em>Data &amp; Sync Management</em>
-    /// beside the insights entry, since it configures the same data.
+    /// Builds the entries under the CMS's own <em>Settings &gt; Data &amp; Sync Management</em>
+    /// group, below the native Scheduled Jobs page. The parent group is the CMS's own, so only the
+    /// leaves are contributed here.
     /// </summary>
     /// <remarks>
-    /// The URL is <see cref="OptiPowerToolsScheduledJobsInsightsOptions.CmsRetentionPath"/> — a path
-    /// of its own, and it has to be. <c>MenuItem.IsSelected</c> compares this URL with the request
-    /// path and the shell's navigation script compares it with <c>location.pathname</c>: both drop
-    /// the query string, so while this pointed at <c>CmsShellPath?view=retention</c> it could never
-    /// match, and the execution list's entry — whose URL <em>is</em> the request path — was
-    /// highlighted instead whenever the retention screen was open.
+    /// The default placement. It is also the only one that leaves the reader inside the admin
+    /// navigation: these are leaves of the CMS's Settings branch, so the shell resolves that branch
+    /// and its sub-navigation stays on screen.
     /// </remarks>
-    private UrlMenuItem BuildRetentionItem() =>
-        new($"{(string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName)} - Retention",
-            DataSyncManagementPath + RetentionLeafSegment,
-            _options.CmsRetentionPath)
-        {
-            IsAvailable = _ => IsCurrentUserAuthorized(),
-            SortIndex = SortIndex.Last - 9
-        };
+    private List<MenuItem> BuildDataSyncManagement() =>
+        // Sorts after the native Scheduled Jobs entry, so this reads as a companion to it rather
+        // than displacing it.
+        Leaves(DataSyncManagementPath, _options.MenuSortIndex ?? SortIndex.Last - 10);
 
     private List<MenuItem> BuildCmsSection()
     {
-        var defaultPathSuffix = string.IsNullOrEmpty(_options.MenuPath) ? "/cms" + LeafSegment : NormalizePath(_options.MenuPath);
-        return [BuildUrlMenuItem(defaultPathSuffix)];
+        // MenuPath, for this placement, overrides the *item* path rather than its parent — so the
+        // retention sibling is derived from whatever that resolves to, below.
+        var itemPathSuffix = string.IsNullOrEmpty(_options.MenuPath) ? "/cms" + LeafSegment : NormalizePath(_options.MenuPath);
+        return Leaves(
+            ParentOf(MenuPaths.Global + itemPathSuffix),
+            _options.MenuSortIndex ?? SortIndex.Last - 10,
+            itemPath: MenuPaths.Global + itemPathSuffix);
     }
 
     private List<MenuItem> BuildTopLevel()
     {
         var sectionName = string.IsNullOrEmpty(_options.CustomSectionName) ? _options.PageTitle : _options.CustomSectionName;
-        var sectionSlug = ToSlug(sectionName);
         var sectionSortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
-        var sectionPath = string.IsNullOrEmpty(_options.MenuPath) ? MenuPathSeparator + sectionSlug : NormalizePath(_options.MenuPath);
-        var itemPath = sectionPath + LeafSegment;
+        var sectionPath = string.IsNullOrEmpty(_options.MenuPath)
+            ? MenuPathSeparator + ToSlug(sectionName)
+            : NormalizePath(_options.MenuPath);
 
         var section = new SectionMenuItem(sectionName, MenuPaths.Global + sectionPath)
         {
@@ -140,45 +125,74 @@ public sealed class ScheduledJobsInsightsMenuProvider : IMenuProvider
             SortIndex = sectionSortIndex
         };
 
-        return [section, BuildUrlMenuItem(itemPath)];
-    }
-
-    private UrlMenuItem BuildUrlMenuItem(string defaultPathSuffix)
-    {
-        var path = MenuPaths.Global + defaultPathSuffix;
-        var sortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
-        var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
-
-        return new UrlMenuItem(menuItemName, path, _options.CmsShellPath)
-        {
-            IsAvailable = _ => IsCurrentUserAuthorized(),
-            SortIndex = sortIndex
-        };
+        return [section, .. Leaves(MenuPaths.Global + sectionPath, sectionSortIndex)];
     }
 
     private List<MenuItem> BuildCustomSection()
     {
         var sectionName = string.IsNullOrEmpty(_options.CustomSectionName) ? _options.PageTitle : _options.CustomSectionName;
-        var sectionSlug = ToSlug(sectionName);
-        var sectionPath = MenuPaths.Global + (string.IsNullOrEmpty(_options.MenuPath) ? MenuPathSeparator + sectionSlug : NormalizePath(_options.MenuPath));
-        var itemPath = sectionPath + LeafSegment;
-        var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
-        var sectionSortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10;
+        var sectionPath = MenuPaths.Global + (string.IsNullOrEmpty(_options.MenuPath)
+            ? MenuPathSeparator + ToSlug(sectionName)
+            : NormalizePath(_options.MenuPath));
 
         var section = new SectionMenuItem(sectionName, sectionPath)
         {
             IsAvailable = _ => IsCurrentUserAuthorized(),
-            SortIndex = sectionSortIndex
+            SortIndex = _options.MenuSortIndex ?? SortIndex.Last - 10
         };
 
-        var item = new UrlMenuItem(menuItemName, itemPath, _options.CmsShellPath)
+        return [section, .. Leaves(sectionPath, sortIndex: 100)];
+    }
+
+    /// <summary>
+    /// The insights entry under <paramref name="parentPath"/>, plus the retention entry beside it
+    /// when <see cref="OptiPowerToolsScheduledJobsInsightsOptions.ShowRetentionMenuItem"/> is set.
+    /// </summary>
+    /// <param name="parentPath">Menu path both leaves hang from.</param>
+    /// <param name="sortIndex">Sort index of the insights entry; retention sorts immediately after.</param>
+    /// <param name="itemPath">
+    /// Full menu path of the insights entry, when the placement resolves it to something other than
+    /// <paramref name="parentPath"/> plus the standard leaf segment — which <c>MenuPath</c> can do.
+    /// </param>
+    private List<MenuItem> Leaves(string parentPath, int sortIndex, string? itemPath = null)
+    {
+        var menuItemName = string.IsNullOrEmpty(_options.CustomMenuItemName) ? _options.PageTitle : _options.CustomMenuItemName;
+
+        var items = new List<MenuItem>
+        {
+            new UrlMenuItem(menuItemName, itemPath ?? parentPath + LeafSegment, _options.CmsShellPath)
+            {
+                IsAvailable = _ => IsCurrentUserAuthorized(),
+                SortIndex = sortIndex
+            }
+        };
+
+        if (!_options.ShowRetentionMenuItem)
+            return items;
+
+        // A sibling of the insights entry, wherever that is — the two screens configure and read the
+        // same data, and splitting them across the navigation would be arbitrary.
+        //
+        // Its URL is CmsRetentionPath, a path of its own, and it has to be. MenuItem.IsSelected
+        // compares this URL with the request path and the shell's navigation script compares it with
+        // location.pathname: both drop the query string, so while this pointed at
+        // CmsShellPath?view=retention it could never match, and the execution list's entry — whose
+        // URL *is* the request path — was highlighted instead whenever retention was open.
+        items.Add(new UrlMenuItem(
+            $"{menuItemName} - Retention",
+            parentPath + RetentionLeafSegment,
+            _options.CmsRetentionPath)
         {
             IsAvailable = _ => IsCurrentUserAuthorized(),
-            SortIndex = 100
-        };
+            SortIndex = sortIndex + 1
+        });
 
-        return [section, item];
+        return items;
     }
+
+    /// <summary>The menu path one level up, so a leaf's sibling can be derived from it.</summary>
+    private static string ParentOf(string menuPath) =>
+        menuPath[..menuPath.LastIndexOf(MenuPathSeparator)];
 
     /// <summary>
     /// Asks the same question the page does, through the same policy.

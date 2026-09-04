@@ -499,15 +499,36 @@ change if a future CMS release moves the Settings SPA.
 
 ### CMS menu
 
-`Cms/ScheduledJobsInsightsMenuProvider` contributes up to three entries. `MenuPlacement` positions the
-primary one (`CmsSection`/`TopLevel`/`CustomSection`); `ShowInDataSyncManagement` (default `true`)
-independently adds a second under the CMS's own **Settings > Data & Sync Management**, as a sibling of
-the native Scheduled Jobs page at `/global/cms/admin/scheduledjobs/scheduledjobsinsights`. The parent
-group is Optimizely's, so only the leaf is contributed. `ShowRetentionMenuItem` (default `true`) adds
-a third leaf beside it for the retention screen at `.../scheduledjobsinsightsretention`, pointing at
-`CmsRetentionPath` — its own *URL* as well as its own menu path, because the shell highlights the
-entry whose URL equals the request path and ignores the query string (see constraint 4 above). All
-three entries are gated on `EnableCmsMenu` and on the same
+`Cms/ScheduledJobsInsightsMenuProvider` contributes **one entry per page**, in exactly one location
+chosen by `MenuPlacement` — `DataSyncManagement` (the default), `CmsSection`, `TopLevel` or
+`CustomSection`. `ShowRetentionMenuItem` (default `true`) adds a second leaf beside it for the
+retention screen (`.../scheduledjobsinsightsretention` → `CmsRetentionPath`), which is safe because
+that is a *different page with a URL of its own*; the retention leaf is derived from the insights
+leaf's parent path (`ParentOf`), so it follows the placement rather than being stranded under
+Settings.
+
+**One entry per page is load-bearing, not tidiness.** The shell identifies an entry by its URL and
+never learns which one was clicked (constraint 4 above), so two entries for one page are resolved
+differently by different CMS UI versions — and it was `ShowInDataSyncManagement` (now gone) that
+created the second one:
+
+- **13.0.2 / 13.1.x** (`useMenuItems.tsx` → `getMenuItem`): first subtree match wins, which was the
+  Settings leaf, so the admin branch resolved and everything looked fine.
+- **13.0.0** (`selectedMenuResolver.tsx`, since deleted upstream): the outer loop does *not* stop
+  after a second-level match, so a later top-level item matching its own URL overwrites `firstLevel`.
+  Our `CmsSection` leaf sorts at `SortIndex.Last - 10` = 990, i.e. effectively last, so it always won
+  that overwrite; `secondLevel` was then re-resolved as `firstLevel.children.find(...)` → a leaf has
+  no children → `undefined`, and `removeChildren` stripped children off everything else. `levelOne`
+  with no children renders **no second panel at all**, so the whole Settings tree vanished on a page
+  that had rendered correctly. Reported from a consumer's plain-CMS host while a Commerce host on
+  13.1.1 was unaffected — same package version, different resolver.
+
+`DataSyncManagement` is the default because it is the only placement whose entries are *leaves of the
+CMS's Settings branch*, so the shell resolves that branch and the admin sub-navigation stays on
+screen. A leaf at the top of a product's navigation legitimately has no children and therefore no
+second panel — correct behaviour that reads as leaving the admin view.
+
+Every entry is gated on `EnableCmsMenu` and on the same
 authorization policy the pages themselves use — `ScheduledJobsInsightsAuthorization.PolicyName`,
 which resolves from `AuthorizationPolicy`, `AllowAnyAuthenticatedUser` or `AuthorizedRoles` in that
 order. Asking the same question the endpoint asks is the point: a menu that decided for itself could

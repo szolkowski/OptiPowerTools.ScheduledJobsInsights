@@ -220,10 +220,27 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     public bool EnableCmsMenu { get; set; } = true;
 
     /// <summary>
-    /// Controls where the menu item is placed in the CMS navigation.
-    /// Defaults to <see cref="CmsMenuPlacement.CmsSection"/>.
+    /// Controls where the menu entries are placed in the CMS navigation. Selects exactly one
+    /// location. Defaults to <see cref="CmsMenuPlacement.DataSyncManagement"/>.
     /// </summary>
-    public CmsMenuPlacement MenuPlacement { get; set; } = CmsMenuPlacement.CmsSection;
+    /// <remarks>
+    /// <para>
+    /// One location, not several — the CMS shell identifies a menu entry by its <em>URL</em>: it
+    /// matches the request path against every registered item and cannot know which entry the
+    /// reader clicked. Two entries pointing at this package's page were therefore resolved
+    /// differently by different CMS UI versions. On 13.0.2 and later the first subtree match wins,
+    /// which happened to be the Settings one; on 13.0.0 a later top-level self-match overwrote it,
+    /// leaving a chosen entry with no children — so the shell rendered no sub-navigation at all and
+    /// the admin tree disappeared, on a page that had rendered perfectly. A single entry per URL is
+    /// deterministic on every version.
+    /// </para>
+    /// <para>
+    /// <see cref="ShowRetentionMenuItem"/> adds a second entry beside this one, which is safe
+    /// because the retention screen is a different page with a URL of its own
+    /// (<see cref="CmsRetentionPath"/>).
+    /// </para>
+    /// </remarks>
+    public CmsMenuPlacement MenuPlacement { get; set; } = CmsMenuPlacement.DataSyncManagement;
 
     /// <summary>
     /// Overrides the full menu path. When null (the default), the path is derived from <see cref="MenuPlacement"/>.
@@ -248,21 +265,8 @@ public sealed class OptiPowerToolsScheduledJobsInsightsOptions
     public string CustomMenuItemName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Whether to also add a menu item under the CMS's own <em>Settings &gt; Data &amp; Sync
-    /// Management</em> group, directly below the native <em>Scheduled Jobs</em> page. Defaults to
-    /// <c>true</c>.
-    /// </summary>
-    /// <remarks>
-    /// This is independent of <see cref="MenuPlacement"/>, which positions the primary entry: with
-    /// both enabled the UI is reachable from two places, which is usually what you want since an
-    /// administrator looking at Scheduled Jobs expects to find its history alongside it. Set to
-    /// <c>false</c> to keep a single entry.
-    /// </remarks>
-    public bool ShowInDataSyncManagement { get; set; } = true;
-
-    /// <summary>
-    /// Whether to add a menu item for the <em>Job Retention</em> screen, beside the insights entry
-    /// under <em>Settings &gt; Data &amp; Sync Management</em>. Defaults to <c>true</c>.
+    /// Whether to add a menu item for the <em>Job Retention</em> screen, as a sibling of the insights
+    /// entry wherever <see cref="MenuPlacement"/> puts it. Defaults to <c>true</c>.
     /// </summary>
     /// <remarks>
     /// Set to <c>false</c> to keep retention governed purely by configuration and

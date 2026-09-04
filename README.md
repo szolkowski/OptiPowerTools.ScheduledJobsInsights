@@ -17,7 +17,7 @@ Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also 
 - Automatic execution metrics — wall-clock duration, bytes allocated on the job's own thread, process CPU time and GC generation counts — plus a `RecordMetric` API for custom domain metrics. The names say whose thread and whose CPU they measure, because on a CMS serving requests the process-wide numbers include everything else the application was doing.
 - An optional per-run **result summary** — a multi-line report the job builds as it works, shown in its own collapsible section of the detail view, separate from the one-line message Optimizely shows in its admin grid.
 - Paginated, filterable Blazor execution list and a console-style scrolling log viewer for a single run, embedded in the CMS shell like any native admin page.
-- Menu entries in the CMS's own navigation — including one under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
+- Menu entries in the CMS's own navigation — by default under **Settings › Data & Sync Management**, beside the native **Scheduled Jobs** page — and links from the UI across to a job's CMS settings.
 - Automatic retention cleanup — itself a native `[ScheduledJob]`, visible and manageable in the CMS's own Scheduled Jobs admin list. It also resolves runs abandoned by a recycled process, which would otherwise sit at *Running* for ever.
 - Per-job retention, including indefinite: declare it on the job with `[JobRetention]`, or set it per job in a CMS screen that shows what each job declared and why.
 - Unhandled exceptions are never swallowed — native CMS admin's `HasLastExecutionFailed`/`LastExecutionMessage` tracking is completely unaffected.
@@ -335,12 +335,11 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
     // Or name a policy of your own with options.AuthorizationPolicy, or set
     // options.AllowAnyAuthenticatedUser if access is already restricted elsewhere.
     options.EnableCmsMenu = true;
-    options.MenuPlacement = CmsMenuPlacement.CmsSection;
+    options.MenuPlacement = CmsMenuPlacement.DataSyncManagement;
     options.MenuPath = null;
     options.MenuSortIndex = null;
     options.CustomSectionName = "OptiPowerTools";
     options.CustomMenuItemName = string.Empty;
-    options.ShowInDataSyncManagement = true;
     options.CmsShellPath = "/ScheduledJobsInsightsCms/Index";
     options.CmsRetentionPath = "/ScheduledJobsInsightsCms/Retention";
 });
@@ -365,8 +364,7 @@ services.AddOptiPowerToolsScheduledJobsInsights(options =>
       "AuthorizedRoles": ["SecOps"],
 
       "EnableCmsMenu": true,
-      "MenuPlacement": "CmsSection",
-      "ShowInDataSyncManagement": true,
+      "MenuPlacement": "DataSyncManagement",
       "CustomSectionName": "OptiPowerTools",
       "CmsShellPath": "/ScheduledJobsInsightsCms/Index",
       "CmsRetentionPath": "/ScheduledJobsInsightsCms/Retention"
@@ -410,40 +408,61 @@ into an existing collection instead of clearing it.
 | `AllowAnyAuthenticatedUser` | `bool` | `false` | Drops the role check entirely. ⚠️ On a site with front-end membership, "authenticated" includes ordinary visitors — who could then read execution history and any captured input data. |
 | `MapBlazorHub` | `bool?` | `null` | Whether `UseOptiPowerToolsScheduledJobsInsights` maps the Blazor hub. `null` detects an existing `/_blazor` mapping and skips its own. |
 | `EnableCmsMenu` | `bool` | `true` | Add a menu item to the Optimizely CMS navigation. |
-| `MenuPlacement` | `CmsMenuPlacement` | `CmsSection` | Where the menu item appears: `CmsSection`, `TopLevel`, or `CustomSection`. |
+| `MenuPlacement` | `CmsMenuPlacement` | `DataSyncManagement` | Where the menu entries appear — `DataSyncManagement`, `CmsSection`, `TopLevel` or `CustomSection`. Selects **one** location; see below for why that is not merely a preference. |
 | `MenuPath` | `string?` | `null` | Overrides the auto-derived menu path. |
 | `MenuSortIndex` | `int?` | `null` | Overrides the auto-derived sort index. |
 | `CustomSectionName` | `string` | `"OptiPowerTools"` | Section name for `TopLevel`/`CustomSection` placement. |
 | `CustomMenuItemName` | `string` | *(empty)* | Overrides the menu item label; falls back to `PageTitle`. |
-| `ShowInDataSyncManagement` | `bool` | `true` | Also adds an entry under **Settings › Data & Sync Management**, directly below the CMS's own **Scheduled Jobs** page. Independent of `MenuPlacement` — see below. |
-| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen beside the insights one. The screen stays reachable at `CmsRetentionPath` either way. |
+| `ShowRetentionMenuItem` | `bool` | `true` | Adds a menu entry for the **Job Retention** screen as a sibling of the insights one, wherever `MenuPlacement` puts it. The screen stays reachable at `CmsRetentionPath` either way. |
 | `CmsShellPath` | `string` | `"/ScheduledJobsInsightsCms/Index"` | URL path where the execution list and detail view are served. A single execution is addressed with an `id` query string, e.g. `/ScheduledJobsInsightsCms/Index?id=42`. |
 | `CmsRetentionPath` | `string` | `"/ScheduledJobsInsightsCms/Retention"` | URL path where the **Job Retention** screen is served — a route of its own, so the CMS menu highlights it. Must differ from `CmsShellPath`; set it alongside `CmsShellPath` if you move the UI, since the two are independent route templates. |
 
-### Data & Sync Management entry
+### One entry per page, and why
 
-By default the UI is reachable from two places. `MenuPlacement` positions the primary entry, and
-`ShowInDataSyncManagement` adds a second one inside the CMS's own admin tree, immediately below the
-native **Scheduled Jobs** page:
+`MenuPlacement` chooses **one** location for the menu entries. That is a constraint, not a
+preference: the CMS shell identifies a menu entry by its **URL**. It matches the request path against
+every registered item — server-side in `MenuItem.IsSelected`, and again client-side against
+`location.pathname` — and never learns which entry the reader actually clicked.
+
+Two entries pointing at the same page therefore cannot both be resolved, and different CMS UI
+versions disagree about which one wins. On 13.0.2 and later the first subtree match wins; on 13.0.0
+a later top-level self-match overwrote it, leaving a chosen entry with no children — so the shell
+rendered no sub-navigation at all and **the admin tree disappeared**, on a page that had rendered
+perfectly. That is why this package contributes the insights entry once. The retention entry beside
+it is fine, because it is a different page with a URL of its own (`CmsRetentionPath`).
+
+### Menu placement
+
+#### `DataSyncManagement` (default)
+
+```json
+{ "OptiPowerTools": { "ScheduledJobsInsights": { "MenuPlacement": "DataSyncManagement" } } }
+```
+
+Puts the entries inside the CMS's own admin tree, immediately below the native **Scheduled Jobs**
+page:
 
 ```
 Settings
   Data & Sync Management
-    Scheduled Jobs             (Optimizely's own)
-    Scheduled Jobs Insights    (this package)
+    Scheduled Jobs                       (Optimizely's own)
+    Scheduled Jobs Insights              (this package)
+    Scheduled Jobs Insights - Retention  (this package)
 ```
 
-That is where an administrator looking at a job tends to look for its history, so it is on by
-default. The two settings are independent; set `ShowInDataSyncManagement` to `false` for a single
-menu entry positioned solely by `MenuPlacement`.
+The default for two reasons: it is where an administrator looking at a job goes to find its history,
+and it is the only placement that keeps the reader **inside** the admin navigation — these are leaves
+of the Settings branch, so the shell resolves that branch and its sub-navigation stays on screen. An
+entry placed at the top of a product's navigation is a leaf with no children, and the shell then
+renders no second panel, which reads as leaving the admin view.
 
-### Menu Placement
+#### `CmsSection`
 
-Same three placement modes as the rest of the OptiPowerTools family:
+```json
+{ "OptiPowerTools": { "ScheduledJobsInsights": { "MenuPlacement": "CmsSection" } } }
+```
 
-#### `CmsSection` (default)
-
-Nests the menu item under the existing CMS section.
+Nests the entries under the existing CMS section.
 
 #### `TopLevel`
 
@@ -451,7 +470,7 @@ Nests the menu item under the existing CMS section.
 { "OptiPowerTools": { "ScheduledJobsInsights": { "MenuPlacement": "TopLevel" } } }
 ```
 
-Places the menu item directly in the global navigation bar.
+Places them directly in the global navigation bar.
 
 #### `CustomSection`
 
@@ -466,7 +485,7 @@ Places the menu item directly in the global navigation bar.
 }
 ```
 
-Creates a new collapsible section and nests the item underneath it.
+Creates a new collapsible section and nests the entries underneath it.
 
 ## When the insights database is unavailable
 
@@ -562,8 +581,8 @@ override it can see what the job's author intended and why.
 
 ### The Job Retention screen
 
-Reached from the **Retention** link on the execution list, or from its own entry under **Settings ›
-Data & Sync Management**, at `CmsRetentionPath` (`/ScheduledJobsInsightsCms/Retention` by default).
+Reached from the **Retention** link on the execution list, or from its own menu entry beside the
+insights one, at `CmsRetentionPath` (`/ScheduledJobsInsightsCms/Retention` by default).
 For every job it shows the declared value and its rationale, what is actually in force and where that
 came from, how many executions are currently stored, and who last changed the setting.
 

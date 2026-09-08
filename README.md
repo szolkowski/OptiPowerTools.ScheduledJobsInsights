@@ -1,5 +1,7 @@
 # OptiPowerTools.ScheduledJobsInsights
 
+[![NuGet](https://img.shields.io/nuget/v/OptiPowerTools.ScheduledJobsInsights?logo=nuget&label=NuGet)](https://www.nuget.org/packages/OptiPowerTools.ScheduledJobsInsights)
+[![Downloads](https://img.shields.io/nuget/dt/OptiPowerTools.ScheduledJobsInsights?logo=nuget&label=downloads)](https://www.nuget.org/packages/OptiPowerTools.ScheduledJobsInsights)
 [![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=szolkowski_OptiPowerTools.ScheduledJobsInsights&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=szolkowski_OptiPowerTools.ScheduledJobsInsights)
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=szolkowski_OptiPowerTools.ScheduledJobsInsights&metric=coverage)](https://sonarcloud.io/summary/new_code?id=szolkowski_OptiPowerTools.ScheduledJobsInsights)
 [![Bugs](https://sonarcloud.io/api/project_badges/measure?project=szolkowski_OptiPowerTools.ScheduledJobsInsights&metric=bugs)](https://sonarcloud.io/summary/new_code?id=szolkowski_OptiPowerTools.ScheduledJobsInsights)

@@ -55,8 +55,14 @@ dotnet add package OptiPowerTools.ScheduledJobsInsights
 
 ### Package sources
 
-The package itself is on nuget.org, but its Optimizely dependencies are not — they come from
-Optimizely's own feed, which any CMS project already has configured:
+The package is published to both feeds a CMS project already uses, so `dotnet add package` resolves
+it either way:
+
+- [nuget.org](https://www.nuget.org/packages/OptiPowerTools.ScheduledJobsInsights)
+- [Optimizely's feed](https://nuget.optimizely.com/packages/optipowertools.scheduledjobsinsights)
+
+Its Optimizely dependencies come only from the latter, which any CMS project has configured
+already — so that source is required regardless of where this package itself is resolved from:
 
 ```xml
 <add key="Optimizely" value="https://api.nuget.optimizely.com/v3/index.json" />
@@ -684,7 +690,8 @@ promises is worth stating precisely, because the public surface here is delibera
   `[EditorBrowsable(Never)]`; render them through the package's own route, not directly.
 - The exact text of log messages, result messages and rendered markup.
 
-Released versions are listed in the [changelog](CHANGELOG.md).
+Released versions, with their notes and the migration script for each, are on the
+[releases page](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/releases).
 
 
 ## Compatibility

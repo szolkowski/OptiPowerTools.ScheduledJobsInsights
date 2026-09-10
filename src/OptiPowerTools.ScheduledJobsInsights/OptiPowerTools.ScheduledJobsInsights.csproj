@@ -45,14 +45,21 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
     <EnablePackageValidation>true</EnablePackageValidation>
-    <!-- Arm this in the first commit AFTER 1.0.0 is published, not in the commit that tags it.
-         The baseline is a package that has to be downloadable: with 1.0.0 unpublished, the property
-         either fails to restore or, worse and observed on this machine, silently resolves a
-         stale 1.0.0 left in the local NuGet cache by an old local `dotnet pack`, and reports API
-         errors against a surface nobody ever shipped.
-         Until then, PublicSurfaceTests pins the exported surface instead, and it keeps doing so
-         afterwards without needing a baseline package at all. -->
-    <!-- <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion> -->
+    <!-- Armed 2026-09-10, the first commit after 1.0.0 published (2026-09-09) — not in the commit
+         that tagged it, because the baseline has to be a downloadable package and the release that
+         establishes one has nothing to compare against. Every pack now resolves that package and
+         compares the packed API surface against it, failing on a breaking change.
+         Bump this to the previous released version at each release. publish.yml fails any release
+         past 1.0.0 whose csproj has no baseline set, because forgetting it is otherwise silent: the
+         pack simply performs no comparison and nobody finds out until a consumer's build breaks.
+         If it ever reports errors against a surface nobody shipped, suspect the local NuGet cache —
+         a stale build of this id+version left there by an old local `dotnet pack` resolves ahead of
+         the feed. Check ~/.nuget/packages/<id>/<version>/.nupkg.metadata, whose `source` should be
+         nuget.org; local packs carry a `-local` suffix (see PackageVersion above) precisely so they
+         cannot shadow a real one.
+         PublicSurfaceTests still pins the exported type list, and keeps doing so without needing a
+         baseline package at all. -->
+    <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <ItemGroup>

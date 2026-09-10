@@ -75,9 +75,12 @@ implementation types (`JobExecutionWriter`, `JobLogBackgroundWriter`, `CleanupRe
 controller/menu provider/cleanup job (all forced public by Optimizely discovery), the three Razor
 pages and `AccordionSection`, and the extension methods are `public` — **22 exported types, pinned by
 `PublicSurfaceTests`** rather than by reading the XML docs, which include internal members and
-overstate it. That test is the guard until `PackageValidationBaselineVersion` can be armed, which
-cannot happen until 1.0.0 is published (there is nothing to compare against on the release that
-establishes the baseline); `publish.yml` fails any later release whose csproj has no baseline set.
+overstate it. That test was the only guard on 1.0.0 itself, because
+`PackageValidationBaselineVersion` has nothing to compare against on the release that establishes the
+baseline. **1.0.0 is published (2026-09-09), so the baseline can and must now be armed** — set it to
+`1.0.0` in the csproj, where it currently sits commented out. `publish.yml` fails any release past
+1.0.0 whose csproj has no baseline, so forgetting is loud rather than silent; the test keeps covering
+the same ground locally, without needing to download a baseline package.
 Keep new additions to that surface fully documented, or make them `internal` instead (the test project has `InternalsVisibleTo` access to
 everything). Razor components are generated as public types, so their `[Parameter]` properties need
 doc comments too. The EF migration classes are `internal` on purpose: EF discovers them through
@@ -153,8 +156,9 @@ section. Three things about it are deliberate:
    It used to live on `IJobExecutionWriter`, which was the wrong home for a rendering-policy value —
    it was there only because derived jobs forwarded a fixed pair of arguments to `base`, leaving the
    writer as the sole DI-resolved collaborator the base class held. `JobLoggingContext` removed that
-   constraint before 1.0 froze it (see `PRE-1.0-REVIEW.md`, API-1/API-2). A non-positive configured
-   value falls back to `JobResultSummary.DefaultMaxLength` rather than throwing.
+   constraint before 1.0 froze it (this was API-1/API-2 of the pre-1.0 review, a working document no
+   longer in the repository). A non-positive configured value falls back to
+   `JobResultSummary.DefaultMaxLength` rather than throwing.
 
 Job name resolution (`IScheduledJobRepository.Get(ScheduledJobId)`) is wrapped in try/catch with a
 fallback to `GetType().Name` — this is deliberate, not just defensive: it's what makes the class

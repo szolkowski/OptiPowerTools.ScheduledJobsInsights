@@ -44,6 +44,9 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
     /// <exception cref="ArgumentNullException"><paramref name="context"/> is <c>null</c>.</exception>
     protected LoggedScheduledJobBase(JobLoggingContext context)
     {
+        // Keep this free of side effects. CMS 12 constructs every registered job at startup, outside
+        // any execution, just to read IsStoppable (DefaultScheduledJobScanner.GetIsStoppable), so
+        // anything done here runs once per job on every boot.
         ArgumentNullException.ThrowIfNull(context);
 
         _context = context;

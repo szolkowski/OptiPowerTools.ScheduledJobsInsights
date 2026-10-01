@@ -23,7 +23,12 @@ namespace OptiPowerTools.ScheduledJobsInsights.Jobs;
 /// indefinite are skipped entirely. Everything else is deleted in batches so no single transaction
 /// holds locks for long.
 /// </remarks>
+// CMS 12 has no [ScheduledJob]; its equivalent takes the same properties.
+#if CMS12
+[EPiServer.PlugIn.ScheduledPlugIn(
+#else
 [ScheduledJob(
+#endif
     DisplayName = "Scheduled Jobs Insights - Log Cleanup",
     Description = "Removes job execution logs once they pass the retention configured for their job.",
     IntervalType = ScheduledIntervalType.Days,

@@ -16,6 +16,10 @@
     // back only when there isn't one.
     var scopedCssName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
         ?? HostEnvironment.ApplicationName;
+
+    // This package's own static web assets are served under _content/{PackageId}, and the CMS 12
+    // build ships under a different package id - so the path comes from the build, not a literal.
+    var assetBase = OptiPowerTools.ScheduledJobsInsights.Cms.PackageAssets.BasePath;
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -48,7 +52,7 @@
        asp-append-version on both: an upgraded package otherwise serves whatever CSS the browser
        cached from the previous version, which is a support call that looks like a rendering bug. *@
     <link rel="stylesheet" href="@Url.Content($"~/{scopedCssName}.styles.css")" asp-append-version="true" />
-    <link rel="stylesheet" href="~/_content/OptiPowerTools.ScheduledJobsInsights/css/scheduled-jobs-insights.css" asp-append-version="true" />
+    <link rel="stylesheet" href="@Url.Content($"~/{assetBase}/css/scheduled-jobs-insights.css")" asp-append-version="true" />
 
     @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in the
        document head, before the components below are rendered on any subsequent request, and the
@@ -66,7 +70,7 @@
        'unsafe-inline', which is the ordinary case for a CMS back office — and the failure is silent,
        leaving every reader permanently on UTC. asp-append-version for the same cache-busting reason as
        the stylesheets above. *@
-    <script src="~/_content/OptiPowerTools.ScheduledJobsInsights/js/timezone.js" asp-append-version="true" defer></script>
+    <script src="@Url.Content($"~/{assetBase}/js/timezone.js")" asp-append-version="true" defer></script>
 </head>
 <body>
     @* platform-navigation advertises an antiforgery header name on this page for the shell's client

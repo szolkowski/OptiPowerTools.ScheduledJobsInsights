@@ -13,7 +13,11 @@ public class CmsAdminUrlsTests
         var url = CmsAdminUrls.ScheduledJobDetail(Guid.Parse("204B5F36-719B-4A02-8A5C-4C855907DAD9"));
 
         Assert.Equal(
+#if CMS12
+            "/EPiServer/EPiServer.Cms.UI.Admin/default#/ScheduledJobs/detailScheduledJob/204b5f36-719b-4a02-8a5c-4c855907dad9",
+#else
             "/Optimizely/Settings/default#/ScheduledJobs/detailScheduledJob/204b5f36-719b-4a02-8a5c-4c855907dad9",
+#endif
             url);
     }
 

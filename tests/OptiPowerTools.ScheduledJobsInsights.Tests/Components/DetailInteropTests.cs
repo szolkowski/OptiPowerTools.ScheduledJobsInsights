@@ -20,7 +20,15 @@ namespace OptiPowerTools.ScheduledJobsInsights.Tests.Components;
 public class DetailInteropTests : ComponentTestBase
 {
     /// <summary>Must match the import in Detail.razor exactly; strict mode is what enforces that.</summary>
+    /// <remarks>
+    /// A literal per package rather than one built from <c>PackageAssets.BasePath</c>: deriving it from
+    /// the constant the page uses would let a wrong base path pass here and 404 in the browser.
+    /// </remarks>
+#if CMS12
+    private const string ModuleUrl = "./_content/OptiPowerTools.ScheduledJobsInsights.Cms12/js/detail-interop.js";
+#else
     private const string ModuleUrl = "./_content/OptiPowerTools.ScheduledJobsInsights/js/detail-interop.js";
+#endif
 
     private readonly BunitJSModuleInterop _module;
 

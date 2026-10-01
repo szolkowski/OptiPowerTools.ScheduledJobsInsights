@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJob
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJobsInsights.Cms12.Tests", "tests\OptiPowerTools.ScheduledJobsInsights.Cms12.Tests\OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj", "{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJobsInsights.Cms12.Web", "src\OptiPowerTools.ScheduledJobsInsights.Cms12.Web\OptiPowerTools.ScheduledJobsInsights.Cms12.Web.csproj", "{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -45,6 +47,10 @@ Global
 		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -55,5 +61,6 @@ Global
 		{F0A1E046-D2BC-453A-99E8-D17AA3753B66} = {8B60361B-7880-40CB-B425-5AC6EF0C269C}
 		{16C58D63-FA40-4334-8FA2-145070E8B0C8} = {58D2BD81-F3D4-43C4-A4AC-B4FE9E017E58}
 		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8} = {8B60361B-7880-40CB-B425-5AC6EF0C269C}
+		{F1D8B4B5-D9DD-4186-9751-BF0C7D36877B} = {58D2BD81-F3D4-43C4-A4AC-B4FE9E017E58}
 	EndGlobalSection
 EndGlobal

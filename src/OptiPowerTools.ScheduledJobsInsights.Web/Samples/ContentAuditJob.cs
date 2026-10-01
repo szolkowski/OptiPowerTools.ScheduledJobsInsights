@@ -14,7 +14,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// execution through <c>ActivatorUtilities.GetServiceOrCreateInstance</c>, so any registered service
 /// can be injected; only the context has to be forwarded to <c>base</c>.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Content Audit", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Content Audit", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class ContentAuditJob : LoggedScheduledJobBase
 {
     private readonly IContentLoader _contentLoader;

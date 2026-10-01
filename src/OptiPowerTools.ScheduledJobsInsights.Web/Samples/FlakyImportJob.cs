@@ -17,7 +17,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// before the exception — <see cref="LoggedScheduledJobBase.Execute"/> persists it on the way out of
 /// both branches. Run it twice to compare the two.
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Flaky Import", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Flaky Import", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class FlakyImportJob : LoggedScheduledJobBase
 {
     private static int _runCount;

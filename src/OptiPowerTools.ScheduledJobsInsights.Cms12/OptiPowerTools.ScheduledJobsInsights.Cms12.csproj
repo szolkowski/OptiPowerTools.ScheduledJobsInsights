@@ -35,7 +35,12 @@
   <ItemGroup>
     <Compile Include="$(SharedSource)**\*.cs" Exclude="$(SharedSourceExcludes)" Link="%(RecursiveDir)%(Filename)%(Extension)" />
     <Content Include="$(SharedSource)**\*.razor;$(SharedSource)**\*.razor.css;$(SharedSource)**\*.cshtml" Exclude="$(SharedSourceExcludes)" Link="%(RecursiveDir)%(Filename)%(Extension)" />
-    <Content Include="$(SharedSource)wwwroot\**" Exclude="$(SharedSourceExcludes)" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- ContentRoot: where the files physically are. Static web asset discovery otherwise assumes
+         this project's own wwwroot\, which does not exist here; the packed package is unaffected
+         (it packs each file by its path), but a host referencing this project serves _content/ from
+         that ContentRoot at development time, and fails to start with DirectoryNotFoundException
+         when it is missing. -->
+    <Content Include="$(SharedSource)wwwroot\**" Exclude="$(SharedSourceExcludes)" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" ContentRoot="$(SharedSource)wwwroot\" />
   </ItemGroup>
 
   <ItemGroup>

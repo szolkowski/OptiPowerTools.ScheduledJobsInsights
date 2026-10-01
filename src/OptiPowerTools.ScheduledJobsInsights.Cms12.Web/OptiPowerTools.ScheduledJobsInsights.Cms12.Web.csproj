@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- The CMS 12 dev host: Optimizely's Alloy MVC template (`dotnet new epi-alloy-mvc`, from
+       EPiServer.Templates 1.7.2) upgraded to the latest CMS 12 on net10.0, with the CMS 12 package and
+       the shared sample jobs wired in. The CMS 13 equivalent is OptiPowerTools.ScheduledJobsInsights.Web
+       plus the Alloy submodule; this one is self-contained, so it needs no submodule.
+       App_Data/ is gitignored. Docker/cms12-fetch-site-content.sh puts the Alloy content there. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <!-- Template code, kept as generated. -->
+    <Nullable>disable</Nullable>
+
+    <!-- Pulls in Microsoft.AspNetCore.App.Internal.Assets, which supplies _framework/blazor.server.js.
+         The Web SDK only turns this on by itself when the project contains .razor Content items;
+         ours all live in the package, so without this the script 404s and the UI never becomes
+         interactive. Every consuming application has to set it in its own project file. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+
+    <SharedSamples>$(MSBuildThisFileDirectory)..\OptiPowerTools.ScheduledJobsInsights.Web\Samples\</SharedSamples>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="EPiServer" />
+    <Using Include="EPiServer.Core" />
+    <Using Include="EPiServer.DataAbstraction" />
+    <Using Include="EPiServer.DataAnnotations" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The sample jobs are shared with the CMS 13 dev host rather than copied. They are written
+         against CMS 13's [ScheduledJob]; CMS 12 names the same attribute ScheduledPlugIn, and this
+         alias lets the shared files compile unchanged. CMS12 also switches SampleDefaults.Enabled. -->
+    <Compile Include="$(SharedSamples)*.cs" Link="Samples\%(Filename)%(Extension)" />
+    <Using Include="EPiServer.PlugIn.ScheduledPlugInAttribute" Alias="ScheduledJobAttribute" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);CMS12</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EPiServer.CMS" Version="12.34.8" />
+    <PackageReference Include="Wangkanai.Detection" Version="8.7.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OptiPowerTools.ScheduledJobsInsights.Cms12\OptiPowerTools.ScheduledJobsInsights.Cms12.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Translations\**\*" />
+  </ItemGroup>
+
+</Project>

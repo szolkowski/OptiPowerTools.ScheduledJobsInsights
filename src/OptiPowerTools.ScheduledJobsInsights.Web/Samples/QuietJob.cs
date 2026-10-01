@@ -11,7 +11,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// like after simply changing its base class. It is also the only sample that exercises the detail
 /// page's "No log lines recorded." empty state.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Quiet", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Quiet", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class QuietJob : LoggedScheduledJobBase
 {
     public QuietJob(JobLoggingContext context)

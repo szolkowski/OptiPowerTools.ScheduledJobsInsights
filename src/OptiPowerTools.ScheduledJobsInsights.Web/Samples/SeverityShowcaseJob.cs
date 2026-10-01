@@ -10,7 +10,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// single execution renders the complete colour and label set the console log viewer can produce.
 /// Useful when changing <c>LogSeverityStyles</c>, which is the only place severity becomes a colour.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Severity Showcase", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Severity Showcase", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class SeverityShowcaseJob : LoggedScheduledJobBase
 {
     public SeverityShowcaseJob(JobLoggingContext context)

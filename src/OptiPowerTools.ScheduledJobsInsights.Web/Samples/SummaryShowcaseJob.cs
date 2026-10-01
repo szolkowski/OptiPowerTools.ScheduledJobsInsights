@@ -23,7 +23,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// once at the end, would show nothing until the job finished.
 /// </para>
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Summary Showcase", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Summary Showcase", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class SummaryShowcaseJob : LoggedScheduledJobBase
 {
     private const int Batches = 12;

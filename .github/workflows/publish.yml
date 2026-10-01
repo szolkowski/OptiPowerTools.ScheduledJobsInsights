@@ -4,6 +4,12 @@ name: Publish NuGet
 # only what a local `dotnet pack` produces, and shipping that by accident is how v1.0.0 would have
 # published a package stamped 0.9.5.
 #
+# Two packages publish from this one workflow, told apart by the tag: `v1.2.3` releases
+# OptiPowerTools.ScheduledJobsInsights (CMS 13), `cms12-v1.2.3` releases
+# OptiPowerTools.ScheduledJobsInsights.Cms12. One file rather than two near-copies, so the guards
+# below cannot drift apart between the packages, and because nuget.org's trusted publishing policy
+# names the workflow file: a second file would need a second policy.
+#
 # A dry run (Actions → Publish NuGet → Run workflow) does everything except the two irreversible
 # steps. It exists because nuget.org packages cannot be deleted — only unlisted — so the first real
 # tag should not also be the first test of this pipeline. The OIDC exchange *is* exercised: getting a
@@ -11,17 +17,21 @@ name: Publish NuGet
 # permission are all correct, which is the only part that cannot be checked locally.
 on:
   push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*', 'cms12-v[0-9]+.[0-9]+.[0-9]+*']
   workflow_dispatch:
     inputs:
+      package:
+        description: 'Package to build (dry run only)'
+        required: true
+        type: choice
+        options: [cms13, cms12]
+        default: cms13
       version:
         description: 'Version to build (dry run only, e.g. 1.0.0-rc.1)'
         required: true
         default: '1.0.0-rc.1'
 
 env:
-  PROJECT: src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
-  TESTS: tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj
   MSSQL_SA_PASSWORD: Episerver123!
   SQLSERVER_IMAGE: mcr.microsoft.com/mssql/server:2022-latest
 
@@ -83,21 +93,53 @@ jobs:
       # script text. inputs.version is supplied by whoever dispatches the workflow, and expanding it
       # inline would let them close the quote and run their own commands — in a job holding an OIDC
       # identity that can publish to nuget.org.
-      - name: Resolve version
+      - name: Resolve package and version
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_PACKAGE: ${{ inputs.package }}
           INPUT_VERSION: ${{ inputs.version }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PACKAGE="$INPUT_PACKAGE"
             VERSION="$INPUT_VERSION"
             echo "dry_run=true" >> "$GITHUB_OUTPUT"
           else
-            VERSION="${REF_NAME#v}"
+            # Longest prefix first: a cms12- tag must never be read as a v tag.
+            case "$REF_NAME" in
+              cms12-v*) PACKAGE=cms12; VERSION="${REF_NAME#cms12-v}" ;;
+              v*)       PACKAGE=cms13; VERSION="${REF_NAME#v}" ;;
+              *) echo "::error::Tag '$REF_NAME' names no package (expected v* or cms12-v*)."; exit 1 ;;
+            esac
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
+
+          # Everything that differs between the two packages, decided once here. Unknown values stop
+          # the run, which is also what keeps INPUT_PACKAGE from reaching a shell anywhere below.
+          case "$PACKAGE" in
+            cms13)
+              {
+                echo "project=src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj"
+                echo "tests=tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj"
+                echo "readme=README.md"
+                echo "script_name=scheduled-jobs-insights"
+                echo "tag_prefix=v"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            cms12)
+              {
+                echo "project=src/OptiPowerTools.ScheduledJobsInsights.Cms12/OptiPowerTools.ScheduledJobsInsights.Cms12.csproj"
+                echo "tests=tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj"
+                echo "readme=README.md"
+                echo "script_name=scheduled-jobs-insights-cms12"
+                echo "tag_prefix=cms12-v"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::'$PACKAGE' is not a package (expected cms13 or cms12)."; exit 1 ;;
+          esac
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
           # Also the gate that makes the value safe downstream: everything after this point is known
           # to match SemVer, so it cannot carry shell metacharacters.
@@ -117,12 +159,14 @@ jobs:
             echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "Version $VERSION"
+          echo "Package $PACKAGE, version $VERSION"
 
       # A tag can point at any commit, including one that never passed CI — build.yml runs on
       # pushes and pull requests to main, not on tags. Gating here is what stops a red build
       # reaching a feed that cannot be unpublished.
       - name: Test
+        env:
+          TESTS: ${{ steps.version.outputs.tests }}
         run: dotnet test "$TESTS" -c Release
 
       # The API-compatibility baseline cannot be armed until there is a published release to compare
@@ -132,11 +176,12 @@ jobs:
       - name: Require an API baseline for post-1.0.0 releases
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          PROJECT_FILE: src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
+          PROJECT_FILE: ${{ steps.version.outputs.project }}
         run: |
           set -euo pipefail
 
-          # Only the 1.0.0 line is exempt, prereleases of it included.
+          # Only the 1.0.0 line is exempt, prereleases of it included - for each package, since each
+          # establishes its own baseline with its first release.
           case "$VERSION" in
             1.0.0|1.0.0-*)
               echo "Version $VERSION establishes the baseline; no comparison possible yet."
@@ -163,6 +208,8 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           REPO: ${{ github.repository }}
+          # The file the chosen package packs as its README.
+          README: ${{ steps.version.outputs.readme }}
         run: |
           set -euo pipefail
           RAW="https://raw.githubusercontent.com/$REPO/$TAG"
@@ -170,15 +217,15 @@ jobs:
 
           # GNU sed, so bare -i is correct (on BSD/macOS it would need an explicit ''). Verified by
           # running these three substitutions against the real README before this was committed.
-          sed -i "s|](images/|]($RAW/images/|g" README.md
-          sed -i "s|](LICENSE.txt)|]($BLOB/LICENSE.txt)|g" README.md
-          sed -i "s|](CONTRIBUTING.md)|]($BLOB/CONTRIBUTING.md)|g" README.md
-          sed -i "s|](CHANGELOG.md)|]($BLOB/CHANGELOG.md)|g" README.md
-          sed -i "s|](CODE_OF_CONDUCT.md)|]($BLOB/CODE_OF_CONDUCT.md)|g" README.md
-          sed -i "s|](SECURITY.md)|]($BLOB/SECURITY.md)|g" README.md
+          sed -i "s|](images/|]($RAW/images/|g" "$README"
+          sed -i "s|](LICENSE.txt)|]($BLOB/LICENSE.txt)|g" "$README"
+          sed -i "s|](CONTRIBUTING.md)|]($BLOB/CONTRIBUTING.md)|g" "$README"
+          sed -i "s|](CHANGELOG.md)|]($BLOB/CHANGELOG.md)|g" "$README"
+          sed -i "s|](CODE_OF_CONDUCT.md)|]($BLOB/CODE_OF_CONDUCT.md)|g" "$README"
+          sed -i "s|](SECURITY.md)|]($BLOB/SECURITY.md)|g" "$README"
 
           echo "Rewritten link targets:"
-          grep -nE "!\[|\]\(https://github.com/$REPO/blob/" README.md || true
+          grep -nE "!\[|\]\(https://github.com/$REPO/blob/" "$README" || true
 
           # Fail loudly rather than shipping a page with a broken image on it.
           #
@@ -186,7 +233,7 @@ jobs:
           # is relative, and relative resolves to nothing on nuget.org. Listing the known filenames
           # instead — as this did — silently stopped covering the page the moment somebody linked a
           # file nobody had thought to add to the list.
-          if grep -nP '\]\((?!https?://|#|mailto:)' README.md; then
+          if grep -nP '\]\((?!https?://|#|mailto:)' "$README"; then
             echo "::error::The links printed above are relative and would render broken on nuget.org. Add a rewrite rule for them in this step."
             exit 1
           fi
@@ -194,6 +241,7 @@ jobs:
       - name: Pack
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          PROJECT: ${{ steps.version.outputs.project }}
         run: dotnet pack "$PROJECT" -c Release -o ./nupkg -p:Version="$VERSION"
 
       # Shipped for hosts that set AutoMigrateDatabase=false, whose app-pool identity often lacks
@@ -201,6 +249,8 @@ jobs:
       - name: Generate idempotent migration script
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          PROJECT: ${{ steps.version.outputs.project }}
+          SCRIPT_NAME: ${{ steps.version.outputs.script_name }}
         run: |
           set -euo pipefail
           # A globally installed tool is not on PATH in a fresh shell; without this `dotnet ef` below
@@ -210,7 +260,7 @@ jobs:
           # between two runs of the same tag.
           dotnet tool install --global dotnet-ef --version 10.0.2
 
-          SCRIPT="./nupkg/scheduled-jobs-insights-$VERSION.sql"
+          SCRIPT="./nupkg/$SCRIPT_NAME-$VERSION.sql"
           dotnet ef migrations script --idempotent \
             --project "$PROJECT" \
             --context OptiPowerTools.ScheduledJobsInsights.Data.ScheduledJobsInsightsDbContext \
@@ -227,9 +277,10 @@ jobs:
       - name: Verify the shipped script applies
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          SCRIPT_NAME: ${{ steps.version.outputs.script_name }}
         run: |
           set -euo pipefail
-          SCRIPT="./nupkg/scheduled-jobs-insights-$VERSION.sql"
+          SCRIPT="./nupkg/$SCRIPT_NAME-$VERSION.sql"
 
           cid=$(docker ps --filter "ancestor=$SQLSERVER_IMAGE" --format '{{.ID}}' | head -1)
           if [ -z "$cid" ]; then
@@ -277,10 +328,11 @@ jobs:
         if: steps.version.outputs.dry_run == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: ${{ steps.version.outputs.package }}
         run: |
           echo "### Dry run passed :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Version \`$VERSION\` packed, the migration script verified against SQL Server, and a short-lived NuGet key obtained over OIDC." >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$PACKAGE\` version \`$VERSION\` packed, the migration script verified against SQL Server, and a short-lived NuGet key obtained over OIDC." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Nothing was pushed. Tag the commit to publish for real." >> "$GITHUB_STEP_SUMMARY"
           ls -la ./nupkg
@@ -301,12 +353,40 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ github.ref_name }}
+          PACKAGE: ${{ steps.version.outputs.package }}
+          TAG_PREFIX: ${{ steps.version.outputs.tag_prefix }}
         run: |
           set -euo pipefail
           PRERELEASE=""
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE="--prerelease"
           fi
+
+          # The repository's "Latest" release stays the CMS 13 package's. GitHub otherwise marks
+          # whichever release was created last, so every CMS 12 patch would take the badge.
+          LATEST="--latest"
+          [ "$PACKAGE" = "cms12" ] && LATEST="--latest=false"
+
+          # Notes run from the previous release of the *same* package. Left to itself, --generate-notes
+          # starts at the previous release of either package, so a CMS 12 patch would list everything
+          # since the last CMS 13 release instead. A final release skips prereleases of its own line,
+          # whose notes it already supersedes - tested after the prefix is stripped, because cms12-v
+          # itself contains a hyphen. The checkout is shallow, so the tags come from the remote.
+          PREVIOUS="$(git ls-remote --tags --refs origin "refs/tags/${TAG_PREFIX}[0-9]*" \
+            | sed 's|.*refs/tags/||' \
+            | grep -vxF "$TAG" \
+            | sed "s|^${TAG_PREFIX}||" \
+            | { if [[ "$VERSION" == *-* ]]; then cat; else grep -v -e '-'; fi; } \
+            | { cat; echo "$VERSION"; } \
+            | sort -V | grep -B1 -xF "$VERSION" | head -1 \
+            | grep -vxF "$VERSION" || true)"
+          if [ -n "$PREVIOUS" ]; then
+            NOTES=(--generate-notes --notes-start-tag "${TAG_PREFIX}${PREVIOUS}")
+          else
+            # The first release of a package: there is no earlier tag of its own to start from.
+            NOTES=(--notes "First release of this package.")
+          fi
+          echo "Release notes: ${NOTES[*]}"
           # Idempotent, so re-running a publish that failed after the push is not a red step. The push
           # above already tolerates a duplicate (--skip-duplicate); this is the same reasoning applied
           # to the release, which otherwise errors because the tag already has one.
@@ -323,6 +403,7 @@ jobs:
               ./nupkg/*.snupkg \
               ./nupkg/*.sql \
               --title "$TAG" \
-              --generate-notes \
+              "${NOTES[@]}" \
+              $LATEST \
               $PRERELEASE
           fi

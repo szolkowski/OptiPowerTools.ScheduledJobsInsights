@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <!-- The CMS 12 package. It has almost no source of its own: it compiles the CMS 13 project's tree,
+       linked below, with CMS12 defined. Code that differs between the two CMS versions sits behind
+       #if CMS12 in the shared files; the one file that cannot be shared that way is the hosting view,
+       whose CMS 12 copy lives in this project's Views/ folder. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>$(DefineConstants);CMS12</DefineConstants>
+
+    <!-- Load-bearing. Razor derives component namespaces from the root namespace, so without this the
+         components would compile into OptiPowerTools.ScheduledJobsInsights.Cms12.Components.* - the
+         shared .razor files would stop compiling, and a site moving from this package to the CMS 13
+         one would find every type in a different namespace. -->
+    <RootNamespace>OptiPowerTools.ScheduledJobsInsights</RootNamespace>
+
+    <!-- NuGet Package Metadata. What both packages share lives in ../Package.props. -->
+    <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
+         value here is only what a local `dotnet pack` produces. Major.minor tracks the CMS 13 package:
+         the same major.minor means the same features. -->
+    <Version>1.0.0</Version>
+    <Title>OptiPowerTools: ScheduledJobsInsights for CMS 12</Title>
+    <Description>Execution history for native Optimizely CMS 12 scheduled jobs (for CMS 13, use OptiPowerTools.ScheduledJobsInsights). Swap ScheduledJobBase for LoggedScheduledJobBase and every run is recorded: OnStatusChanged messages, the return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts). Stored in EF Core-backed SQL tables and browsable in a Blazor UI embedded in the CMS admin, with an automatic retention cleanup job. Never alters your jobs' success/failure semantics, and an unreachable insights database costs you the history of a run rather than the run itself.</Description>
+
+    <PackageId>OptiPowerTools.ScheduledJobsInsights.Cms12</PackageId>
+
+    <!-- No PackageValidationBaselineVersion yet: the first release establishes it, as 1.0.0 did for
+         the CMS 13 package. Arm it in the first commit after that release is published. -->
+
+    <SharedSource>$(MSBuildThisFileDirectory)..\OptiPowerTools.ScheduledJobsInsights\</SharedSource>
+    <SharedSourceExcludes>$(SharedSource)obj\**;$(SharedSource)bin\**;$(SharedSource)*.csproj;$(SharedSource)Views\ScheduledJobsInsightsCms\Shell.cshtml</SharedSourceExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(SharedSource)**\*.cs" Exclude="$(SharedSourceExcludes)" Link="%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="$(SharedSource)**\*.razor;$(SharedSource)**\*.razor.css;$(SharedSource)**\*.cshtml" Exclude="$(SharedSourceExcludes)" Link="%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="$(SharedSource)wwwroot\**" Exclude="$(SharedSourceExcludes)" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OptiPowerTools.ScheduledJobsInsights.Cms12.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- EPiServer.CMS.AspNetCore versions separately from the UI packages on CMS 12 (12.24.x against
+         12.34.x); on CMS 13 the two lines are aligned. -->
+    <PackageReference Include="EPiServer.CMS.AspNetCore" Version="[12.24.3,13.0.0)" />
+    <PackageReference Include="EPiServer.CMS.UI.Core" Version="[12.34.8,13.0.0)" />
+  </ItemGroup>
+
+  <!-- Last, after <Version>: Package.props derives PackageVersion from it. -->
+  <Import Project="..\Package.props" />
+
+</Project>

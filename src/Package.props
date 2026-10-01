@@ -1,0 +1,81 @@
+<Project>
+
+  <!-- Everything the CMS 13 and CMS 12 packages share: metadata, build settings and the dependencies
+       that are not tied to a CMS version. Each packable csproj imports this at its end, after its own
+       PropertyGroup, because PackageVersion below is derived from the project's <Version> and an
+       import evaluated before it would see an empty one.
+
+       What stays in each csproj is what differs between the two packages (PackageId, Title,
+       Description, the EPiServer references) and what the workflows read out of the project file
+       with grep (<Version>, <PackageValidationBaselineVersion>). -->
+
+  <PropertyGroup>
+    <!-- A local `dotnet pack` must not produce a package claiming a real version string. NuGet keys
+         its global cache on id+version and never re-checks, so a local build that lands there under a
+         published version is restored forever on that machine while CI restores the real one: the same
+         version resolving to different assemblies on different machines, with a CS1061 that points
+         nowhere near the cause. Reported from a consuming site, where a cached local build shadowed the
+         published 1.0.0-rc.2.
+         CI sets CI=true, and the publish workflow passes -p:Version explicitly, so releases are
+         unaffected. Pass -p:PackRealVersion=true to opt out deliberately. -->
+    <PackageVersion Condition="'$(CI)' != 'true' AND '$(PackRealVersion)' != 'true'">$(Version)-local</PackageVersion>
+    <Authors>Stanisław Szołkowski</Authors>
+    <Copyright>Stanisław Szołkowski 2026</Copyright>
+    <PackageTags>Optimizely;CMS;Blazor;EPiServer;Admin;UI;ScheduledJobs;Logging;Metrics;EntityFrameworkCore</PackageTags>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- The file packed as README.md. A project may point this elsewhere before importing. -->
+    <PackageReadmeSource Condition="'$(PackageReadmeSource)' == ''">$(MSBuildThisFileDirectory)..\README.md</PackageReadmeSource>
+    <PackageProjectUrl>https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights</PackageProjectUrl>
+    <!-- MIT: nothing to accept, and the prompt is friction for no benefit. -->
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+    <RepositoryUrl>https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- SourceLink & deterministic builds. Without the symbol package the SourceLink settings buy a
+         consumer nothing: there is no PDB on the feed for a debugger to resolve sources against. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <EnablePackageValidation>true</EnablePackageValidation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Each package also grants its own test project (in its csproj). This one is for NSubstitute,
+         which emits proxies for the internal interfaces into Castle's dynamic assembly. -->
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.400" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One EF Core version for both packages: they share the migrations, and the upgrade path from
+         the CMS 12 package to the CMS 13 one depends on both generating the same schema. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The 256px rendition, not the 1024px source. nuget.org displays the icon at 128px, and the
+         original was 236 KB of a 386 KB package — 61% of what every consumer downloads, to show an
+         image at an eighth of its resolution. 256 keeps it crisp on a high-DPI display at ~30 KB.
+         images/icon.png stays as the source for anything else that needs it. -->
+    <None Include="$(MSBuildThisFileDirectory)..\images\icon-256.png" Pack="true" PackagePath="icon.png" />
+    <None Include="$(PackageReadmeSource)" Pack="true" PackagePath="README.md" />
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE.txt" Pack="true" PackagePath="LICENSE.txt" />
+  </ItemGroup>
+
+</Project>

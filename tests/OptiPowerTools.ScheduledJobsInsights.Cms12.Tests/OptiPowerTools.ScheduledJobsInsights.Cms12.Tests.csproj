@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs the CMS 13 test project's sources, linked below, against the CMS 12 build of the package.
+       Expectations that differ between the two builds sit behind #if CMS12 in the shared tests. -->
+  <Import Project="..\Tests.props" />
+
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);CMS12</DefineConstants>
+
+    <!-- The shared sources declare OptiPowerTools.ScheduledJobsInsights.Tests.* namespaces, so the
+         root namespace follows them. The assembly keeps its own name, which keeps the two runs apart
+         in test results and coverage reports; the package grants InternalsVisibleTo to it. -->
+    <RootNamespace>OptiPowerTools.ScheduledJobsInsights.Tests</RootNamespace>
+
+    <!-- EPiServer.CMS.Core 12 constrains Castle.Core to [4.4.1, 5.0); NSubstitute 6 needs 5.1.1, so
+         restore reports NU1608, which TreatWarningsAsErrors makes fatal. Measured harmless: the whole
+         suite, every substitute included, passes against Castle.Core 5.1.1. A consumer's CMS 12 test
+         project using NSubstitute meets the same warning. -->
+    <NoWarn>$(NoWarn);NU1608</NoWarn>
+
+    <SharedTests>$(MSBuildThisFileDirectory)..\OptiPowerTools.ScheduledJobsInsights.Tests\</SharedTests>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(SharedTests)**\*.cs" Exclude="$(SharedTests)obj\**;$(SharedTests)bin\**" Link="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OptiPowerTools.ScheduledJobsInsights.Cms12\OptiPowerTools.ScheduledJobsInsights.Cms12.csproj" />
+  </ItemGroup>
+
+</Project>

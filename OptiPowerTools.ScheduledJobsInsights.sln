@@ -15,6 +15,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJob
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "sub", "sub", "{7B654862-F942-4AF2-BFEB-123E25A4F0B0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJobsInsights.Cms12", "src\OptiPowerTools.ScheduledJobsInsights.Cms12\OptiPowerTools.ScheduledJobsInsights.Cms12.csproj", "{16C58D63-FA40-4334-8FA2-145070E8B0C8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptiPowerTools.ScheduledJobsInsights.Cms12.Tests", "tests\OptiPowerTools.ScheduledJobsInsights.Cms12.Tests\OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj", "{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +37,14 @@ Global
 		{F0A1E046-D2BC-453A-99E8-D17AA3753B66}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F0A1E046-D2BC-453A-99E8-D17AA3753B66}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F0A1E046-D2BC-453A-99E8-D17AA3753B66}.Release|Any CPU.Build.0 = Release|Any CPU
+		{16C58D63-FA40-4334-8FA2-145070E8B0C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{16C58D63-FA40-4334-8FA2-145070E8B0C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{16C58D63-FA40-4334-8FA2-145070E8B0C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{16C58D63-FA40-4334-8FA2-145070E8B0C8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -41,5 +53,7 @@ Global
 		{9B4C0726-9E54-4562-94EF-F10FCCE9E44F} = {58D2BD81-F3D4-43C4-A4AC-B4FE9E017E58}
 		{38251FCD-F5D4-4A26-B9C7-80131CC0AD9A} = {58D2BD81-F3D4-43C4-A4AC-B4FE9E017E58}
 		{F0A1E046-D2BC-453A-99E8-D17AA3753B66} = {8B60361B-7880-40CB-B425-5AC6EF0C269C}
+		{16C58D63-FA40-4334-8FA2-145070E8B0C8} = {58D2BD81-F3D4-43C4-A4AC-B4FE9E017E58}
+		{3FEB7EEC-5B84-4DFF-888A-49DC462ED4A8} = {8B60361B-7880-40CB-B425-5AC6EF0C269C}
 	EndGlobalSection
 EndGlobal

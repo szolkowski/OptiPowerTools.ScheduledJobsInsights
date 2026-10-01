@@ -1,6 +1,9 @@
 @model OptiPowerTools.ScheduledJobsInsights.Cms.ScheduledJobsInsightsPageModel
-@* The CMS 12 package has its own copy of this view (src/OptiPowerTools.ScheduledJobsInsights.Cms12/
-   Views/ScheduledJobsInsightsCms/Shell.cshtml), differing only in the shell chrome. Change both. *@
+@* The CMS 12 copy of src/OptiPowerTools.ScheduledJobsInsights/Views/ScheduledJobsInsightsCms/Shell.cshtml,
+   and the only file the CMS 12 package does not share with the CMS 13 one. It differs only where the
+   two shells do: CMS 12's EPiServer.Shell.UI has no episerver-resources or platform-navigation-wrapper
+   tag helper (either would render as a literal tag, with no build error), and CMS 13 removed the HTML
+   helpers used here instead. Keep every other line identical to the CMS 13 view. *@
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 @{
     Layout = string.Empty;
@@ -39,8 +42,8 @@
 
     @* Optimizely shell chrome + theme. The components render inside this document rather than in an
        iframe, so they inherit these styles instead of needing a stand-in stylesheet of their own. *@
-    <episerver-resources area="ShellCore" />
-    <episerver-resources area="ShellCoreLightTheme" />
+    @ClientResources.RenderResources("ShellCore")
+    @ClientResources.RenderResources("ShellCoreLightTheme")
 
     @* Razor scoped CSS (Index.razor.css / Detail.razor.css) is bundled into the *host* application's
        stylesheet, whose name follows the entry assembly - hence resolving it at runtime rather than
@@ -80,8 +83,8 @@
        this does too — otherwise any shell script that posts from here has no token to send. *@
     @Html.AntiForgeryToken()
 
-    <platform-navigation />
-    <platform-navigation-wrapper>
+    @Html.CreatePlatformNavigationMenu()
+    <div @Html.ApplyPlatformNavigation()>
         <div class="sji-content">
             @if (showRetention)
             {
@@ -96,7 +99,7 @@
                 <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" />
             }
         </div>
-    </platform-navigation-wrapper>
+    </div>
 
     <script src="~/_framework/blazor.server.js"></script>
 </body>

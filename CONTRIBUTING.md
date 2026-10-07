@@ -46,8 +46,28 @@ Thank you for your interest in contributing! This guide will help you get starte
   serves as one. Passing the `.Web` host instead **fails** — `Microsoft.EntityFrameworkCore.Design` is
   `PrivateAssets="All"` on the library, so it does not flow to a project referencing it.
 
+  Always against the CMS 13 project. The CMS 12 package compiles the same `Data/Migrations/`
+  folder, so a migration added there is in both packages — which is exactly what keeps a site's
+  history intact when it moves from one to the other.
+
+### Two packages, one source tree
+
+`src/OptiPowerTools.ScheduledJobsInsights` is the CMS 13 package. The CMS 12 package,
+`src/OptiPowerTools.ScheduledJobsInsights.Cms12`, has almost no source of its own: its csproj links
+every file of the CMS 13 project and defines `CMS12`. So a change made in the CMS 13 project is made in
+both, and has to build in both:
+
+- Where the two CMS versions genuinely differ, the shared file says so with `#if CMS12`.
+- The one file that cannot be shared that way is the hosting view, `Shell.cshtml`, whose CMS 12 copy
+  lives in the CMS 12 project. Change both — each points at the other.
+- The tests work the same way: `tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests` runs the CMS 13
+  test project's sources against the CMS 12 build. `dotnet test` from the repository root runs both.
+- Package metadata and dependency versions shared by the two live in `src/Package.props` and
+  `tests/Tests.props`.
+
 Full environment setup — Docker, the submodule, seeding Alloy content, the sample jobs — is under
-[Development environment](#development-environment) below.
+[Development environment](#development-environment) below, and for the CMS 12 dev site under
+[The CMS 12 dev site](#the-cms-12-dev-site).
 
 ## Code Style
 
@@ -105,6 +125,9 @@ The library and its tests build on their own — no submodule, Docker or databas
 ```bash
 dotnet build src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
 dotnet test tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj
+
+# The CMS 12 build of the same source
+dotnet test tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj
 ```
 
 Building the full solution additionally needs the submodule checked out:
@@ -215,11 +238,52 @@ and every state the two UI pages can render.
 | `SummaryShowcaseJob` | Writes long lines past the 100,000-character limit — exercises wrapping and the truncation notice — and checkpoints with `FlushSummary()` so the summary fills in live while the job runs. |
 | `BulkSummaryJob` | The volume case: ~2,000 short lines (~55 KB) that fit inside the limit, so the whole report survives. Exercises the summary pane's scrolling and the auto-collapse that keeps a report this long from burying the log. |
 
-All are disabled by default (`DefaultEnabled = false`); enable and trigger them manually from the CMS's Scheduled Jobs admin page.
+On CMS 13 all are disabled by default (`DefaultEnabled = false`); trigger them manually from the
+CMS's Scheduled Jobs admin page. Their `DefaultEnabled` comes from `Samples/SampleDefaults.cs`, because
+the CMS 12 dev site compiles the same files and needs it `true` — see below.
 
 > The Optimizely scheduler is disabled in Development by the Alloy site's own startup, so jobs never
 > fire on their interval in this dev host. Use **Start Manually** in the Scheduled Jobs admin page —
 > that still runs the job through `LoggedScheduledJobBase` and records the execution.
+
+### The CMS 12 dev site
+
+`src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web` is a self-contained CMS 12 site — Optimizely's
+Alloy template on CMS 12, with the CMS 12 package and the same sample jobs — and needs no submodule.
+It has a Docker stack of its own, separate from the CMS 13 one, so the two can run side by side:
+
+```bash
+cp .env.example .env                               # once; shared with the CMS 13 stack
+Docker/cms12-fetch-site-content.sh                 # once; the Alloy content
+docker compose -f docker-compose.cms12.yml up -d
+```
+
+The fetch script takes `DefaultSiteContent.episerverdata` out of Optimizely's `EPiServer.Templates`
+package on nuget.org, pinned and hash-checked, rather than it being committed. As on the CMS 13 side,
+Optimizely only imports it into an empty database; to import it later, run
+`docker compose -f docker-compose.cms12.yml down -v` and start again.
+
+| What | Where |
+| --- | --- |
+| Site | `http://localhost:5104` |
+| CMS back office | `http://localhost:5104/EPiServer/CMS/` |
+| First-run admin registration | `http://localhost:5104/util/register` |
+| Scheduled Jobs Insights | CMS menu item, or `http://localhost:5104/ScheduledJobsInsightsCms/Index` |
+| SQL Server | `localhost,6004` — user `sa` |
+
+The ports come from `CMS12_WEB_HOST_PORT` and `CMS12_DB_HOST_PORT` in `.env`. To run the site on the
+host instead: `docker compose -f docker-compose.cms12.yml up db -d`, then
+`dotnet run --project src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web` (`https://localhost:5003`).
+
+Two things differ from the CMS 13 dev site, both because CMS 12 behaves differently:
+
+- **The scheduler is left on.** On CMS 12, **Start Manually** only queues the job for the scheduler
+  service, so the template's Development-only `SchedulerOptions.Enabled = false` would make every
+  sample unstartable. The samples set no interval, so they still never run on their own.
+- **The samples are enabled.** CMS 12 does not register a `DefaultEnabled = false` job at all, so
+  `SampleDefaults.Enabled` is `true` there. The samples are linked from the CMS 13 site's `Samples/`
+  rather than copied, and a project-level alias maps their `[ScheduledJob]` to CMS 12's
+  `[ScheduledPlugIn]`.
 
 ### Running tests
 
@@ -227,15 +291,19 @@ All are disabled by default (`DefaultEnabled = false`); enable and trigger them 
 dotnet test
 ```
 
-Tests run against `net10.0`.
+From the repository root this runs both suites — the CMS 13 build and the CMS 12 build of the same
+tests. Tests run against `net10.0`.
 
 ### Project structure
 
 | Project | Purpose |
 | ------- | ------- |
-| `src/OptiPowerTools.ScheduledJobsInsights` | The NuGet library package. |
-| `src/OptiPowerTools.ScheduledJobsInsights.Web` | Dev site for manual testing (references the MyOptiAlloySite submodule). |
+| `src/OptiPowerTools.ScheduledJobsInsights` | The NuGet library package (CMS 13). |
+| `src/OptiPowerTools.ScheduledJobsInsights.Cms12` | The CMS 12 package — links the CMS 13 project's source, plus its own `Shell.cshtml`. |
+| `src/OptiPowerTools.ScheduledJobsInsights.Web` | CMS 13 dev site for manual testing (references the MyOptiAlloySite submodule). Owns the sample jobs. |
+| `src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web` | CMS 12 dev site — Alloy template on CMS 12, sharing the sample jobs. |
 | `tests/OptiPowerTools.ScheduledJobsInsights.Tests` | Unit tests — xUnit + NSubstitute, Sqlite in-memory for EF Core-dependent tests, bUnit for the Blazor pages. |
+| `tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests` | The same tests, linked, run against the CMS 12 package. |
 | `sub/MyOptiAlloySite` | Git submodule — [szolkowski/MyOptiAlloySite](https://github.com/szolkowski/MyOptiAlloySite) (Optimizely CMS 13 Alloy site). |
 
 ## License

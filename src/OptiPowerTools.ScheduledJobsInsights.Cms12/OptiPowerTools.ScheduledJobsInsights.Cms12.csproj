@@ -24,6 +24,9 @@
     <Description>Execution history for native Optimizely CMS 12 scheduled jobs (for CMS 13, use OptiPowerTools.ScheduledJobsInsights). Swap ScheduledJobBase for LoggedScheduledJobBase and every run is recorded: OnStatusChanged messages, the return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts). Stored in EF Core-backed SQL tables and browsable in a Blazor UI embedded in the CMS admin, with an automatic retention cleanup job. Never alters your jobs' success/failure semantics, and an unreachable insights database costs you the history of a run rather than the run itself.</Description>
 
     <PackageId>OptiPowerTools.ScheduledJobsInsights.Cms12</PackageId>
+    <!-- Packed as README.md. A short page of its own, pointing into the main README, which documents
+         both packages; publish.yml pins its README.md links to the release tag. -->
+    <PackageReadmeSource>$(MSBuildThisFileDirectory)..\..\README.Cms12.md</PackageReadmeSource>
 
     <!-- No PackageValidationBaselineVersion yet: the first release establishes it, as 1.0.0 did for
          the CMS 13 package. Arm it in the first commit after that release is published. -->

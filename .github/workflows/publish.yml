@@ -132,7 +132,7 @@ jobs:
               {
                 echo "project=src/OptiPowerTools.ScheduledJobsInsights.Cms12/OptiPowerTools.ScheduledJobsInsights.Cms12.csproj"
                 echo "tests=tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj"
-                echo "readme=README.md"
+                echo "readme=README.Cms12.md"
                 echo "script_name=scheduled-jobs-insights-cms12"
                 echo "tag_prefix=cms12-v"
               } >> "$GITHUB_OUTPUT"
@@ -223,6 +223,8 @@ jobs:
           sed -i "s|](CHANGELOG.md)|]($BLOB/CHANGELOG.md)|g" "$README"
           sed -i "s|](CODE_OF_CONDUCT.md)|]($BLOB/CODE_OF_CONDUCT.md)|g" "$README"
           sed -i "s|](SECURITY.md)|]($BLOB/SECURITY.md)|g" "$README"
+          # README.Cms12.md links into the main README, anchors included.
+          sed -i "s|](README.md|]($BLOB/README.md|g" "$README"
 
           echo "Rewritten link targets:"
           grep -nE "!\[|\]\(https://github.com/$REPO/blob/" "$README" || true

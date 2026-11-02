@@ -9,7 +9,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// Not part of the NuGet package — emits ~5,000 log lines in a tight loop to exercise the buffered
 /// channel writer under load and the virtualized scrolling log viewer with a large log volume.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Chatty Batch", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Chatty Batch", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 // The worked example for per-job retention. This job is the reason the feature exists: at ~5,000
 // log lines a run it dominates storage, and its history is only diagnostically useful briefly.
 // Visible in the Job Retention screen, where an administrator can override it either way.

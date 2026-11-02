@@ -9,6 +9,11 @@
 
 Execution history for **native Optimizely CMS 13 scheduled jobs**. Swap `EPiServer.Scheduler.ScheduledJobBase` for `LoggedScheduledJobBase` and every run is recorded: each `OnStatusChanged` message, the job's return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts) — persisted to EF Core-backed SQL tables, browsable in a paginated list and console-style log viewer embedded in the CMS admin, and aged out by an automatic retention cleanup job.
 
+> **On Optimizely CMS 12?** This package targets CMS 13. Use
+> [`OptiPowerTools.ScheduledJobsInsights.Cms12`](https://www.nuget.org/packages/OptiPowerTools.ScheduledJobsInsights.Cms12)
+> instead — the same features, built from the same source. See [Optimizely CMS 12](#optimizely-cms-12)
+> for the handful of things that differ.
+
 Part of the [OptiPowerTools](https://github.com/szolkowski) family — see also [OptiPowerTools.Hangfire](https://github.com/szolkowski/OptiPowerTools.Hangfire) if your background jobs run on Hangfire instead of (or alongside) Optimizely's native scheduler.
 
 ## Features
@@ -166,6 +171,7 @@ CMS 13 + Commerce 15.
 Derive from `LoggedScheduledJobBase` and implement `ExecuteJob()` instead of the usual `Execute()`:
 
 ```csharp
+using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
@@ -652,6 +658,51 @@ options.MapBlazorHub = false;   // your application owns /_blazor
 Note the hub this package maps carries its authorization policy. A hub the host already mapped is
 left exactly as the host configured it.
 
+## Optimizely CMS 12
+
+CMS 12 sites use a separate package, built from the same source as this one:
+
+```bash
+dotnet add package OptiPowerTools.ScheduledJobsInsights.Cms12
+```
+
+It targets .NET 10 and the latest CMS 12 (`EPiServer.CMS.UI.Core` 12.34.8 or later, below 13), and
+it is used exactly as described above: the same `LoggedScheduledJobBase`, the same namespaces and
+options, the same `RequiresAspNetWebAssets` setting, the same wiring and the same database. What
+differs is the CMS, not the package:
+
+- **The job attribute is `[ScheduledPlugIn]`**, from `EPiServer.PlugIn`, where CMS 13 has
+  `[ScheduledJob]`. Its properties are the same.
+- **`DefaultEnabled = false` hides a job on CMS 12** rather than registering it as disabled — the job
+  does not appear in the Scheduled Jobs admin at all. To list a job without letting it run on a
+  schedule, enable it and leave out `IntervalLength`; CMS 12 then gives it no next run, and it only
+  runs when started.
+- **Start Manually needs the scheduler running.** CMS 12 queues a manual start for the scheduler
+  service, so on a host that disables it (`SchedulerOptions.Enabled = false`, as the Alloy template
+  does in Development) the job never starts. CMS 13 runs a manual start regardless.
+- **The back office is under `/EPiServer`.** The package's links to the CMS's own Scheduled Jobs pages
+  follow it; nothing to configure.
+- **Unit tests with NSubstitute report NU1608.** CMS 12 constrains `Castle.Core` below 5.0, and
+  NSubstitute needs 5.x. The warning is harmless — this package's own suite runs every substitute
+  against 5.x — but it is fatal under `TreatWarningsAsErrors`; suppress it in the test project with
+  `<NoWarn>$(NoWarn);NU1608</NoWarn>`.
+
+### Moving from CMS 12 to CMS 13
+
+Replace `OptiPowerTools.ScheduledJobsInsights.Cms12` with `OptiPowerTools.ScheduledJobsInsights` and
+keep the database. Both packages ship the same migrations, so the CMS 13 package finds nothing left to
+apply and the execution history carries over; CI checks this on every build. The types, namespaces and
+configuration section are the same, so the only code change is the CMS's own — `[ScheduledPlugIn]`
+back to `[ScheduledJob]`.
+
+### Support policy
+
+The CMS 12 package is maintained alongside this one until Optimizely ends support for CMS 12, or
+until usage has substantially moved to CMS 13, whichever comes first. Bug fixes go to both packages;
+features land in the CMS 13 package first and are brought to CMS 12 after. The end-of-life date will
+be announced here and in the release notes at least three months in advance. After it, the last
+release stays on NuGet, but no further fixes ship.
+
 ## Removing this package
 
 Unlike a fully self-contained storage layer, this package owns its own SQL Server tables. Removing it stops new executions from being recorded and drops the cleanup job from the CMS's Scheduled Jobs list, but existing `scheduled_jobs_insights.*` tables and their data are left in place until you drop them manually.
@@ -690,15 +741,20 @@ promises is worth stating precisely, because the public surface here is delibera
   `[EditorBrowsable(Never)]`; render them through the package's own route, not directly.
 - The exact text of log messages, result messages and rendered markup.
 
+The CMS 12 package has a version line of its own, tagged `cms12-v…`, whose major.minor tracks this
+one: the same major.minor means the same features, while patch numbers move independently. Its API
+promises are the ones above.
+
 Released versions, with their notes and the migration script for each, are on the
 [releases page](https://github.com/szolkowski/OptiPowerTools.ScheduledJobsInsights/releases).
 
 
 ## Compatibility
 
-| Package version | .NET | Optimizely CMS |
-|---|---|---|
-| 1.x | 10.0 | 13.x |
+| Package | Version | .NET | Optimizely CMS |
+|---|---|---|---|
+| `OptiPowerTools.ScheduledJobsInsights` | 1.x | 10.0 | 13.x |
+| `OptiPowerTools.ScheduledJobsInsights.Cms12` | 1.x | 10.0 | 12.x (UI 12.34.8+) |
 
 ## License
 

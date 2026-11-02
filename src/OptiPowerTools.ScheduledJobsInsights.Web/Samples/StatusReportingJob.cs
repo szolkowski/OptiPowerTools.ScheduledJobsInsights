@@ -13,7 +13,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// <see cref="LoggedScheduledJobBase.Log"/> shows both sources landing in one execution's log in
 /// call order — this is the only sample that produces <c>StatusChanged</c>-sourced lines.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Status Reporting", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Status Reporting", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class StatusReportingJob : LoggedScheduledJobBase
 {
     private static readonly string[] Phases =

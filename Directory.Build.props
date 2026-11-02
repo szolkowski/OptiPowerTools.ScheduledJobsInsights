@@ -15,6 +15,25 @@
     <NoWarn>NU1902</NoWarn>
   </PropertyGroup>
 
+  <!-- High-severity advisories in packages EPiServer pulls in, accepted 2026-11-02 until Optimizely
+       ships builds that move off them; Optimizely is working on it, held up by third-party licensing.
+       Suppressed per advisory rather than by NU1903, so any *other* high-severity advisory still fails
+       the build. All five arrive transitively; none can be patched from here without overriding a
+       version EPiServer chose (and ImageSharp 2.x on CMS 12 has no fixed version short of 3.x at all).
+       Recheck on every EPiServer update: delete an entry as soon as restore no longer resolves the
+       vulnerable version, and the build will say if it was premature. -->
+  <ItemGroup>
+    <!-- System.Security.Cryptography.Pkcs 10.0.0, via both CMS 12 and CMS 13 - .NET denial of service
+         (CVE-2026-84008). Fixed in 10.0.13. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-846f-f764-76mx" />
+    <!-- SixLabors.ImageSharp 3.1.12 via CMS 13, and 2.1.11 via CMS 12 (first three only). Fixed in
+         3.2.0 - for CMS 12, a major version it cannot take. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j3p4-wp97-rph4" />  <!-- HistogramEqualization unchecked index -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j9gm-c75j-xc9q" />  <!-- TIFF CCITT T4 encoder overflow -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />  <!-- TIFF CCITT T6 encoder overflow -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-v76p-62qx-wwq2" />  <!-- tiled fax TIFF heap OOB write (3.x) -->
+  </ItemGroup>
+
   <!-- Deterministic output on CI, so a package can be rebuilt from its tag and compared byte for
        byte, and so embedded source paths are repository-relative rather than agent-specific.
        GitHub Actions sets CI=true for every run. -->

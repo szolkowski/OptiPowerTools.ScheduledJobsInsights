@@ -702,10 +702,14 @@ Things worth knowing before extending it:
   it was caught. `SeedData.StatusAsync` converts.
 - **`CspTests` enforces a strict policy by routing**, adding the header to every document, and
   reports violations into the test through an exposed function: a list kept in the page's window is
-  reset by every navigation, which once let an inline-style regression on the detail page pass. It
-  ignores what is the CMS shell's own doing on both versions - its navigation bundle injecting a
-  style element, and CDN fonts its stylesheets load - and fails on any other inline style, script
-  or eval, or anything blocked from this package's assets or the Blazor runtime.
+  reset by every navigation, which once let an inline-style regression on the detail page pass.
+  Scripts are judged from violation reports; **inline styles are judged in the DOM**, because a style
+  attribute this package writes and one Blazor's `Virtualize` writes are reported identically. Virtualize
+  draws the log's two scroll spacers as `style="height: …px; flex-shrink: 0;"` divs and sets
+  `overflow-anchor: none` on the console - the only inline styles allowed. Under a policy that blocks
+  inline styles those spacers collapse and the log cannot scroll its full length; no Optimizely back
+  office runs under one, though, since on both versions the CMS shell's own navigation injects a style
+  element (as do CDN fonts its stylesheets load) - both are ignored as not ours.
 - **A second user, `e2eeditor`** (WebEditors → CmsEditors), is written into the Identity tables by
   `Users`, hashed with Identity's own `PasswordHasher`. An authenticated user lacking the role is sent
   to `/Util/Login` by Optimizely rather than given a 403; the menu check reads the navigation tree from

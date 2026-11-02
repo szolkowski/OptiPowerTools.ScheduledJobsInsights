@@ -103,6 +103,21 @@ public class LoggedScheduledJobBaseTests
     }
 
     [Fact]
+    public void Execute_PrefersTheJobsDeclaredDisplayName_OverTheRegistryName()
+    {
+        // The CMS 13 shape: its registry holds the class name, and its admin shows the attribute's
+        // display name. Recording the registry name listed every CMS 13 job by its class name.
+        var writer = Substitute.For<IJobExecutionWriter>();
+        writer.BeginExecution(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>()).Returns(1L);
+        var repository = Substitute.For<IScheduledJobRepository>();
+        repository.Get(Arg.Any<Guid>()).Returns(new ScheduledJob { Name = nameof(DisplayNamedTestJob) });
+
+        new DisplayNamedTestJob(writer, repository).Execute();
+
+        writer.Received(1).BeginExecution(Arg.Any<Guid>(), DisplayNamedTestJob.DeclaredName, Arg.Any<string>());
+    }
+
+    [Fact]
     public void Execute_FallsBackToTypeName_WhenRepositoryLookupFails()
     {
         var writer = Substitute.For<IJobExecutionWriter>();

@@ -118,10 +118,14 @@ turned 75 of 407 tests red with `ArgumentNullException` out of Castle's `Invocat
 constructor cannot take a less accessible parameter type and freezing two implementation-detail
 interfaces as a side effect of CMS job discovery was the worse trade.
 
-`NuGetAuditMode` is left at the default (`all`), and a single advisory is suppressed by id in
-`Directory.Build.props` with a recorded acceptance date and a recheck condition — see the file for
-which and why. Suppressing one known advisory by id is deliberately narrower than lowering the audit
-mode, which would hide every future transitive advisory as well.
+`NuGetAuditMode` is left at the default (`all`), and known advisories in packages EPiServer pulls in
+are accepted in `Directory.Build.props` with a recorded acceptance date and a recheck condition — see
+the file for which and why. Suppressing a known advisory is deliberately narrower than lowering the
+audit mode, which would hide every future transitive advisory as well. Prefer `NuGetAuditSuppress`
+with the advisory URL, as the high-severity ones are: it silences exactly that advisory, where
+`NoWarn` on an `NU190x` code (as the older MailKit entry still does) silences every advisory of that
+severity. The current entries are temporary — Optimizely is moving off the affected versions — and
+each is to be removed as soon as restore no longer resolves the vulnerable version.
 
 ## Architecture
 

@@ -1,0 +1,116 @@
+# Throwaway stacks for the local end-to-end tests (tests/OptiPowerTools.ScheduledJobsInsights.E2E).
+# Run through scripts/e2e.sh rather than directly; it starts a profile, waits, runs the tests and
+# tears the stack down again.
+#
+# Deliberately separate from the dev stacks (docker-compose.yml, docker-compose.cms12.yml):
+#   - its own project, containers, network and ports, so it can run beside them;
+#   - no volumes, so every run starts from an empty database - the tests register their own
+#     administrator and seed their own data, and nothing a run leaves behind can affect the next;
+#   - the web images bake the source in (Docker/e2e-web.dockerfile) instead of bind-mounting it.
+#
+#   profile cms13  ->  web :5105, SQL Server :6005
+#   profile cms12  ->  web :5106, SQL Server :6006
+name: sjinsights-e2e
+
+x-sql-password: &sql-password ${SA_PASSWORD:-Episerver123!}
+
+services:
+  cms13-db:
+    profiles: [cms13]
+    build:
+      dockerfile: Docker/db.dockerfile
+      context: ./sub/MyOptiAlloySite/MyOptiAlloySite
+    image: sjinsights-e2e-db13:local
+    container_name: sjinsights-e2e-db13
+    # SQL Server 2025 ships linux/amd64 only, so on Apple Silicon it runs emulated.
+    platform: linux/amd64
+    environment:
+      SA_PASSWORD: *sql-password
+      DB_NAME: ScheduledJobsInsightsE2E
+      # The submodule's create-db script also creates a Commerce database; the same name makes that a
+      # no-op instead of an invalid CREATE DATABASE [].
+      COMMERCE_DB_NAME: ScheduledJobsInsightsE2E
+    ports:
+      - "6005:1433"
+    networks: [e2e13]
+    healthcheck: &db-healthcheck
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$SA_PASSWORD" -Q "SELECT 1 FROM sys.databases WHERE name = '$$DB_NAME'" -C -h -1 | grep -q 1
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  cms13-web:
+    profiles: [cms13]
+    depends_on:
+      cms13-db:
+        condition: service_healthy
+    build:
+      dockerfile: Docker/e2e-web.dockerfile
+      context: .
+      args:
+        WEB_PROJECT_DIR: src/OptiPowerTools.ScheduledJobsInsights.Web
+    image: sjinsights-e2e-web13:local
+    container_name: sjinsights-e2e-web13
+    environment:
+      ASPNETCORE_HTTP_PORTS: 80
+      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      CONNECTIONSTRINGS__EPISERVERDB: &db13 Server=cms13-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;
+      CONNECTIONSTRINGS__ECFSQLCONNECTION: *db13
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: *db13
+    ports:
+      - "5105:80"
+    networks: [e2e13]
+    healthcheck: &web-healthcheck
+      # The login page answers once the CMS has finished initialising.
+      test: curl -fs -o /dev/null http://localhost/Util/Login
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+
+  cms12-db:
+    profiles: [cms12]
+    build:
+      dockerfile: Docker/cms12-db.dockerfile
+      context: .
+    image: sjinsights-e2e-db12:local
+    container_name: sjinsights-e2e-db12
+    platform: linux/amd64
+    environment:
+      SA_PASSWORD: *sql-password
+      DB_NAME: ScheduledJobsInsightsE2E
+    ports:
+      - "6006:1433"
+    networks: [e2e12]
+    healthcheck: *db-healthcheck
+
+  cms12-web:
+    profiles: [cms12]
+    depends_on:
+      cms12-db:
+        condition: service_healthy
+    build:
+      dockerfile: Docker/e2e-web.dockerfile
+      context: .
+      args:
+        WEB_PROJECT_DIR: src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web
+    image: sjinsights-e2e-web12:local
+    container_name: sjinsights-e2e-web12
+    environment:
+      ASPNETCORE_HTTP_PORTS: 80
+      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      CONNECTIONSTRINGS__EPISERVERDB: &db12 Server=cms12-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: *db12
+    ports:
+      - "5106:80"
+    networks: [e2e12]
+    healthcheck: *web-healthcheck
+
+networks:
+  e2e13:
+    name: sjinsights-e2e-13-net
+  e2e12:
+    name: sjinsights-e2e-12-net

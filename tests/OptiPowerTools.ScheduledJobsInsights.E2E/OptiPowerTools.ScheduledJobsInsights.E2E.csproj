@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Local-only browser tests against the throwaway Docker stacks in docker-compose.e2e.yml, for the
+       CMS 13 and the CMS 12 package alike. Run them with scripts/e2e.sh. Every test is skipped unless
+       SJI_E2E_TARGET names a stack, so CI builds this project but never runs it.
+
+       Black-box on purpose: no reference to the package, only to what a browser and the database see.
+       Not ../Tests.props either - none of bUnit, NSubstitute or Sqlite belongs here. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
+    <!-- Seeds execution history straight into the stack's database, so the tests have exact, known
+         data to assert against rather than whatever a real job happened to write. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+  </ItemGroup>
+
+</Project>

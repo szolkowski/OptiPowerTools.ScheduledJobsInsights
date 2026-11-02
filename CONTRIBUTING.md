@@ -294,7 +294,35 @@ dotnet test
 ```
 
 From the repository root this runs both suites — the CMS 13 build and the CMS 12 build of the same
-tests. Tests run against `net10.0`.
+tests. Tests run against `net10.0`. It also lists the browser tests below, as skipped.
+
+### Browser tests (local only)
+
+`tests/OptiPowerTools.ScheduledJobsInsights.E2E` drives the real pages in Chromium (Playwright for
+.NET), against both CMS versions, each in a throwaway Docker stack built from your working tree:
+
+```bash
+scripts/e2e.sh                  # both CMS versions, one after the other
+scripts/e2e.sh cms12            # one of them
+scripts/e2e.sh cms13 --keep     # leave the stack up; re-runs are then quick
+scripts/e2e.sh --down           # remove the e2e stacks
+scripts/e2e.sh cms13 -- --filter DetailPage    # arguments after -- go to dotnet test
+```
+
+They cover what the unit and bUnit tests cannot: that the pages render inside the CMS shell with the
+right menu entry selected, that each page actually goes live (its Blazor circuit connects) with every
+asset loaded and a clean console, and the detail page's virtualized log, jump buttons and collapsible
+sections. The stacks (`docker-compose.e2e.yml`) are separate from the dev ones — their own containers
+and ports (5105/6005 for CMS 13, 5106/6006 for CMS 12), no volumes — so they can run beside your dev
+stacks, and every run starts from an empty database. The tests register their own administrator and
+seed their own execution history; no Alloy content is needed. The first run downloads Chromium.
+
+A failed test leaves a Playwright trace and a screenshot in
+`tests/OptiPowerTools.ScheduledJobsInsights.E2E/artifacts/`; drop the trace on
+<https://trace.playwright.dev>. `SJI_E2E_HEADED=1` shows the browser while the tests run.
+
+CI builds this project but never runs it: every test skips unless `SJI_E2E_TARGET` is set, which the
+script does.
 
 ### Project structure
 
@@ -306,6 +334,7 @@ tests. Tests run against `net10.0`.
 | `src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web` | CMS 12 dev site — Alloy template on CMS 12, sharing the sample jobs. |
 | `tests/OptiPowerTools.ScheduledJobsInsights.Tests` | Unit tests — xUnit + NSubstitute, Sqlite in-memory for EF Core-dependent tests, bUnit for the Blazor pages. |
 | `tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests` | The same tests, linked, run against the CMS 12 package. |
+| `tests/OptiPowerTools.ScheduledJobsInsights.E2E` | Local-only browser tests (Playwright) against throwaway Docker stacks of both CMS versions — see `scripts/e2e.sh`. |
 | `sub/MyOptiAlloySite` | Git submodule — [szolkowski/MyOptiAlloySite](https://github.com/szolkowski/MyOptiAlloySite) (Optimizely CMS 13 Alloy site). |
 
 ## License

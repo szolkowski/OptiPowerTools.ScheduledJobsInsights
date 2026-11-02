@@ -24,6 +24,13 @@
 @inject IOptions<OptiPowerToolsScheduledJobsInsightsOptions> Options
 @inject IJSRuntime JS
 
+@* Present only once the circuit has rendered this page, which prerendering never does. The local
+   end-to-end tests wait on it rather than guessing when the page became interactive; it is hidden
+   and carries no content. *@
+@if (_interactive)
+{
+    <span hidden data-sji-interactive></span>
+}
 <p><a href="@Options.Value.CmsShellPath">&larr; Back to executions</a></p>
 
 @if (_loadError is not null)
@@ -280,6 +287,9 @@ else
         }
     }
 
+    /// <summary>Set on the first interactive render; drives the data-sji-interactive marker.</summary>
+    private bool _interactive;
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         // Everything here needs the circuit. OnAfterRender does not run during prerendering, which is
@@ -287,6 +297,9 @@ else
         // into a renderer that can never flush and leak until the component was disposed.
         if (!firstRender)
             return;
+
+        // The page is live from here; the StateHasChanged below renders the data-sji-interactive marker.
+        _interactive = true;
 
         try
         {

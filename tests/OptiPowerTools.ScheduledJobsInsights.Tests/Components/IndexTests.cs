@@ -32,6 +32,17 @@ public class IndexTests : ComponentTestBase
             status == ExecutionStatus.Running ? null : completedAt ?? Noon.AddSeconds(3),
             resultMessage, exceptionMessage, hasResultSummary);
 
+    // The local end-to-end tests wait on this marker for the circuit to be live. bUnit renders
+    // interactively, so the marker must be there after render; a page that stopped emitting it
+    // would leave those tests waiting out their timeout instead of failing for the real reason.
+    [Fact]
+    public void OnceRenderedInteractively_CarriesTheInteractiveMarker()
+    {
+        GivenPage();
+
+        Assert.Single(RenderList().FindAll("[data-sji-interactive]"));
+    }
+
     [Fact]
     public void WithNoExecutionsAndNoFilter_SaysNothingHasRunYet()
     {

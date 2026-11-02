@@ -50,14 +50,18 @@ docker compose up -d
 docker compose up db -d
 dotnet run --project src/OptiPowerTools.ScheduledJobsInsights.Web
 
+# Browser tests, local only: throwaway Docker stacks of both CMS versions, built from the working
+# tree (CMS 13 on :5105/:6005, CMS 12 on :5106/:6006). CI builds the project but never runs it.
+scripts/e2e.sh                # or: scripts/e2e.sh cms12 --keep -- --filter DetailPage
+
 # The CMS 12 dev stack: a separate compose project. Web on :5104, SQL Server on :6004.
 Docker/cms12-fetch-site-content.sh    # first time only: the Alloy content, from EPiServer.Templates
 docker compose -f docker-compose.cms12.yml up -d
 ```
 
 The CMS back office is at `/Optimizely/CMS/` on CMS 13 — the old `/episerver` path returns a bare 404.
-On a fresh database, register the first administrator at `/util/register` (that page disappears once a
-user exists).
+On a fresh database, register the first administrator at `/util/register` (on CMS 12 that page
+disappears once a user exists; the CMS 13 dev host's registration is configured to keep serving it).
 
 `App_Data/` is gitignored in the submodule, so a fresh clone has **no** CMS content: Optimizely imports
 `sub/MyOptiAlloySite/MyOptiAlloySite/App_Data/DefaultSiteContent.episerverdata` into an empty database
@@ -649,8 +653,31 @@ left out because all three need a second poll tick against a hard-coded two-seco
 alternative was a static test seam. The interval is now the `DetailPollInterval` option — a legitimate
 thing for an installation to tune, which happens to make these tests cheap — so the trade went away
 rather than being accepted. `SlowMigrationJob` is still the way to check the behaviour by hand against
-a real running job. What the suite does **not** cover is any of the five CMS-shell constraints above;
-those are host-integration failures only a real browser catches.
+a real running job. What the unit suite does **not** cover is any of the five CMS-shell constraints
+above; those are host-integration failures only a real browser catches.
+
+That is what `tests/OptiPowerTools.ScheduledJobsInsights.E2E` is for: Playwright against throwaway
+Docker stacks of both CMS versions (`docker-compose.e2e.yml`, run by `scripts/e2e.sh`), local only.
+Things worth knowing before extending it:
+
+- **Wait on `data-sji-interactive`, never on time.** Each page renders that hidden marker on its first
+  interactive render, which prerendering never reaches, so it is the one reliable signal that the
+  circuit is live; `BrowserSession.Open*Async` waits on it. A page that only prerenders — the missing
+  base href, the `blazor.server.js` 404 — fails there instead of passing on prerendered HTML. bUnit
+  pins the marker on all three pages.
+- **The stacks bake the source in** (`Docker/e2e-web.dockerfile`) rather than bind-mounting it like the
+  dev stacks. The Alloy submodule's own `Directory.Build.props` gives every container the same
+  `obj/container` path, so an e2e container and a dev container building the bind-mounted tree at once
+  would overwrite each other's output.
+- **Seeded, not run.** `SeedData` writes executions straight into the tables (tagged `E2E.*`, deleted
+  and rewritten each run), so assertions are exact; it is also what makes `--keep` re-runs stable.
+- **The administrator is checked in the database**, not read off `/util/register`: on CMS 12 that page
+  stops serving its form once a user exists, but the CMS 13 dev host's registration is configured
+  `Enabled` only and keeps serving it.
+- **Version differences are target properties** (`E2ETarget`), asserted rather than skipped — the CMS
+  12 detail page selecting no menu entry is `DetailPageHighlightsMenu: false`, so a fix shows up as a
+  failing expectation to flip.
+- The selected navigation entry is `li.nav-list__link.is-active` on both CMS versions.
 
 These Sqlite tests validate the C#-side query/repository/cascade logic only — they do not validate the
 literal SQL Server migration SQL. **CI covers that separately**: the Build & Test workflow runs a real

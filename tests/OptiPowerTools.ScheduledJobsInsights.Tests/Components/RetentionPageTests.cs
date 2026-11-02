@@ -41,6 +41,17 @@ public class RetentionPageTests : ComponentTestBase
             .Add(c => c.ViewerTimeZone, viewerTimeZone)
             .Add(c => c.CurrentUser, currentUser));
 
+    // The local end-to-end tests wait on this marker for the circuit to be live. bUnit renders
+    // interactively, so the marker must be there after render; a page that stopped emitting it
+    // would leave those tests waiting out their timeout instead of failing for the real reason.
+    [Fact]
+    public void OnceRenderedInteractively_CarriesTheInteractiveMarker()
+    {
+        GivenJobs(AJob());
+
+        Assert.Single(RenderPage().FindAll("[data-sji-interactive]"));
+    }
+
     [Fact]
     public void TheInstallationDefault_IsAlwaysShown()
     {

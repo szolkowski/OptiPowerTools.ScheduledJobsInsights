@@ -13,7 +13,7 @@ internal sealed record SeededData(long LogExecutionId, DateTimeOffset LogStarted
 /// </summary>
 internal static class SeedData
 {
-    private const string TypePrefix = "E2E.";
+    public const string TypePrefix = "E2E.";
     private const string Schema = "scheduled_jobs_insights";
 
     /// <summary>The log job's line count — above any viewport, so the console has to virtualize.</summary>

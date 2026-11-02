@@ -314,8 +314,10 @@ They cover what the unit and bUnit tests cannot: that the pages render inside th
 right menu entry selected, that each page actually goes live (its Blazor circuit connects) with every
 asset loaded and a clean console, the detail page's virtualized log, jump buttons and collapsible
 sections, a real job started and stopped from the CMS's own admin while the detail page follows it
-live (and fills in its metrics after it finishes), a retention change surviving a reload with its
-audit entry, the links across to the CMS's Scheduled Jobs screens, timestamps following the reader's
+live (and fills in its metrics after it finishes), a job that throws being reported failed by the CMS
+while the detail page shows its log, stack trace and the summary it built before throwing, the
+summary's Copy button, a retention change surviving a reload with its audit entry, a job's own
+`[JobRetention]` shown with its reason, history whose code is gone flagged as such, the links across to the CMS's Scheduled Jobs screens, timestamps following the reader's
 time zone, the pages working under a strict Content Security Policy, a CMS editor being turned away
 and offered no menu entry, the list's paging and filters on real SQL Server, and the cleanup job
 deleting what is past its retention while sparing a run still marked Running. With `--scenarios` the

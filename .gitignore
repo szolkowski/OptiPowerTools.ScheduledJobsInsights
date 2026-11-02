@@ -486,7 +486,10 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-.claude/
+# Claude Code: local settings stay private, but the project's skills are shared with everyone who
+# works on the repository.
+.claude/*
+!.claude/skills/
 src/OptiPowerTools.ScheduledJobsInsights.Web/appsettings.*.json
 !src/OptiPowerTools.ScheduledJobsInsights.Web/appsettings.Development.json
 

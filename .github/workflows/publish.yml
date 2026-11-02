@@ -187,6 +187,9 @@ jobs:
               echo "Version $VERSION establishes the baseline; no comparison possible yet."
               exit 0
               ;;
+            *)
+              # Every later version needs a baseline - checked below.
+              ;;
           esac
 
           if ! grep -qE '^[^<]*<PackageValidationBaselineVersion>' "$PROJECT_FILE"; then

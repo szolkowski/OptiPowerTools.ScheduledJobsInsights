@@ -18,4 +18,7 @@ USER mssql
 
 EXPOSE 1433
 
-ENTRYPOINT /src/create-db.sh & /opt/mssql/bin/sqlservr
+# Exec form, with the shell made explicit because the database creation has to run alongside the
+# server. `exec` hands PID 1 to sqlservr, so `docker stop` reaches SQL Server itself and it shuts down
+# cleanly instead of being killed when the stop timeout runs out.
+ENTRYPOINT ["/bin/bash", "-c", "/src/create-db.sh & exec /opt/mssql/bin/sqlservr"]

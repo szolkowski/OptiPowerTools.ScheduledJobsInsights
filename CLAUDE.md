@@ -357,7 +357,8 @@ exists purely so `dotnet ef migrations add` works without a `Startup`/`Program` 
 
 Unlike `OptiPowerTools.Hangfire`, which iframes a third-party dashboard it does not own, this package
 owns its markup and renders **inline inside the CMS chrome** — no iframe. The MVC controller + view
-(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Shell.cshtml`) draws the
+(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Shell.cshtml` rendered
+through `_ShellLayout.cshtml`, with the page itself in `_ShellComponents.cshtml`) draws the
 Optimizely shell and hosts the components through the Component Tag Helper, so they inherit the
 shell's Axiom styling instead of needing a stand-in stylesheet. That means **Blazor Server**
 (`AddServerSideBlazor()` + `MapBlazorHub()`), not the Blazor Web App model — the latter wants to own
@@ -686,7 +687,16 @@ Where the two CMS versions really differ, and nowhere else:
   `episerver-resources` or `platform-navigation-wrapper` tag helper, and an unknown tag helper renders
   as a literal tag with no build error; CMS 12 uses `ClientResources.RenderResources(...)`,
   `Html.CreatePlatformNavigationMenu()` and `<div @Html.ApplyPlatformNavigation()>` instead. CMS 13
-  *removed* those helpers, so the two cannot share one view. Each copy points at the other; change both.
+  *removed* those helpers, so the two cannot share one view. So each `Shell.cshtml` holds **only** its
+  CMS's chrome: a `ShellResources` section and the navigation wrapped around
+  `<partial name="_ShellComponents" />`. The document itself — head, assets, base href, timezone
+  script, antiforgery token, `blazor.server.js` — is `_ShellLayout.cshtml`, shared and linked like
+  every other file. It used to be two full copies; SonarCloud's duplication gate failed the CMS 12 PR
+  on them (75 of 107 new lines), and two copies of that much load-bearing markup were a drift risk
+  anyway. Anything that is not chrome belongs in the layout or the partial, not in either Shell.
+  (On CMS 13, `episerver-resources` renders a `div` of localization data for the shell scripts, not
+  stylesheets — its styling comes with the navigation bundle — so its head has no shell CSS; that is
+  expected.)
 
 Three things in `OptiPowerTools.ScheduledJobsInsights.Cms12.csproj` are load-bearing:
 

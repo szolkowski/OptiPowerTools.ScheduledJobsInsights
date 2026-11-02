@@ -307,8 +307,9 @@ jobs:
           database="${SJI_CI_DATABASE}Upgrade"
           connection="Server=localhost,1433;Database=$database;User Id=sa;Password=$MSSQL_SA_PASSWORD;TrustServerCertificate=True;Encrypt=False;"
           apply() {
+            local project="$1"
             dotnet ef database update \
-              --project "$1" \
+              --project "$project" \
               --context OptiPowerTools.ScheduledJobsInsights.Data.ScheduledJobsInsightsDbContext \
               --connection "$connection"
           }

@@ -59,7 +59,9 @@ both, and has to build in both:
 
 - Where the two CMS versions genuinely differ, the shared file says so with `#if CMS12`.
 - The one file that cannot be shared that way is the hosting view, `Shell.cshtml`, whose CMS 12 copy
-  lives in the CMS 12 project. Change both — each points at the other.
+  lives in the CMS 12 project. Both are kept to the CMS shell's chrome and nothing else; the rest of the
+  page is the shared `_ShellLayout.cshtml` and `_ShellComponents.cshtml`, so that is where changes to
+  it go.
 - The tests work the same way: `tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests` runs the CMS 13
   test project's sources against the CMS 12 build. `dotnet test` from the repository root runs both.
 - Package metadata and dependency versions shared by the two live in `src/Package.props` and
@@ -299,7 +301,7 @@ tests. Tests run against `net10.0`.
 | Project | Purpose |
 | ------- | ------- |
 | `src/OptiPowerTools.ScheduledJobsInsights` | The NuGet library package (CMS 13). |
-| `src/OptiPowerTools.ScheduledJobsInsights.Cms12` | The CMS 12 package — links the CMS 13 project's source, plus its own `Shell.cshtml`. |
+| `src/OptiPowerTools.ScheduledJobsInsights.Cms12` | The CMS 12 package — links the CMS 13 project's source, plus its own `Shell.cshtml` (the CMS 12 shell chrome). |
 | `src/OptiPowerTools.ScheduledJobsInsights.Web` | CMS 13 dev site for manual testing (references the MyOptiAlloySite submodule). Owns the sample jobs. |
 | `src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web` | CMS 12 dev site — Alloy template on CMS 12, sharing the sample jobs. |
 | `tests/OptiPowerTools.ScheduledJobsInsights.Tests` | Unit tests — xUnit + NSubstitute, Sqlite in-memory for EF Core-dependent tests, bUnit for the Blazor pages. |

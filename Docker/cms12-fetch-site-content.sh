@@ -35,9 +35,9 @@ done
 
 # shasum ships with macOS, sha256sum with most Linux distributions.
 if command -v sha256sum >/dev/null; then
-    hash_of() { sha256sum "$1" | cut -d' ' -f1; }
+    hash_of() { local file="$1"; sha256sum "${file}" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null; then
-    hash_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
+    hash_of() { local file="$1"; shasum -a 256 "${file}" | cut -d' ' -f1; }
 else
     echo "error: sha256sum or shasum is required" >&2
     exit 1
@@ -47,7 +47,10 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
 echo "Downloading EPiServer.Templates ${VERSION} from nuget.org..."
-curl -fsSL -o "${WORK}/templates.nupkg" "${URL}"
+# HTTPS only, redirects included: nuget.org's flat container redirects to its CDN, and a downgrade
+# anywhere along that chain is refused rather than followed. (The hash check below would catch a
+# tampered file too, but there is no reason to fetch one over plain HTTP in the first place.)
+curl -fsSL --proto '=https' --proto-redir '=https' -o "${WORK}/templates.nupkg" "${URL}"
 
 ACTUAL="$(hash_of "${WORK}/templates.nupkg")"
 if [[ "${ACTUAL}" != "${SHA256}" ]]; then

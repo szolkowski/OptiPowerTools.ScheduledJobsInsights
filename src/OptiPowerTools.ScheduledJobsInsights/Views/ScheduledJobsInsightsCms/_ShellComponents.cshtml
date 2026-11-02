@@ -1,0 +1,25 @@
+@model OptiPowerTools.ScheduledJobsInsights.Cms.ScheduledJobsInsightsPageModel
+@* Which page the shell hosts, shared by both packages' Shell.cshtml. *@
+@{
+    // Typed, not ViewBag: these are the values whose loss breaks the page silently — a renamed key
+    // would have given the components null, rendering in UTC or auditing as "unknown", with nothing
+    // failing to say so. See ScheduledJobsInsightsPageModel.
+    var executionId = Model.ExecutionId;
+    var viewerTimeZone = Model.ViewerTimeZone;
+    var showRetention = Model.ShowRetention;
+    var currentUser = Model.CurrentUser;
+}
+<div class="sji-content">
+    @if (showRetention)
+    {
+        <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Retention)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" param-CurrentUser="currentUser" />
+    }
+    else if (executionId is { } id)
+    {
+        <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" param-ViewerTimeZone="viewerTimeZone" />
+    }
+    else
+    {
+        <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" />
+    }
+</div>

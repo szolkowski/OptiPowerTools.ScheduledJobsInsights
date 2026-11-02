@@ -32,6 +32,14 @@ internal sealed record E2ETarget(
 
     public static E2ETarget? Current { get; } = Resolve(Environment.GetEnvironmentVariable("SJI_E2E_TARGET"));
 
+    /// <summary>
+    /// The configuration the stack's web container is running in, set by scripts/e2e.sh: "standard",
+    /// or one of the scenarios --scenarios re-creates it under (a menu placement, the insights database
+    /// unreachable). Each test runs in exactly one.
+    /// </summary>
+    public static string Scenario { get; } =
+        Environment.GetEnvironmentVariable("SJI_E2E_SCENARIO") is { Length: > 0 } scenario ? scenario : "standard";
+
     private static E2ETarget? Resolve(string? name) => name?.Trim().ToLowerInvariant() switch
     {
         null or "" => null,
@@ -63,6 +71,9 @@ internal sealed record E2ETarget(
         $"Server=localhost,{port};Database=ScheduledJobsInsightsE2E;User Id=sa;Password={Password};" +
         "TrustServerCertificate=True;Encrypt=False;";
 
+    /// <summary>The stack's web container (docker-compose.e2e.yml), whose log a failed test keeps.</summary>
+    public string WebContainer => $"sjinsights-e2e-web{Name[^2..]}";
+
     public string Url(string pathAndQuery) => new Uri(BaseUrl, pathAndQuery).ToString();
 
     /// <summary>The CMS's own settings page for one scheduled job, where it is started and stopped.</summary>
@@ -70,15 +81,19 @@ internal sealed record E2ETarget(
 }
 
 /// <summary>
-/// A test that runs only against a stack. Skipped, with the reason, when <c>SJI_E2E_TARGET</c> is
-/// unset - which is how CI compiles this project without starting a browser.
+/// A test that runs only against a stack, and only in its scenario. Skipped, with the reason, when
+/// <c>SJI_E2E_TARGET</c> is unset - which is how CI compiles this project without starting a browser -
+/// or when the stack is running in a different scenario.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class E2EFactAttribute : FactAttribute
 {
-    public E2EFactAttribute()
+    /// <param name="scenario">The stack configuration this test needs; see <see cref="E2ETarget.Scenario"/>.</param>
+    public E2EFactAttribute(string scenario = "standard")
     {
         if (E2ETarget.Current is null)
             Skip = "Local only: run scripts/e2e.sh, which sets SJI_E2E_TARGET.";
+        else if (!string.Equals(scenario, E2ETarget.Scenario, StringComparison.Ordinal))
+            Skip = $"Runs in the '{scenario}' scenario (scripts/e2e.sh --scenarios); this run is '{E2ETarget.Scenario}'.";
     }
 }

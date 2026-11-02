@@ -57,6 +57,7 @@ dotnet run --project src/OptiPowerTools.ScheduledJobsInsights.Web
 # Browser tests, local only: throwaway Docker stacks of both CMS versions, built from the working
 # tree (CMS 13 on :5105/:6005, CMS 12 on :5106/:6006). CI builds the project but never runs it.
 scripts/e2e.sh                # or: scripts/e2e.sh cms12 --keep -- --filter DetailPage
+scripts/e2e.sh --scenarios    # + the other menu placements and the insights DB unreachable
 
 # The CMS 12 dev stack: a separate compose project. Web on :5104, SQL Server on :6004.
 Docker/cms12-fetch-site-content.sh    # first time only: the Alloy content, from EPiServer.Templates
@@ -690,6 +691,21 @@ Things worth knowing before extending it:
   12 detail page selecting no menu entry is `DetailPageHighlightsMenu: false`, so a fix shows up as a
   failing expectation to flip.
 - The selected navigation entry is `li.nav-list__link.is-active` on both CMS versions.
+- **A failed test also keeps the web container's log** (`artifacts/<target>-<test>.log`, from
+  `docker logs --since` the test's start), because the container rarely outlives the run - `--scenarios`
+  re-creates it and a run without `--keep` removes it. It exists for the one unexplained failure so far:
+  `LiveRunTests` on CMS 12, once in 24 runs, the first run after a rebuild, with the run still `Running`
+  30 s after the CMS accepted Stop. Not reproduced in 20 attempts; deliberately not "fixed" by waiting
+  longer until the log says whether it is a CMS 12 scheduler quirk or ours.
+- **Scenarios re-create the web container, not the stack.** `scripts/e2e.sh --scenarios` runs the
+  suite once more per entry in its `SCENARIOS` list, with the container's settings changed through
+  `docker-compose.e2e.yml`'s `SJI_E2E_MENU_PLACEMENT`/`SJI_E2E_INSIGHTS_CONNECTION`, and each test
+  belongs to exactly one scenario (`[E2EFact("menu-TopLevel")]`; the default is `standard`). The
+  database and the fixture's seeding are shared, so a scenario runs after the standard pass has
+  migrated it. `insights-db-down` points the insights connection at port 1 on loopback, refused at once
+  rather than timing out, and checks the job ran through the CMS's own `tblScheduledItemLog`. Outside
+  DataSyncManagement our pages highlight no `nav-list__link` on either version - their entries are at
+  the top of a product's navigation - which is expected, not asserted.
 - **Find jobs by type name, never by name.** CMS 13 registers every job with `Name = Type.Name` (its
   admin reads the display name from the attribute instead), while CMS 12 stores the attribute's display
   name; `TypeName` is the same on both. `SeedData.ScheduledJobIdAsync` looks jobs up that way.

@@ -62,13 +62,15 @@ public sealed class StackFixture : IAsyncLifetime
     /// and a screenshot under <see cref="ArtifactsDirectory"/> before rethrowing; on success it keeps
     /// nothing.
     /// </summary>
-    internal async Task RunAsync(string testName, Func<BrowserSession, Task> test)
+    internal async Task RunAsync(string testName, Func<BrowserSession, Task> test, string? timezoneId = null)
     {
         await using var context = await _browser!.NewContextAsync(new()
         {
             BaseURL = Target.BaseUrl.ToString(),
             StorageStatePath = _storageState,
             ViewportSize = new() { Width = 1440, Height = 900 },
+            // The browser's own zone, which the page reads and reports back in its time-zone cookie.
+            TimezoneId = timezoneId,
         });
         await context.Tracing.StartAsync(new() { Screenshots = true, Snapshots = true });
 

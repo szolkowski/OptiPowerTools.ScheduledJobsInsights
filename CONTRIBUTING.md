@@ -311,8 +311,10 @@ scripts/e2e.sh cms13 -- --filter DetailPage    # arguments after -- go to dotnet
 
 They cover what the unit and bUnit tests cannot: that the pages render inside the CMS shell with the
 right menu entry selected, that each page actually goes live (its Blazor circuit connects) with every
-asset loaded and a clean console, and the detail page's virtualized log, jump buttons and collapsible
-sections. The stacks (`docker-compose.e2e.yml`) are separate from the dev ones — their own containers
+asset loaded and a clean console, the detail page's virtualized log, jump buttons and collapsible
+sections, a real job started and stopped from the CMS's own admin while the detail page follows it
+live, a retention change surviving a reload with its audit entry, the links across to the CMS's
+Scheduled Jobs screens, and timestamps following the reader's time zone. The stacks (`docker-compose.e2e.yml`) are separate from the dev ones — their own containers
 and ports (5105/6005 for CMS 13, 5106/6006 for CMS 12), no volumes — so they can run beside your dev
 stacks, and every run starts from an empty database. The tests register their own administrator and
 seed their own execution history; no Alloy content is needed. The first run downloads Chromium.

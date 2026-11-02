@@ -11,6 +11,7 @@ internal sealed record E2ETarget(
     string ConnectionString,
     string PackageId,
     string AdminPath,
+    string ScheduledJobsAdmin,
     bool DetailPageHighlightsMenu)
 {
     private const string Password = "Episerver123!";
@@ -32,6 +33,7 @@ internal sealed record E2ETarget(
             Database(6005),
             "OptiPowerTools.ScheduledJobsInsights",
             "/Optimizely",
+            "/Optimizely/Settings/default#/ScheduledJobs",
             DetailPageHighlightsMenu: true),
         "cms12" => new E2ETarget(
             "cms12",
@@ -39,6 +41,7 @@ internal sealed record E2ETarget(
             Database(6006),
             "OptiPowerTools.ScheduledJobsInsights.Cms12",
             "/EPiServer",
+            "/EPiServer/EPiServer.Cms.UI.Admin/default#/ScheduledJobs",
             // Known gap, filed rather than fixed: CMS 12's navigation highlights no entry on ?id=.
             DetailPageHighlightsMenu: false),
         _ => throw new InvalidOperationException(
@@ -53,6 +56,9 @@ internal sealed record E2ETarget(
         "TrustServerCertificate=True;Encrypt=False;";
 
     public string Url(string pathAndQuery) => new Uri(BaseUrl, pathAndQuery).ToString();
+
+    /// <summary>The CMS's own settings page for one scheduled job, where it is started and stopped.</summary>
+    public string ScheduledJobAdmin(Guid jobId) => $"{ScheduledJobsAdmin}/detailScheduledJob/{jobId}";
 }
 
 /// <summary>

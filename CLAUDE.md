@@ -678,6 +678,16 @@ Things worth knowing before extending it:
   12 detail page selecting no menu entry is `DetailPageHighlightsMenu: false`, so a fix shows up as a
   failing expectation to flip.
 - The selected navigation entry is `li.nav-list__link.is-active` on both CMS versions.
+- **Find jobs by type name, never by name.** CMS 13 registers every job with `Name = Type.Name` (its
+  admin reads the display name from the attribute instead), while CMS 12 stores the attribute's display
+  name; `TypeName` is the same on both. `SeedData.ScheduledJobIdAsync` looks jobs up that way.
+- **The CMS admin is a hash-routed SPA** that does not reliably re-render when moved between two of its
+  hash routes in place; `LiveRunTests` reaches it with a full navigation each time. The same test is
+  where CMS 12's queued manual start shows: the run begins on the scheduler's next pass, so it waits
+  for the execution row rather than assuming one.
+- **Time-zone labels are the browser's id**, legacy spellings included: Chromium reports
+  Asia/Kathmandu as `Asia/Katmandu`. `TimeZoneTests` reads the id back from the browser and proves the
+  conversion with the 45-minute offset instead.
 
 These Sqlite tests validate the C#-side query/repository/cascade logic only — they do not validate the
 literal SQL Server migration SQL. **CI covers that separately**: the Build & Test workflow runs a real

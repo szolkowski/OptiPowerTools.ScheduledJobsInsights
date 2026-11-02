@@ -13,6 +13,7 @@ public sealed class StackFixture : IAsyncLifetime
     private IPlaywright? _playwright;
     private IBrowser? _browser;
     private string? _storageState;
+    private string? _editorStorageState;
 
     internal E2ETarget Target => E2ETarget.Current
         ?? throw new InvalidOperationException("No SJI_E2E_TARGET; E2EFact should have skipped this test.");
@@ -42,10 +43,17 @@ public sealed class StackFixture : IAsyncLifetime
         var page = await context.NewPageAsync();
         if (!await AdministratorExistsAsync(target.ConnectionString))
             await RegisterAdministratorAsync(page);
-        await LogInAsync(page);
+        await LogInAsync(page, E2ETarget.AdminUser);
 
         _storageState = Path.Combine(Path.GetTempPath(), $"sji-e2e-{target.Name}-auth.json");
         await context.StorageStateAsync(new() { Path = _storageState });
+
+        await Users.EnsureEditorAsync(target.ConnectionString);
+        await using var editorContext = await _browser.NewContextAsync(new() { BaseURL = target.BaseUrl.ToString() });
+        var editorPage = await editorContext.NewPageAsync();
+        await LogInAsync(editorPage, E2ETarget.EditorUser);
+        _editorStorageState = Path.Combine(Path.GetTempPath(), $"sji-e2e-{target.Name}-editor-auth.json");
+        await editorContext.StorageStateAsync(new() { Path = _editorStorageState });
 
         Data = await SeedData.SeedAsync(target.ConnectionString);
     }
@@ -62,17 +70,26 @@ public sealed class StackFixture : IAsyncLifetime
     /// and a screenshot under <see cref="ArtifactsDirectory"/> before rethrowing; on success it keeps
     /// nothing.
     /// </summary>
-    internal async Task RunAsync(string testName, Func<BrowserSession, Task> test, string? timezoneId = null)
+    /// <param name="asEditor">Signed in as the CMS editor rather than the administrator.</param>
+    /// <param name="prepare">Runs against the new context before the page opens - for routing or init scripts.</param>
+    internal async Task RunAsync(
+        string testName,
+        Func<BrowserSession, Task> test,
+        string? timezoneId = null,
+        bool asEditor = false,
+        Func<IBrowserContext, Task>? prepare = null)
     {
         await using var context = await _browser!.NewContextAsync(new()
         {
             BaseURL = Target.BaseUrl.ToString(),
-            StorageStatePath = _storageState,
+            StorageStatePath = asEditor ? _editorStorageState : _storageState,
             ViewportSize = new() { Width = 1440, Height = 900 },
             // The browser's own zone, which the page reads and reports back in its time-zone cookie.
             TimezoneId = timezoneId,
         });
         await context.Tracing.StartAsync(new() { Screenshots = true, Snapshots = true });
+        if (prepare is not null)
+            await prepare(context);
 
         var session = new BrowserSession(Target, await context.NewPageAsync());
         try
@@ -116,10 +133,10 @@ public sealed class StackFixture : IAsyncLifetime
         await page.WaitForURLAsync(url => !url.Contains("/Util/Register", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async Task LogInAsync(IPage page)
+    private static async Task LogInAsync(IPage page, string user)
     {
         await page.GotoAsync("/Util/Login");
-        await page.Locator("input[name=UserName]").FillAsync(E2ETarget.AdminUser);
+        await page.Locator("input[name=UserName]").FillAsync(user);
         await page.Locator("input[name=Password]").FillAsync(E2ETarget.AdminPassword);
         await page.Locator("input[name=Submit]").ClickAsync();
         await page.WaitForURLAsync(url => !url.Contains("/Util/Login", StringComparison.OrdinalIgnoreCase));

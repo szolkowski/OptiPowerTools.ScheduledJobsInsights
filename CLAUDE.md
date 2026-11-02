@@ -697,6 +697,23 @@ Things worth knowing before extending it:
   hash routes in place; `LiveRunTests` reaches it with a full navigation each time. The same test is
   where CMS 12's queued manual start shows: the run begins on the scheduler's next pass, so it waits
   for the execution row rather than assuming one.
+- **Read `Status` as a `tinyint`.** `ExecuteScalarAsync` returns a boxed `byte`, so `as int?` reads
+  every row as missing - which made the cleanup test's "was it deleted" checks pass vacuously until
+  it was caught. `SeedData.StatusAsync` converts.
+- **`CspTests` enforces a strict policy by routing**, adding the header to every document, and
+  reports violations into the test through an exposed function: a list kept in the page's window is
+  reset by every navigation, which once let an inline-style regression on the detail page pass. It
+  ignores what is the CMS shell's own doing on both versions - its navigation bundle injecting a
+  style element, and CDN fonts its stylesheets load - and fails on any other inline style, script
+  or eval, or anything blocked from this package's assets or the Blazor runtime.
+- **A second user, `e2eeditor`** (WebEditors → CmsEditors), is written into the Identity tables by
+  `Users`, hashed with Identity's own `PasswordHasher`. An authenticated user lacking the role is sent
+  to `/Util/Login` by Optimizely rather than given a 403; the menu check reads the navigation tree from
+  the shell's `epiplatformnavigation` response and matches menu URLs only - the raw response also
+  carries the site's name, which contains this repository's name.
+- **The job filter's options are cached for 60 seconds**, process-wide, so on a `--keep` stack a
+  freshly seeded job can be missing from the dropdown for up to a minute; `ListPagingTests` reloads
+  until it appears.
 - **Time-zone labels are the browser's id**, legacy spellings included: Chromium reports
   Asia/Kathmandu as `Asia/Katmandu`. `TimeZoneTests` reads the id back from the browser and proves the
   conversion with the 45-minute offset instead.

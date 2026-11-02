@@ -20,13 +20,8 @@ public sealed class LiveRunTests(StackFixture stack)
         {
             var target = session.Target;
             var page = session.Page;
-            var jobId = await SeedData.ScheduledJobIdAsync(target.ConnectionString, JobType);
-            var previous = await SeedData.LatestExecutionIdAsync(target.ConnectionString, JobType);
 
-            await OpenJobAdminAsync(page, target, jobId);
-            await Button(page, "Start").ClickAsync();
-
-            var executionId = await WaitForNewExecutionAsync(target.ConnectionString, previous);
+            var executionId = await CmsAdmin.StartAsync(page, target, JobType);
 
             await session.OpenDetailAsync(executionId);
             // Under the name the CMS's own admin shows - on CMS 13 too, whose job registry holds only
@@ -39,40 +34,16 @@ public sealed class LiveRunTests(StackFixture stack)
             var before = await count.InnerTextAsync();
             await Assertions.Expect(count).Not.ToHaveTextAsync(before, new() { Timeout = 15_000 });
 
-            await OpenJobAdminAsync(page, target, jobId);
-            await Button(page, "Stop").ClickAsync();
+            await CmsAdmin.StopAsync(page, target, JobType);
 
             await session.OpenDetailAsync(executionId);
             await Assertions.Expect(page.Locator(".status-badge")).ToHaveTextAsync("Stopped", new() { Timeout = 30_000 });
             await Assertions.Expect(page.Locator(".sji-content")).ToContainTextAsync("Stopped early");
             await Assertions.Expect(page.Locator(".live-indicator")).ToHaveCountAsync(0);
+
+            // The automatic metrics reach the database through the buffered writer, after the run is
+            // already marked finished - so a page that stopped reading the moment the status flipped
+            // showed a finished run with an empty metrics table. It reads once more for exactly this.
+            await Assertions.Expect(page.Locator(".metrics-table")).ToContainTextAsync("DurationMs", new() { Timeout = 30_000 });
         });
-
-    /// <summary>
-    /// A full navigation every time: the admin is a single-page app routed on the hash, and moving
-    /// between two of its hash routes in place does not reliably re-render it.
-    /// </summary>
-    private static async Task OpenJobAdminAsync(IPage page, E2ETarget target, Guid jobId)
-    {
-        await page.GotoAsync("about:blank");
-        await page.GotoAsync(target.ScheduledJobAdmin(jobId));
-    }
-
-    /// <summary>The admin's button, once the admin has loaded the job and enabled it.</summary>
-    private static ILocator Button(IPage page, string name) =>
-        page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).And(page.Locator(":enabled"));
-
-    private static async Task<long> WaitForNewExecutionAsync(string connectionString, long previous)
-    {
-        // Up to a minute: CMS 12 picks queued starts up on its scheduler's next pass.
-        for (var attempt = 0; attempt < 120; attempt++)
-        {
-            var latest = await SeedData.LatestExecutionIdAsync(connectionString, JobType);
-            if (latest > previous)
-                return latest;
-            await Task.Delay(500);
-        }
-
-        throw new TimeoutException("The started job never recorded an execution.");
-    }
 }

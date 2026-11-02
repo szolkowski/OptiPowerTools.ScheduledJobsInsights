@@ -21,6 +21,10 @@ COPY --chown=appuser:appuser ./NuGet.config ./Directory.Build.props ./
 COPY --chown=appuser:appuser ./sub/MyOptiAlloySite/MyOptiAlloySite/Directory.Build.props ./sub/MyOptiAlloySite/MyOptiAlloySite/
 COPY --chown=appuser:appuser ./sub/MyOptiAlloySite/MyOptiAlloySite/nuget.config ./sub/MyOptiAlloySite/MyOptiAlloySite/
 COPY --chown=appuser:appuser ./sub/MyOptiAlloySite/MyOptiAlloySite/MyOptiAlloySite.csproj ./sub/MyOptiAlloySite/MyOptiAlloySite/
+# The library's csproj imports this, and it holds more than versions: without it the restore below
+# loses the library's Microsoft.AspNetCore.App framework reference, resolves framework assemblies from
+# NuGet instead, and fails the audit on them.
+COPY --chown=appuser:appuser ./src/Package.props ./src/
 COPY --chown=appuser:appuser ./src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj ./src/OptiPowerTools.ScheduledJobsInsights/
 COPY --chown=appuser:appuser ./src/OptiPowerTools.ScheduledJobsInsights.Web/OptiPowerTools.ScheduledJobsInsights.Web.csproj ./src/OptiPowerTools.ScheduledJobsInsights.Web/
 

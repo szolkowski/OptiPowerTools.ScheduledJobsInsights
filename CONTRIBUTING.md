@@ -305,6 +305,7 @@ tests. Tests run against `net10.0`. It also lists the browser tests below, as sk
 scripts/e2e.sh                  # both CMS versions, one after the other
 scripts/e2e.sh cms12            # one of them
 scripts/e2e.sh cms13 --keep     # leave the stack up; re-runs are then quick
+scripts/e2e.sh --scenarios      # also re-run under each other menu placement and with the insights DB down
 scripts/e2e.sh --down           # remove the e2e stacks
 scripts/e2e.sh cms13 -- --filter DetailPage    # arguments after -- go to dotnet test
 ```
@@ -313,17 +314,22 @@ They cover what the unit and bUnit tests cannot: that the pages render inside th
 right menu entry selected, that each page actually goes live (its Blazor circuit connects) with every
 asset loaded and a clean console, the detail page's virtualized log, jump buttons and collapsible
 sections, a real job started and stopped from the CMS's own admin while the detail page follows it
-live (and fills in its metrics after it finishes), a retention change surviving a reload with its
-audit entry, the links across to the CMS's Scheduled Jobs screens, timestamps following the reader's
+live (and fills in its metrics after it finishes), a job that throws being reported failed by the CMS
+while the detail page shows its log, stack trace and the summary it built before throwing, the
+summary's Copy button, a retention change surviving a reload with its audit entry, a job's own
+`[JobRetention]` shown with its reason, history whose code is gone flagged as such, the links across to the CMS's Scheduled Jobs screens, timestamps following the reader's
 time zone, the pages working under a strict Content Security Policy, a CMS editor being turned away
 and offered no menu entry, the list's paging and filters on real SQL Server, and the cleanup job
-deleting what is past its retention while sparing a run still marked Running. The stacks (`docker-compose.e2e.yml`) are separate from the dev ones — their own containers
+deleting what is past its retention while sparing a run still marked Running. With `--scenarios` the
+web container is then re-created (no rebuild) under each other `MenuPlacement`, checking one entry per
+page at that placement's path, and once with the insights database unreachable, checking that the
+pages report it and that a job still runs and succeeds. The stacks (`docker-compose.e2e.yml`) are separate from the dev ones — their own containers
 and ports (5105/6005 for CMS 13, 5106/6006 for CMS 12), no volumes — so they can run beside your dev
 stacks, and every run starts from an empty database. The tests register their own administrator and
 seed their own execution history; no Alloy content is needed. The first run downloads Chromium.
 
-A failed test leaves a Playwright trace and a screenshot in
-`tests/OptiPowerTools.ScheduledJobsInsights.E2E/artifacts/`; drop the trace on
+A failed test leaves a Playwright trace, a screenshot and the web container's log for the test's
+duration in `tests/OptiPowerTools.ScheduledJobsInsights.E2E/artifacts/`; drop the trace on
 <https://trace.playwright.dev>. `SJI_E2E_HEADED=1` shows the browser while the tests run.
 
 CI builds this project but never runs it: every test skips unless `SJI_E2E_TARGET` is set, which the

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Playwright;
 
@@ -92,6 +94,7 @@ public sealed class StackFixture : IAsyncLifetime
             await prepare(context);
 
         var session = new BrowserSession(Target, await context.NewPageAsync());
+        var started = DateTimeOffset.UtcNow;
         try
         {
             await test(session);
@@ -103,7 +106,42 @@ public sealed class StackFixture : IAsyncLifetime
             Directory.CreateDirectory(ArtifactsDirectory);
             await session.Page.ScreenshotAsync(new() { Path = stem + ".png", FullPage = true });
             await context.Tracing.StopAsync(new() { Path = stem + ".trace.zip" });
+            await SaveServerLogAsync(stem + ".log", started);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// The web container's log for the test's duration: the trace shows what the browser sent, this
+    /// shows what the CMS did with it. Kept beside the trace because the container may not outlive the
+    /// run - --scenarios re-creates it, and without --keep it is removed. Best effort: a failure to read
+    /// the log must not replace the test's own failure.
+    /// </summary>
+    private async Task SaveServerLogAsync(string path, DateTimeOffset since)
+    {
+        try
+        {
+            using var docker = Process.Start(new ProcessStartInfo("docker")
+            {
+                // A few seconds' margin, so what led up to the test's first request is included.
+                ArgumentList = { "logs", "--since", since.AddSeconds(-5).ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture), Target.WebContainer },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            })!;
+            // The CMS logs to both streams; read them together so neither fills its pipe and blocks.
+            var output = docker.StandardOutput.ReadToEndAsync();
+            var errors = docker.StandardError.ReadToEndAsync();
+            await docker.WaitForExitAsync();
+            var log = await output + await errors;
+            // A header, so a quiet window - a page view logs nothing at the default level - cannot be
+            // mistaken for a capture that failed.
+            await File.WriteAllTextAsync(path,
+                $"docker logs {Target.WebContainer}, from {since.AddSeconds(-5):O} (exit {docker.ExitCode})" + Environment.NewLine
+                + (log.Length == 0 ? "(nothing logged in this window)" + Environment.NewLine : log));
+        }
+        catch (Exception ex)
+        {
+            await File.WriteAllTextAsync(path, $"Could not read the {Target.WebContainer} log: {ex.Message}");
         }
     }
 

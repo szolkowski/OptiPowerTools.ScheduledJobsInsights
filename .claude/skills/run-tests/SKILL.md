@@ -22,6 +22,11 @@ summary table rather than from raw `dotnet test` output.
   cannot see — `Views/`, `Components/`, `wwwroot/`, the CMS menu, `Cms/CmsAdminUrls.cs`, Docker or
   hosting code — or when explicitly asked for browser or end-to-end tests.
 - **`e2e cms13` / `e2e cms12`** when only one CMS version is in question.
+- **`--scenarios`** (with `e2e` or `all`) also re-runs the browser tests under each other CMS menu
+  placement and with the insights database unreachable. Use it after touching the menu provider, the
+  write path's failure handling or startup migration, or before a release. The e2e row then sums
+  several runs and its note says how many; tests skipped because they belong to another scenario are
+  not counted as skipped.
 - **`--keep`** leaves the e2e stacks running, so repeated e2e runs skip the cold start. Say so in the
   report, since the stacks keep using memory (SQL Server runs emulated on Apple Silicon).
 
@@ -33,6 +38,7 @@ From the repository root:
 .claude/skills/run-tests/run-tests.sh            # unit
 .claude/skills/run-tests/run-tests.sh all        # unit + e2e on both CMS versions
 .claude/skills/run-tests/run-tests.sh e2e cms12  # e2e on one CMS version
+.claude/skills/run-tests/run-tests.sh all --scenarios  # + menu placements, insights DB down
 ```
 
 Run the e2e scopes with `run_in_background`, since they take minutes, and wait for the completion
@@ -73,8 +79,12 @@ Everything from a run is in the folder the script printed (also recorded in
 stack traces.
 
 For an e2e failure, `tests/OptiPowerTools.ScheduledJobsInsights.E2E/artifacts/` holds a screenshot
-(`<target>-<test>.png`) and a Playwright trace (`.trace.zip`) of each failed test. Look at the
-screenshot first — it usually shows the cause outright. The trace opens at <https://trace.playwright.dev>.
+(`<target>-<test>.png`), a Playwright trace (`.trace.zip`) and the web container's log for the test's
+duration (`.log`) of each failed test. Look at the screenshot first — it usually shows the cause
+outright. The trace shows what the browser sent; the `.log` shows what the CMS did with it, and is the
+only copy once the container has been re-created or removed. The trace opens at <https://trace.playwright.dev>.
+`LiveRunTests` on CMS 12 has failed once (of 24 runs) with the run still `Running` after Stop was
+accepted; if it recurs, read its `.log` before re-running, and report what it shows.
 If every e2e test failed after about 30 seconds each, the pages never went live (the tests wait for a
 `data-sji-interactive` marker): suspect the hosting view or the Blazor wiring, not the individual tests.
 

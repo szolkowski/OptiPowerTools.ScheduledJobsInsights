@@ -49,6 +49,36 @@ public sealed class RetentionTests(StackFixture stack)
             await Assertions.Expect(Row(session.Page).Locator(".job-name")).ToHaveTextAsync("Sample: Quiet");
         });
 
+    [E2EFact]
+    public Task AJobsOwnDeclaration_IsShownWithItsReason_AndIsInForce() =>
+        stack.RunAsync(nameof(AJobsOwnDeclaration_IsShownWithItsReason_AndIsInForce), async session =>
+        {
+            await session.OpenRetentionAsync();
+            // [JobRetention(7, Description = ...)] on the sample, and no override over it.
+            var row = Row(session.Page, "OptiPowerTools.ScheduledJobsInsights.Web.Samples.ChattyBatchJob");
+
+            await Assertions.Expect(row.Locator(".declared")).ToHaveTextAsync("7 days");
+            await Assertions.Expect(row).ToContainTextAsync("only useful for diagnosing a recent failure");
+            await Assertions.Expect(row.Locator(".effective")).ToHaveTextAsync("7 days");
+            await Assertions.Expect(row.Locator(".tag-source")).ToHaveTextAsync("from job");
+        });
+
+    [E2EFact]
+    public Task HistoryWhoseCodeIsGone_IsListed_AndSaysSo() =>
+        stack.RunAsync(nameof(HistoryWhoseCodeIsGone_IsListed_AndSaysSo), async session =>
+        {
+            await session.OpenRetentionAsync();
+            // A seeded type no assembly defines: only its executions exist, so only they put it here.
+            var row = Row(session.Page, SeedData.TypePrefix + "Paging");
+
+            await Assertions.Expect(row.Locator(".tag-orphan")).ToHaveTextAsync("history only");
+            await Assertions.Expect(row.Locator(".numeric")).ToHaveTextAsync($"{SeedData.PagingRuns}");
+            await Assertions.Expect(row.Locator(".tag-source")).ToHaveTextAsync("default");
+        });
+
+    private static ILocator Row(IPage page, string jobType) =>
+        page.Locator("tr").Filter(new() { Has = page.Locator(".job-type", new() { HasTextRegex = new($"^{System.Text.RegularExpressions.Regex.Escape(jobType)}$") }) });
+
     private static ILocator Row(IPage page) =>
         page.Locator("tr").Filter(new() { Has = page.Locator(".job-type", new() { HasText = JobType }) });
 

@@ -10,6 +10,11 @@
 #
 #   profile cms13  ->  web :5105, SQL Server :6005
 #   profile cms12  ->  web :5106, SQL Server :6006
+#
+# Two settings come from the environment, for the scenarios scripts/e2e.sh --scenarios runs by
+# re-creating the web container (no rebuild): SJI_E2E_MENU_PLACEMENT, the CMS menu placement, and
+# SJI_E2E_INSIGHTS_CONNECTION, the insights database's connection string - pointed nowhere to test the
+# package with its database unreachable while the CMS's own keeps working.
 name: sjinsights-e2e
 
 x-sql-password: &sql-password ${SA_PASSWORD:-Episerver123!}
@@ -58,7 +63,8 @@ services:
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       CONNECTIONSTRINGS__EPISERVERDB: &db13 Server=cms13-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;
       CONNECTIONSTRINGS__ECFSQLCONNECTION: *db13
-      OptiPowerTools__ScheduledJobsInsights__ConnectionString: *db13
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: ${SJI_E2E_INSIGHTS_CONNECTION:-Server=cms13-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;}
+      OptiPowerTools__ScheduledJobsInsights__MenuPlacement: ${SJI_E2E_MENU_PLACEMENT:-DataSyncManagement}
     ports:
       - "5105:80"
     networks: [e2e13]
@@ -103,7 +109,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       CONNECTIONSTRINGS__EPISERVERDB: &db12 Server=cms12-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;
-      OptiPowerTools__ScheduledJobsInsights__ConnectionString: *db12
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: ${SJI_E2E_INSIGHTS_CONNECTION:-Server=cms12-db;Database=ScheduledJobsInsightsE2E;User Id=sa;Password=${SA_PASSWORD:-Episerver123!};TrustServerCertificate=True;Encrypt=False;}
+      OptiPowerTools__ScheduledJobsInsights__MenuPlacement: ${SJI_E2E_MENU_PLACEMENT:-DataSyncManagement}
     ports:
       - "5106:80"
     networks: [e2e12]

@@ -15,6 +15,10 @@ scaffold's placeholder tokens have already been renamed throughout.
 
 ## Commands
 
+To run the tests and get one status table, use the `run-tests` skill
+(`.claude/skills/run-tests/run-tests.sh [unit|e2e|all] [cms13|cms12] [--keep]`); it runs every suite the
+way it has to be run and writes logs and `.trx` results to `artifacts/test-run/`.
+
 ```bash
 # Build/test the packable library + tests (works without the submodule)
 dotnet build src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj

@@ -180,9 +180,17 @@ section. Three things about it are deliberate:
    longer in the repository). A non-positive configured value falls back to
    `JobResultSummary.DefaultMaxLength` rather than throwing.
 
-Job name resolution (`IScheduledJobRepository.Get(ScheduledJobId)`) is wrapped in try/catch with a
-fallback to `GetType().Name` — this is deliberate, not just defensive: it's what makes the class
-constructible in unit tests without a registered `ScheduledJob` definition.
+Job name resolution takes the **display name the job declares on its scheduled-job attribute** first
+(`Cms/ScheduledJobDisplayName`), then the CMS registry's name (`IScheduledJobRepository.Get`), then
+`GetType().Name`. The attribute comes first because the registry's `Name` means different things per
+CMS version: CMS 12 stores the display name there, CMS 13 the class name (its scanner sets
+`Name = Type.Name`, and its admin reads the display name from the attribute). Reading the registry
+recorded and listed every CMS 13 job as `SlowMigrationJob` where the CMS says "Sample: Slow
+Migration" — found by the e2e tests, and the retention screen had the same bug through
+`RegisteredJobNames`; it now prefers `LoggedJobTypeIndex.FindDisplayName`. Executions recorded before
+the fix keep the name they were recorded with. The registry lookup is wrapped in try/catch — deliberate,
+not just defensive: it's what makes the class constructible in unit tests without a registered
+`ScheduledJob` definition.
 
 ### Write path: why some writes are sync and others are buffered
 
@@ -766,6 +774,9 @@ CMS 12 behaves differently in ways that look like package bugs and are not — t
 - **Start Manually needs the scheduler.** CMS 12 queues the start for the scheduler service, so the
   CMS 12 dev host deliberately leaves `SchedulerOptions.Enabled` on in Development. A queued start
   survives a restart and runs after the next boot.
+- **`ScheduledJob.Name` is the display name on CMS 12 but the class name on CMS 13.** Anything that
+  shows a job's name reads the attribute first (`ScheduledJobDisplayName`); anything that identifies a
+  job uses `TypeName`, which is the same on both.
 - **Every job is constructed at startup**, outside any execution, to read `IsStoppable`
   (`DefaultScheduledJobScanner.GetIsStoppable`). `LoggedScheduledJobBase`'s constructor must stay free
   of side effects; it says so.

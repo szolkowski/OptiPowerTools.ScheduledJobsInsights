@@ -1,5 +1,6 @@
 using System.Reflection;
 using EPiServer.Framework.TypeScanner;
+using OptiPowerTools.ScheduledJobsInsights.Cms;
 using OptiPowerTools.ScheduledJobsInsights.Logging;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Retention;
@@ -24,7 +25,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Retention;
 /// </remarks>
 internal sealed class LoggedJobTypeIndex
 {
-    private readonly Lazy<Dictionary<string, JobRetentionAttribute?>> _loggedJobs;
+    private readonly Lazy<Dictionary<string, LoggedJobType>> _loggedJobs;
     private readonly ITypeScannerLookup? _typeScanner;
 
     /// <summary>Initializes the index.</summary>
@@ -37,7 +38,7 @@ internal sealed class LoggedJobTypeIndex
     public LoggedJobTypeIndex(ITypeScannerLookup? typeScanner = null)
     {
         _typeScanner = typeScanner;
-        _loggedJobs = new Lazy<Dictionary<string, JobRetentionAttribute?>>(
+        _loggedJobs = new Lazy<Dictionary<string, LoggedJobType>>(
             Scan, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -49,13 +50,20 @@ internal sealed class LoggedJobTypeIndex
 
     /// <summary>The attribute a logged job declares, or null if it declares none.</summary>
     public JobRetentionAttribute? FindAttribute(string jobTypeName) =>
-        _loggedJobs.Value.GetValueOrDefault(jobTypeName);
+        _loggedJobs.Value.GetValueOrDefault(jobTypeName)?.Retention;
 
-    private Dictionary<string, JobRetentionAttribute?> Scan()
+    /// <summary>
+    /// The display name a logged job declares on its scheduled-job attribute, or null if it declares
+    /// none - the name the CMS's own admin shows, on either CMS version.
+    /// </summary>
+    public string? FindDisplayName(string jobTypeName) =>
+        _loggedJobs.Value.GetValueOrDefault(jobTypeName)?.DisplayName;
+
+    private Dictionary<string, LoggedJobType> Scan()
     {
         // A plain dictionary is enough: Lazy(ExecutionAndPublication) guarantees exactly one thread
         // ever runs this, and the result is never mutated afterwards.
-        var found = new Dictionary<string, JobRetentionAttribute?>(StringComparer.Ordinal);
+        var found = new Dictionary<string, LoggedJobType>(StringComparer.Ordinal);
 
         foreach (var type in CandidateTypes())
         {
@@ -70,7 +78,9 @@ internal sealed class LoggedJobTypeIndex
                 if (type is { IsAbstract: false, FullName: { } fullName }
                     && typeof(LoggedScheduledJobBase).IsAssignableFrom(type))
                 {
-                    found.TryAdd(fullName, type.GetCustomAttribute<JobRetentionAttribute>(inherit: false));
+                    found.TryAdd(fullName, new LoggedJobType(
+                        type.GetCustomAttribute<JobRetentionAttribute>(inherit: false),
+                        ScheduledJobDisplayName.Of(type)));
                 }
             }
             catch (Exception)
@@ -148,3 +158,8 @@ internal sealed class LoggedJobTypeIndex
         }
     }
 }
+
+/// <summary>What the index knows about one logged job type, read in a single reflection pass.</summary>
+/// <param name="Retention">The <see cref="JobRetentionAttribute"/> it declares, if any.</param>
+/// <param name="DisplayName">The display name on its scheduled-job attribute, if any.</param>
+internal sealed record LoggedJobType(JobRetentionAttribute? Retention, string? DisplayName);

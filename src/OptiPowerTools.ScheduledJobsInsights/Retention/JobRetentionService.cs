@@ -189,7 +189,11 @@ internal sealed class JobRetentionService : IJobRetentionService
 
         return new JobRetention(
             JobTypeName: jobTypeName,
-            DisplayName: isRegistered ? registeredName! : RegisteredJobNames.ShortNameOf(jobTypeName),
+            // The job's declared display name, as the CMS's own admin shows it; then the registry's
+            // name - which on CMS 13 is only the class name, see ScheduledJobDisplayName - and last the
+            // class name of a type the CMS no longer knows.
+            DisplayName: _jobTypes.FindDisplayName(jobTypeName)
+                ?? (isRegistered ? registeredName! : RegisteredJobNames.ShortNameOf(jobTypeName)),
             IsRegistered: isRegistered,
             ExistsInCode: _jobTypes.Exists(jobTypeName),
             Attribute: attribute is null ? null : RetentionPeriod.FromAttribute(attribute),

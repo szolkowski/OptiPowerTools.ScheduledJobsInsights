@@ -38,6 +38,17 @@ public sealed class RetentionTests(StackFixture stack)
             }
         });
 
+    [E2EFact]
+    public Task EachJob_IsListedUnderTheNameTheCmsAdminShows() =>
+        stack.RunAsync(nameof(EachJob_IsListedUnderTheNameTheCmsAdminShows), async session =>
+        {
+            await session.OpenRetentionAsync();
+
+            // The display name the job declares, not its class name - which is all CMS 13's job
+            // registry holds, and what this screen used to show there.
+            await Assertions.Expect(Row(session.Page).Locator(".job-name")).ToHaveTextAsync("Sample: Quiet");
+        });
+
     private static ILocator Row(IPage page) =>
         page.Locator("tr").Filter(new() { Has = page.Locator(".job-type", new() { HasText = JobType }) });
 

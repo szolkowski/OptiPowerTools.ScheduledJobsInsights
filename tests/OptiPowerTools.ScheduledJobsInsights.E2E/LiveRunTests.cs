@@ -29,6 +29,9 @@ public sealed class LiveRunTests(StackFixture stack)
             var executionId = await WaitForNewExecutionAsync(target.ConnectionString, previous);
 
             await session.OpenDetailAsync(executionId);
+            // Under the name the CMS's own admin shows - on CMS 13 too, whose job registry holds only
+            // the class name. Recording that name headed every CMS 13 run "SlowMigrationJob".
+            await Assertions.Expect(page.Locator(".page-header h1")).ToHaveTextAsync("Sample: Slow Migration");
             await Assertions.Expect(page.Locator(".status-badge")).ToHaveTextAsync("Running");
             await Assertions.Expect(page.Locator(".live-indicator")).ToBeVisibleAsync();
             // The page polls while the run is live: the log keeps growing without a reload.

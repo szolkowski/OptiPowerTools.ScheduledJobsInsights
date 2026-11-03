@@ -63,6 +63,28 @@ public sealed class DetailPageTests(StackFixture stack)
         });
 
     [E2EFact]
+    public Task Copy_PutsTheWholeSummaryOnTheClipboard() =>
+        stack.RunAsync(nameof(Copy_PutsTheWholeSummaryOnTheClipboard), async session =>
+        {
+            await session.OpenDetailAsync(stack.Data.LogExecutionId);
+            var page = session.Page;
+            var summary = page.Locator("details.accordion").Filter(new() { Has = page.Locator(".accordion-title", new() { HasText = "Result summary" }) });
+            await summary.Locator("summary").ClickAsync();
+
+            // localhost is a secure context, so navigator.clipboard exists; on plain HTTP elsewhere the
+            // button would say "Copy unavailable" instead.
+            await summary.GetByRole(AriaRole.Button, new() { Name = "Copy" }).ClickAsync();
+            await Assertions.Expect(summary.GetByRole(AriaRole.Button, new() { Name = "Copied" })).ToBeVisibleAsync();
+
+            // All of it, as stored - not the part on screen, and not the rendered text.
+            var expected = string.Join('\n', Enumerable.Range(1, SeedData.SummaryLines).Select(i => $"E2E summary line {i:D3}"));
+            Assert.Equal(expected, await page.EvaluateAsync<string>("() => navigator.clipboard.readText()"));
+
+            // And back again, so a second click gives the same feedback.
+            await Assertions.Expect(summary.GetByRole(AriaRole.Button, new() { Name = "Copy" })).ToBeVisibleAsync();
+        }, prepare: context => context.GrantPermissionsAsync(["clipboard-read", "clipboard-write"]));
+
+    [E2EFact]
     public Task TheMetrics_ListEverySeededMetric() =>
         stack.RunAsync(nameof(TheMetrics_ListEverySeededMetric), async session =>
         {

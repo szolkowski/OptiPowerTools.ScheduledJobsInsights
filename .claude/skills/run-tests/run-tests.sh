@@ -8,6 +8,8 @@
 #   run-tests.sh e2e cms12       browser tests on one CMS version
 #   run-tests.sh all             unit, then e2e
 #   ... --keep                   leave the e2e stacks running afterwards (faster re-runs)
+#   ... --scenarios              e2e also re-runs under each other CMS menu placement and with the
+#                                insights database unreachable (~1 extra minute per CMS version)
 #
 # Every run writes its logs and .trx results to artifacts/test-run/<UTC timestamp>/ (gitignored) and
 # records that folder in artifacts/test-run/latest. Exit code: 0 when everything ran and passed.
@@ -23,12 +25,14 @@ cd "${REPO_ROOT}"
 mode=unit
 targets=()
 keep=false
+scenarios=false
 for arg in "$@"; do
     case "${arg}" in
         unit|e2e|all) mode="${arg}" ;;
         cms13|cms12) targets+=("${arg}") ;;
         --keep) keep=true ;;
-        -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --scenarios) scenarios=true ;;
+        -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "error: unknown argument '${arg}' (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -55,10 +59,13 @@ run_e2e() {
     echo ">>> e2e / ${target} (builds and starts a throwaway stack; a cold start takes a few minutes)"
     local extra=()
     [[ "${keep}" == true ]] && extra+=(--keep)
+    [[ "${scenarios}" == true ]] && extra+=(--scenarios)
+    # A prefix, not a file name: with --scenarios, e2e.sh runs the tests once per scenario, and each
+    # run gets a .trx of its own (<prefix>_<timestamp>.trx); the summary adds them up.
     scripts/e2e.sh "${target}" "${extra[@]+"${extra[@]}"}" -- \
-        --logger "trx;LogFileName=${name}.trx" --results-directory "${RUN_DIR}" \
+        --logger "trx;LogFilePrefix=${name}" --results-directory "${RUN_DIR}" \
         > "${RUN_DIR}/${name}.log" 2>&1
-    suites+=("e2e / ${target}|${RUN_DIR}/${name}.trx|${RUN_DIR}/${name}.log|$?|e2e")
+    suites+=("e2e / ${target}|${RUN_DIR}/${name}_*.trx|${RUN_DIR}/${name}.log|$?|e2e")
 }
 
 preflight_e2e() {
@@ -90,7 +97,7 @@ fi
 
 echo
 python3 - "${RUN_DIR}" "${suites[@]}" <<'PY'
-import os, re, sys, xml.etree.ElementTree as ET
+import glob, os, re, sys, xml.etree.ElementTree as ET
 
 run_dir, rows = sys.argv[1], sys.argv[2:]
 ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
@@ -103,19 +110,30 @@ for row in rows:
     note, status = "", "PASS"
     passed = failed = skipped = None
 
-    if os.path.exists(trx):
-        root = ET.parse(trx).getroot()
-        c = root.find("t:ResultSummary/t:Counters", ns).attrib
-        passed, failed = int(c["passed"]), int(c["failed"])
-        skipped = int(c["total"]) - int(c["executed"])
-        for r in root.iterfind(".//t:UnitTestResult[@outcome='Failed']", ns):
-            message = r.findtext(".//t:ErrorInfo/t:Message", default="", namespaces=ns).strip()
-            details.append((label, r.attrib["testName"], message.splitlines()[0] if message else ""))
+    files = sorted(glob.glob(trx)) if "*" in trx else ([trx] if os.path.exists(trx) else [])
+    if files:
+        passed = failed = skipped = 0
+        empty_runs = 0
+        for f in files:
+            root = ET.parse(f).getroot()
+            c = root.find("t:ResultSummary/t:Counters", ns).attrib
+            passed += int(c["passed"]); failed += int(c["failed"])
+            empty_runs += int(c["passed"]) + int(c["failed"]) == 0
+            for r in root.iterfind(".//t:UnitTestResult[@outcome='Failed']", ns):
+                message = r.findtext(".//t:ErrorInfo/t:Message", default="", namespaces=ns).strip()
+                details.append((label, r.attrib["testName"], message.splitlines()[0] if message else ""))
+            # A test skipped because it belongs to another e2e scenario is expected; any other skip is not.
+            for r in root.iterfind(".//t:UnitTestResult[@outcome='NotExecuted']", ns):
+                reason = (r.findtext(".//t:Output/t:StdOut", default="", namespaces=ns)
+                          + r.findtext(".//t:Output/t:ErrorInfo/t:Message", default="", namespaces=ns))
+                skipped += "scenario" not in reason
+        if len(files) > 1:
+            note = f"{len(files)} runs: standard + {len(files) - 1} scenarios"
         if failed:
             status = "FAIL"
-        elif kind == "e2e" and passed == 0:
-            # Everything skipped means SJI_E2E_TARGET never reached the tests - not a pass.
-            status, note = "FAIL", "nothing ran: every test was skipped"
+        elif kind == "e2e" and empty_runs:
+            # A run where everything skipped means SJI_E2E_TARGET or the scenario never reached the tests.
+            status, note = "FAIL", f"nothing ran in {empty_runs} of {len(files)} runs: every test was skipped"
         elif kind == "unit" and skipped:
             note = f"{skipped} skipped - unit suites normally skip nothing"
     else:

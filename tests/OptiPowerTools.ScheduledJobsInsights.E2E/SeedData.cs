@@ -24,6 +24,12 @@ internal static class SeedData
 
     public static readonly string[] MetricNames = ["DurationMs", "ItemsProcessed", "ThreadAllocatedBytes"];
 
+    /// <summary>The paging job's run count: two full pages of 50 and a partial third.</summary>
+    public const int PagingRuns = 120;
+
+    /// <summary>The result message of one paging run, numbered oldest first.</summary>
+    public static string PagingRun(int number) => $"Paging run {number:D3}";
+
     /// <summary>The package's cleanup job: registered on every host, so a real job to link to.</summary>
     public const string CleanupJobType = "OptiPowerTools.ScheduledJobsInsights.Jobs.ScheduledJobsInsightsCleanupJob";
 
@@ -39,6 +45,42 @@ internal static class SeedData
         command.Parameters.AddWithValue("@type", typeName);
         return (Guid)(await command.ExecuteScalarAsync()
             ?? throw new InvalidOperationException($"No scheduled job of type {typeName} is registered."));
+    }
+
+    /// <summary>The status of an execution, or null when it no longer exists.</summary>
+    public static async Task<int?> StatusAsync(string connectionString, long executionId)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand($"SELECT Status FROM {Schema}.JobExecutions WHERE Id = @id", connection);
+        command.Parameters.AddWithValue("@id", executionId);
+        // Status is a tinyint, so this is a boxed byte: an `as int?` cast would read every row as
+        // missing, and a "was it deleted" check would pass without proving anything.
+        return await command.ExecuteScalarAsync() is { } status and not DBNull ? Convert.ToInt32(status, System.Globalization.CultureInfo.InvariantCulture) : null;
+    }
+
+    /// <summary>Inserts one execution directly, for tests that need rows of their own.</summary>
+    public static async Task<long> InsertAsync(
+        string connectionString, string jobName, string typeSuffix, int status, DateTimeOffset startedAt, bool completed = true)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        return await InsertExecutionAsync(connection, jobName, typeSuffix, status, startedAt, completed: completed);
+    }
+
+    /// <summary>Sets, or with null days clears, a retention override for a job type.</summary>
+    public static async Task SetRetentionAsync(string connectionString, string jobTypeName, int? days)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        await ExecuteAsync(connection, $"DELETE FROM {Schema}.JobRetentionPolicies WHERE JobTypeName = @type", ("@type", jobTypeName));
+        if (days is { } value)
+        {
+            await ExecuteAsync(connection, $"""
+                INSERT INTO {Schema}.JobRetentionPolicies (JobTypeName, RetentionDays, ModifiedBy, ModifiedAt)
+                VALUES (@type, @days, 'e2e', SYSDATETIMEOFFSET())
+                """, ("@type", jobTypeName), ("@days", value));
+        }
     }
 
     /// <summary>The newest execution of a job type, or 0 when it has none.</summary>
@@ -93,6 +135,19 @@ internal static class SeedData
                 """,
                 ("@id", logExecutionId), ("@name", name), ("@value", 100.0 * (index + 1)), ("@at", now));
         }
+
+        // The paging job: 120 runs, a minute apart, all older than everything above, so they never mix
+        // with the other seeded runs in the list - each numbered in its result message, so a test can
+        // tell exactly which runs a page holds. Newest is run 120.
+        await ExecuteAsync(connection, $"""
+            INSERT INTO {Schema}.JobExecutions
+                (ScheduledJobId, JobName, JobTypeName, StartedAt, CompletedAt, Status, ResultMessage, MachineName)
+            SELECT NEWID(), 'E2E Paging Job', '{TypePrefix}Paging', DATEADD(MINUTE, n, @oldest),
+                   DATEADD(SECOND, 5, DATEADD(MINUTE, n, @oldest)), 1, CONCAT('Paging run ', FORMAT(n, 'D3')), 'e2e'
+            FROM (SELECT TOP ({PagingRuns}) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n
+                  FROM sys.all_objects) numbers
+            """,
+            ("@oldest", now.AddDays(-1)));
 
         // Recorded against the cleanup job's real id, so its "Scheduled job settings" link leads to a job
         // the CMS knows. The other seeded executions carry random ids that match nothing.

@@ -22,6 +22,14 @@ internal sealed record E2ETarget(
     /// <summary>A throwaway stack's throwaway password - the same placeholder the dev stacks use.</summary>
     public const string AdminPassword = Password;
 
+    /// <summary>
+    /// A CMS editor: signed in and allowed into the CMS, but not in a role the insights pages accept.
+    /// </summary>
+    public const string EditorUser = "e2eeditor";
+
+    /// <summary>The CMS's editing UI, which an editor may open.</summary>
+    public string CmsEditPath => $"{AdminPath}/CMS/";
+
     public static E2ETarget? Current { get; } = Resolve(Environment.GetEnvironmentVariable("SJI_E2E_TARGET"));
 
     private static E2ETarget? Resolve(string? name) => name?.Trim().ToLowerInvariant() switch

@@ -7,11 +7,24 @@
 # containers building it at once would overwrite each other.
 FROM mcr.microsoft.com/dotnet/sdk:10.0
 
+# Not root, like the dev images: created before anything is restored, so the NuGet cache lands in its
+# home. Port 80 still binds - Docker lets unprivileged processes in a container use low ports.
+RUN useradd --create-home appuser
+USER appuser
+
 # The dev host's project directory, relative to the repository root.
 ARG WEB_PROJECT_DIR
 
 WORKDIR /src
-COPY . .
+
+# What the build reads, named rather than `COPY . .`, so nothing else in the working tree - a local
+# .env, editor settings, test artifacts - can end up in the image whatever .dockerignore misses.
+# .editorconfig is build input too: it sets analyzer severities, and TreatWarningsAsErrors is on.
+COPY --chown=appuser:appuser NuGet.config Directory.Build.props .editorconfig ./
+COPY --chown=appuser:appuser src ./src
+# The CMS 13 host is the Alloy submodule's site; the CMS 12 host does not need it, and an
+# uninitialised submodule is an empty directory, which copies as one.
+COPY --chown=appuser:appuser sub ./sub
 
 # SourceLink needs the git history, which .dockerignore leaves out; without these it warns, and
 # TreatWarningsAsErrors turns the warning into a failed build.

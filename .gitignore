@@ -126,6 +126,9 @@ ipch/
 
 # Visual Studio Trace Files
 *.e2e
+# ...but not the browser-test project: with case-insensitive matching (the default on macOS and
+# Windows) the pattern above also ignores the directory OptiPowerTools.ScheduledJobsInsights.E2E.
+!tests/OptiPowerTools.ScheduledJobsInsights.E2E/
 
 # TFS 2012 Local Workspace
 $tf/

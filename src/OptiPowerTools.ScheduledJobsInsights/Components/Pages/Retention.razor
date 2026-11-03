@@ -33,6 +33,13 @@
 @inject IAuthorizationService AuthorizationService
 @inject ILogger<Retention> Logger
 
+@* Present only once the circuit has rendered this page, which prerendering never does. The local
+   end-to-end tests wait on it rather than guessing when the page became interactive; it is hidden
+   and carries no content. *@
+@if (_interactive)
+{
+    <span hidden data-sji-interactive></span>
+}
 <div class="page-header">
     <h1>Job retention</h1>
     <a class="action-link" href="@Options.Value.CmsShellPath">&larr; Executions</a>
@@ -205,6 +212,19 @@ else
     /// </summary>
     [Parameter]
     public string? CurrentUser { get; set; }
+
+    /// <summary>Set on the first interactive render; drives the data-sji-interactive marker.</summary>
+    private bool _interactive;
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // OnAfterRender never runs during prerendering, so this is the first moment the page is
+        // live. Re-render once so the marker appears.
+        if (!firstRender)
+            return;
+
+        _interactive = true;
+        StateHasChanged();
+    }
 
     protected override async Task OnInitializedAsync()
     {

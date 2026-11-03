@@ -16,6 +16,17 @@ public class DetailTests : ComponentTestBase
     private void GivenExecution(JobExecution? execution, long id = 1) =>
         QueryService.GetExecutionAsync(id, Arg.Any<CancellationToken>()).Returns(Task.FromResult(execution));
 
+    // The local end-to-end tests wait on this marker for the circuit to be live. bUnit renders
+    // interactively, so the marker must be there after render; a page that stopped emitting it
+    // would leave those tests waiting out their timeout instead of failing for the real reason.
+    [Fact]
+    public void OnceRenderedInteractively_CarriesTheInteractiveMarker()
+    {
+        GivenExecution(null, id: 42);
+
+        Assert.Single(RenderDetail(id: 42).FindAll("[data-sji-interactive]"));
+    }
+
     [Fact]
     public void AMissingExecution_SaysSo_RatherThanLoadingForever()
     {

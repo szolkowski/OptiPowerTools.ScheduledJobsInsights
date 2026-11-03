@@ -233,6 +233,12 @@ jobs:
       - name: Build the CMS 12 dev host
         run: dotnet build src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web/OptiPowerTools.ScheduledJobsInsights.Cms12.Web.csproj -c Release
 
+      # The browser tests are local-only - they need the throwaway Docker stacks of scripts/e2e.sh, and
+      # every one of them skips without SJI_E2E_TARGET - but they are compiled here, so a change that
+      # breaks them is caught on the PR rather than the next time someone runs them by hand.
+      - name: Build the local e2e tests (not run)
+        run: dotnet build tests/OptiPowerTools.ScheduledJobsInsights.E2E/OptiPowerTools.ScheduledJobsInsights.E2E.csproj -c Release
+
       # --- Migrations against real SQL Server ---------------------------------------------------
       # Nothing else verifies these. The EF tests run on Sqlite, and OnModelCreating deliberately
       # swaps in a DateTimeOffset converter for that provider, so descending index keys,

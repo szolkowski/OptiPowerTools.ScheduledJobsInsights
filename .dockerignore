@@ -1,0 +1,15 @@
+# Build context for the Docker images. The dev images copy only manifests and bind-mount the source,
+# so this mainly matters for Docker/e2e-web.dockerfile, which copies the whole tree: the host's build
+# output and git history have no place in it, and leaving them out keeps the context small.
+**/bin/
+**/obj/
+**/node_modules/
+.git
+**/.git
+.vs/
+.idea/
+.vscode/
+*.nupkg
+*.snupkg
+tests/OptiPowerTools.ScheduledJobsInsights.E2E/artifacts/
+.env

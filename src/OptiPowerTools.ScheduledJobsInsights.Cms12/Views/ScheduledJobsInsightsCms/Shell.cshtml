@@ -1,0 +1,19 @@
+@model OptiPowerTools.ScheduledJobsInsights.Cms.ScheduledJobsInsightsPageModel
+@* The CMS 12 shell chrome around the page, and only that: the document itself is _ShellLayout.cshtml
+   and the page inside it _ShellComponents.cshtml, both shared with - and linked from - the CMS 13
+   package. Its own Shell.cshtml (src/OptiPowerTools.ScheduledJobsInsights/Views/ScheduledJobsInsightsCms/)
+   is this file with CMS 13's equivalents: CMS 12's EPiServer.Shell.UI has no episerver-resources or
+   platform-navigation-wrapper tag helper (either would render as a literal tag, with no build error),
+   and CMS 13 removed the HTML helpers used here instead. *@
+@{
+    // Set explicitly, which also keeps a host application's _ViewStart layout away from this page.
+    Layout = "_ShellLayout";
+}
+@section ShellResources {
+    @ClientResources.RenderResources("ShellCore")
+    @ClientResources.RenderResources("ShellCoreLightTheme")
+}
+@Html.CreatePlatformNavigationMenu()
+<div @Html.ApplyPlatformNavigation()>
+    <partial name="_ShellComponents" model="Model" />
+</div>

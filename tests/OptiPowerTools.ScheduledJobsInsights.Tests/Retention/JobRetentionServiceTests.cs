@@ -148,6 +148,20 @@ public class JobRetentionServiceTests
     }
 
     [Fact]
+    public async Task GetAllAsync_PrefersTheJobsDeclaredDisplayName_OverTheRegistryName()
+    {
+        // The CMS 13 shape: registered under its class name, while the CMS's own admin shows the name
+        // the job declares. The screen should agree with the admin.
+        using var factory = new SqliteDbContextFactory();
+        var namedType = typeof(NamedTestJob).FullName!;
+        var service = CreateService(factory, registeredJobs: (namedType, nameof(NamedTestJob)));
+
+        var job = Assert.Single(await service.GetAllAsync(), j => j.JobTypeName == namedType);
+
+        Assert.Equal(NamedTestJob.DeclaredName, job.DisplayName);
+    }
+
+    [Fact]
     public async Task GetAllAsync_ListsALoggedJobTheCmsHasNotRegistered()
     {
         // Exists in code but not registered — not the same as history-only, and not flagged as such.

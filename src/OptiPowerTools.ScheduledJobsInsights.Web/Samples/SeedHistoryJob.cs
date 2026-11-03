@@ -33,7 +33,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// <see cref="SummaryShowcaseJob"/> covers the large-summary case.
 /// </para>
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Seed Execution History", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Seed Execution History", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class SeedHistoryJob : LoggedScheduledJobBase
 {
     private const int SeededExecutions = 60;

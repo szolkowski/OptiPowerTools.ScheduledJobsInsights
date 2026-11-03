@@ -24,7 +24,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// one-line result message or in a few thousand log entries.
 /// </para>
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Bulk Summary", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Bulk Summary", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class BulkSummaryJob : LoggedScheduledJobBase
 {
     private const int UrlsChecked = 2_000;

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using EPiServer.DataAbstraction;
 using EPiServer.Scheduler;
+using OptiPowerTools.ScheduledJobsInsights.Cms;
 using OptiPowerTools.ScheduledJobsInsights.Configuration;
 
 namespace OptiPowerTools.ScheduledJobsInsights.Logging;
@@ -415,6 +416,11 @@ public abstract class LoggedScheduledJobBase : ScheduledJobBase
 
     private string TryResolveJobName(Guid scheduledJobId)
     {
+        // The job's own declared display name first: the CMS registry's name is the class name on
+        // CMS 13, so it is only the fallback - see ScheduledJobDisplayName.
+        if (ScheduledJobDisplayName.Of(GetType()) is { } declared)
+            return declared;
+
         try
         {
             // Null outside a CMS — a context built by JobLoggingContext.ForWriter for a unit test.

@@ -9,7 +9,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// Not part of the NuGet package — a manual-testing sample showing multi-phase logging at
 /// different <see cref="LogSeverity"/> levels via <see cref="LoggedScheduledJobBase.Log"/>.
 /// </summary>
-[ScheduledJob(DisplayName = "Sample: Inventory Sync", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Inventory Sync", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class InventorySyncJob : LoggedScheduledJobBase
 {
     private static readonly string[] Warehouses = ["North", "South", "East", "West"];

@@ -1,101 +1,18 @@
 @model OptiPowerTools.ScheduledJobsInsights.Cms.ScheduledJobsInsightsPageModel
-@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
+@* The CMS 13 shell chrome around the page, and only that: the document itself is _ShellLayout.cshtml
+   and the page inside it _ShellComponents.cshtml, both shared with the CMS 12 package. Its own
+   Shell.cshtml (src/OptiPowerTools.ScheduledJobsInsights.Cms12/Views/ScheduledJobsInsightsCms/) is
+   this file with CMS 12's equivalents - CMS 12 has neither tag helper used here, and CMS 13 removed
+   the HTML helpers it uses instead. *@
 @{
-    Layout = string.Empty;
-
-    // Typed, not ViewBag: these are the values whose loss breaks the page silently — a renamed key
-    // would have given the components null, rendering in UTC or auditing as "unknown", with nothing
-    // failing to say so. See ScheduledJobsInsightsPageModel.
-    var executionId = Model.ExecutionId;
-    var viewerTimeZone = Model.ViewerTimeZone;
-    var showRetention = Model.ShowRetention;
-    var currentUser = Model.CurrentUser;
-
-    // The scoped-CSS bundle is named after the entry assembly. ApplicationName usually equals it but
-    // is settable independently through WebApplicationOptions, so prefer the assembly name and fall
-    // back only when there isn't one.
-    var scopedCssName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name
-        ?? HostEnvironment.ApplicationName;
-
-    // This package's own static web assets are served under _content/{PackageId}, and the CMS 12
-    // build ships under a different package id - so the path comes from the build, not a literal.
-    var assetBase = OptiPowerTools.ScheduledJobsInsights.Cms.PackageAssets.BasePath;
+    // Set explicitly, which also keeps a host application's _ViewStart layout away from this page.
+    Layout = "_ShellLayout";
 }
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@Model.PageTitle</title>
-
-    @* Required by blazor.server.js: it resolves the /_blazor hub relative to this base. Without it
-       the hub is looked up under the current directory — /ScheduledJobsInsightsCms/_blazor — which
-       404s, so the circuit never starts. The page then stays as prerendered HTML: the list still
-       looks fine, but nothing is interactive and the Virtualize-backed log renders as an empty box.
-       Url.Content resolves the app's path base, so this also works under a virtual directory. *@
-    <base href="@Url.Content("~/")" />
-
-    @* Optimizely shell chrome + theme. The components render inside this document rather than in an
-       iframe, so they inherit these styles instead of needing a stand-in stylesheet of their own. *@
+@section ShellResources {
     <episerver-resources area="ShellCore" />
     <episerver-resources area="ShellCoreLightTheme" />
-
-    @* Razor scoped CSS (Index.razor.css / Detail.razor.css) is bundled into the *host* application's
-       stylesheet, whose name follows the entry assembly - hence resolving it at runtime rather than
-       hardcoding a name this package cannot know.
-
-       ApplicationName is not guaranteed to match that bundle: a host can set it explicitly through
-       WebApplicationOptions, and the bundle keeps the assembly name. When they differ this link 404s
-       and the components render unstyled, so the assembly name is preferred when it is available and
-       ApplicationName is only the fallback.
-
-       asp-append-version on both: an upgraded package otherwise serves whatever CSS the browser
-       cached from the previous version, which is a support call that looks like a rendering bug. *@
-    <link rel="stylesheet" href="@Url.Content($"~/{scopedCssName}.styles.css")" asp-append-version="true" />
-    <link rel="stylesheet" href="@Url.Content($"~/{assetBase}/css/scheduled-jobs-insights.css")" asp-append-version="true" />
-
-    @* Records the reader's IANA time zone so the server can render timestamps in it. This runs in the
-       document head, before the components below are rendered on any subsequent request, and the
-       controller reads it back out of the cookie — which is why it is a cookie rather than JS interop:
-       the value has to be available during prerendering, not just once the circuit connects.
-
-       Avoid writing literal HTML tags in these comments: SonarCloud's HTML analyser parses Razor
-       comments as markup, so a tag name in here is read as a real element (an extra head element with
-       no title, in this case) and reported as a defect in the page.
-
-       Consequence worth knowing: on the very first page view the cookie does not exist yet, so times
-       render in UTC (labelled as such, never silently wrong) and every view after that is in the
-       reader's own zone. Nothing here reloads the page to avoid that one occurrence. *@
-    @* An external file, not inline: an inline script never runs under a script-src policy without
-       'unsafe-inline', which is the ordinary case for a CMS back office — and the failure is silent,
-       leaving every reader permanently on UTC. asp-append-version for the same cache-busting reason as
-       the stylesheets above. *@
-    <script src="@Url.Content($"~/{assetBase}/js/timezone.js")" asp-append-version="true" defer></script>
-</head>
-<body>
-    @* platform-navigation advertises an antiforgery header name on this page for the shell's client
-       scripts to use, but the token itself has to come from the page. Native CMS pages emit one, so
-       this does too — otherwise any shell script that posts from here has no token to send. *@
-    @Html.AntiForgeryToken()
-
-    <platform-navigation />
-    <platform-navigation-wrapper>
-        <div class="sji-content">
-            @if (showRetention)
-            {
-                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Retention)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" param-CurrentUser="currentUser" />
-            }
-            else if (executionId is { } id)
-            {
-                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Detail)" render-mode="ServerPrerendered" param-Id="id" param-ViewerTimeZone="viewerTimeZone" />
-            }
-            else
-            {
-                <component type="typeof(OptiPowerTools.ScheduledJobsInsights.Components.Pages.Index)" render-mode="ServerPrerendered" param-ViewerTimeZone="viewerTimeZone" />
-            }
-        </div>
-    </platform-navigation-wrapper>
-
-    <script src="~/_framework/blazor.server.js"></script>
-</body>
-</html>
+}
+<platform-navigation />
+<platform-navigation-wrapper>
+    <partial name="_ShellComponents" model="Model" />
+</platform-navigation-wrapper>

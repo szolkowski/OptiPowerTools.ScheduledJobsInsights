@@ -42,3 +42,16 @@ internal sealed class PlainTestJob : RetentionTestJobBase
 {
     public PlainTestJob(JobLoggingContext context) : base(context) { }
 }
+
+/// <summary>Declares a display name on its scheduled-job attribute, as real jobs do.</summary>
+#if CMS12
+[EPiServer.PlugIn.ScheduledPlugIn(DisplayName = DeclaredName)]
+#else
+[EPiServer.Scheduler.ScheduledJob(DisplayName = DeclaredName)]
+#endif
+internal sealed class NamedTestJob : RetentionTestJobBase
+{
+    public const string DeclaredName = "Declared Retention Name";
+
+    public NamedTestJob(JobLoggingContext context) : base(context) { }
+}

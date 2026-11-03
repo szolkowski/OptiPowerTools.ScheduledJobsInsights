@@ -27,7 +27,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// is persisted just the same.
 /// </para>
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Slow Migration", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Slow Migration", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class SlowMigrationJob : LoggedScheduledJobBase
 {
     private const int BatchCount = 30;

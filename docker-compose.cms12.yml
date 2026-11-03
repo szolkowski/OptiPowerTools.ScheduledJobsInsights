@@ -1,0 +1,85 @@
+# The CMS 12 dev stack: OptiPowerTools.ScheduledJobsInsights.Cms12.Web on CMS 12, with a database of
+# its own. A separate compose project from docker-compose.yml (CMS 13) - different containers, volumes,
+# network and ports - so the two can run side by side or independently.
+#
+#   cp .env.example .env                        # first time only; shared with the CMS 13 stack
+#   Docker/cms12-fetch-site-content.sh          # first time only; the Alloy content (gitignored)
+#   docker compose -f docker-compose.cms12.yml up -d
+#
+# Web on :5104, SQL Server on :6004 (CMS12_* in .env). Register the first administrator at
+# /util/register; the back office is at /EPiServer/CMS/.
+name: optipowertools-scheduledjobsinsights-cms12
+
+services:
+  db:
+    build:
+      dockerfile: Docker/cms12-db.dockerfile
+      context: .
+    image: sjinsights12-db:local
+    container_name: sjinsights12-db
+    # SQL Server 2025 ships linux/amd64 only, so on Apple Silicon it runs emulated.
+    platform: linux/amd64
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+      DB_NAME: ${CMS12_DB_NAME}
+    ports:
+      - ${CMS12_DB_HOST_PORT}:1433
+    volumes:
+      # Named volume, so the database survives `docker compose down`.
+      # Only `docker compose down -v` (or removing the volume) discards it.
+      - sjinsights12-sqldata:/var/opt/mssql
+    networks:
+      - sjinsights12-net
+    healthcheck:
+      # Gates the web service: DB_NAME is created by Docker/cms12-create-db.sh, which
+      # the cms12-db.dockerfile entrypoint runs alongside sqlservr on first start.
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$SA_PASSWORD" -Q "SELECT 1 FROM sys.databases WHERE name = '$$DB_NAME'" -C -h -1 | grep -q 1
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    depends_on:
+      db:
+        condition: service_healthy
+    build:
+      dockerfile: Docker/cms12-web.dockerfile
+      context: .
+    image: sjinsights12-web:local
+    container_name: sjinsights12-web
+    environment:
+      # ASPNETCORE_HTTP_PORTS rather than ASPNETCORE_URLS: the aspnet base image already sets
+      # HTTP_PORTS=8080, and URLS overrides it with a warning on every boot.
+      ASPNETCORE_HTTP_PORTS: 80
+      ASPNETCORE_ENVIRONMENT: Development
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      # These override appsettings.Development.json, which points at the host
+      # port so that `dotnet run` on the host reaches the same database.
+      CONNECTIONSTRINGS__EPISERVERDB: Server=db;Database=${CMS12_DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
+      OptiPowerTools__ScheduledJobsInsights__ConnectionString: Server=db;Database=${CMS12_DB_NAME};User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;
+    ports:
+      - ${CMS12_WEB_HOST_PORT}:80
+    volumes:
+      # Source is bind-mounted rather than baked in, so edits + a restart pick up
+      # new code. Container build output is kept apart from the host's by the
+      # DOTNET_RUNNING_IN_CONTAINER switch in Directory.Build.props.
+      - .:/src:rw
+      # DataProtection keys. Without this they live in the container's filesystem and are discarded
+      # with it, so every recreate invalidates the antiforgery tokens and auth cookies of anyone with
+      # the site open.
+      - sjinsights12-dpkeys:/home/appuser/.aspnet/DataProtection-Keys
+    networks:
+      - sjinsights12-net
+    restart: unless-stopped
+
+volumes:
+  sjinsights12-sqldata:
+    name: sjinsights12-sqldata
+  sjinsights12-dpkeys:
+    name: sjinsights12-dpkeys
+
+networks:
+  sjinsights12-net:
+    name: sjinsights12-net

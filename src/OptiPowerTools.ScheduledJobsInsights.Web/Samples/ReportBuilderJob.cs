@@ -17,7 +17,7 @@ namespace OptiPowerTools.ScheduledJobsInsights.Web.Samples;
 /// it up as the work happens — rather than assembling one big string at the end — is what makes it
 /// natural to record something in every branch.
 /// </remarks>
-[ScheduledJob(DisplayName = "Sample: Report Builder", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = false)]
+[ScheduledJob(DisplayName = "Sample: Report Builder", IntervalType = ScheduledIntervalType.Days, DefaultEnabled = SampleDefaults.Enabled)]
 public sealed class ReportBuilderJob : LoggedScheduledJobBase
 {
     private static readonly string[] Regions = ["EMEA", "AMER", "APAC", "LATAM"];

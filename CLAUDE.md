@@ -5,7 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 A NuGet package for Optimizely (EPiServer) CMS 13 that adds structured logging, metrics, and a Blazor
-admin UI on top of Optimizely's **native** scheduled jobs (`EPiServer.Scheduler.ScheduledJobBase`).
+admin UI on top of Optimizely's **native** scheduled jobs (`EPiServer.Scheduler.ScheduledJobBase`) —
+and, from the same source, a second package for CMS 12, `OptiPowerTools.ScheduledJobsInsights.Cms12`
+(see [The CMS 12 package](#the-cms-12-package)).
 Part of the `OptiPowerTools` family (sibling: `OptiPowerTools.Hangfire`, which does the equivalent for
 Hangfire-based background jobs instead of native scheduled jobs). This repo was originally generated
 from the `OptiPowerTools.PackageName` scaffold template and has since been fully built out — the
@@ -13,10 +15,17 @@ scaffold's placeholder tokens have already been renamed throughout.
 
 ## Commands
 
+To run the tests and get one status table, use the `run-tests` skill
+(`.claude/skills/run-tests/run-tests.sh [unit|e2e|all] [cms13|cms12] [--keep]`); it runs every suite the
+way it has to be run and writes logs and `.trx` results to `artifacts/test-run/`.
+
 ```bash
 # Build/test the packable library + tests (works without the submodule)
 dotnet build src/OptiPowerTools.ScheduledJobsInsights/OptiPowerTools.ScheduledJobsInsights.csproj
 dotnet test tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj
+
+# The same tests against the CMS 12 build (`dotnet test` from the root runs both suites)
+dotnet test tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests/OptiPowerTools.ScheduledJobsInsights.Cms12.Tests.csproj
 
 # Run a single test (xUnit fully-qualified name filter)
 dotnet test tests/OptiPowerTools.ScheduledJobsInsights.Tests/OptiPowerTools.ScheduledJobsInsights.Tests.csproj --filter "FullyQualifiedName~LoggedScheduledJobBaseTests"
@@ -44,11 +53,19 @@ docker compose up -d
 # ...or just the database, running the web host locally on https://localhost:5001
 docker compose up db -d
 dotnet run --project src/OptiPowerTools.ScheduledJobsInsights.Web
+
+# Browser tests, local only: throwaway Docker stacks of both CMS versions, built from the working
+# tree (CMS 13 on :5105/:6005, CMS 12 on :5106/:6006). CI builds the project but never runs it.
+scripts/e2e.sh                # or: scripts/e2e.sh cms12 --keep -- --filter DetailPage
+
+# The CMS 12 dev stack: a separate compose project. Web on :5104, SQL Server on :6004.
+Docker/cms12-fetch-site-content.sh    # first time only: the Alloy content, from EPiServer.Templates
+docker compose -f docker-compose.cms12.yml up -d
 ```
 
 The CMS back office is at `/Optimizely/CMS/` on CMS 13 — the old `/episerver` path returns a bare 404.
-On a fresh database, register the first administrator at `/util/register` (that page disappears once a
-user exists).
+On a fresh database, register the first administrator at `/util/register` (on CMS 12 that page
+disappears once a user exists; the CMS 13 dev host's registration is configured to keep serving it).
 
 `App_Data/` is gitignored in the submodule, so a fresh clone has **no** CMS content: Optimizely imports
 `sub/MyOptiAlloySite/MyOptiAlloySite/App_Data/DefaultSiteContent.episerverdata` into an empty database
@@ -59,7 +76,8 @@ and builds the site definition from it. Without that file the CMS starts and the
 The Optimizely scheduler is disabled in Development by the Alloy site's own startup, so jobs never fire
 on their interval in this dev host — trigger them with **Start Manually** in the CMS Scheduled Jobs
 admin page. `src/OptiPowerTools.ScheduledJobsInsights.Web/Samples/` holds twelve sample jobs, all
-`DefaultEnabled = false`, which between them exercise every logging API and every state the two UI
+`DefaultEnabled = SampleDefaults.Enabled` (false here, true on the CMS 12 dev site, which compiles the
+same files), which between them exercise every logging API and every state the two UI
 pages can render (including `SeedHistoryJob`, which writes ~60 synthetic executions so paging and the
 filters have data, and `SummaryShowcaseJob` and `BulkSummaryJob`, which stress the summary section from opposite ends —
 long lines that overrun the character limit, and ~2,000 short lines that fit inside it).
@@ -77,10 +95,12 @@ pages and `AccordionSection`, and the extension methods are `public` — **22 ex
 `PublicSurfaceTests`** rather than by reading the XML docs, which include internal members and
 overstate it. That test was the only guard on 1.0.0 itself, because
 `PackageValidationBaselineVersion` has nothing to compare against on the release that establishes the
-baseline. **1.0.0 is published (2026-09-09), so the baseline can and must now be armed** — set it to
-`1.0.0` in the csproj, where it currently sits commented out. `publish.yml` fails any release past
-1.0.0 whose csproj has no baseline, so forgetting is loud rather than silent; the test keeps covering
-the same ground locally, without needing to download a baseline package.
+baseline. 1.0.0 published on 2026-09-09 and the baseline was armed at `1.0.0` the next day; bump it
+to the previous release at each release. `publish.yml` fails any release past 1.0.0 whose csproj has
+no baseline, so forgetting is loud rather than silent; the test keeps covering the same ground
+locally, without needing to download a baseline package. The CMS 12 package exports the same 22 types
+(its test twin runs the same `PublicSurfaceTests`) and has no baseline yet: arm it in the first
+commit after `cms12-v1.0.0` is published.
 Keep new additions to that surface fully documented, or make them `internal` instead (the test project has `InternalsVisibleTo` access to
 everything). Razor components are generated as public types, so their `[Parameter]` properties need
 doc comments too. The EF migration classes are `internal` on purpose: EF discovers them through
@@ -106,10 +126,14 @@ turned 75 of 407 tests red with `ArgumentNullException` out of Castle's `Invocat
 constructor cannot take a less accessible parameter type and freezing two implementation-detail
 interfaces as a side effect of CMS job discovery was the worse trade.
 
-`NuGetAuditMode` is left at the default (`all`), and a single advisory is suppressed by id in
-`Directory.Build.props` with a recorded acceptance date and a recheck condition — see the file for
-which and why. Suppressing one known advisory by id is deliberately narrower than lowering the audit
-mode, which would hide every future transitive advisory as well.
+`NuGetAuditMode` is left at the default (`all`), and known advisories in packages EPiServer pulls in
+are accepted in `Directory.Build.props` with a recorded acceptance date and a recheck condition — see
+the file for which and why. Suppressing a known advisory is deliberately narrower than lowering the
+audit mode, which would hide every future transitive advisory as well. Prefer `NuGetAuditSuppress`
+with the advisory URL, as the high-severity ones are: it silences exactly that advisory, where
+`NoWarn` on an `NU190x` code (as the older MailKit entry still does) silences every advisory of that
+severity. The current entries are temporary — Optimizely is moving off the affected versions — and
+each is to be removed as soon as restore no longer resolves the vulnerable version.
 
 ## Architecture
 
@@ -160,9 +184,17 @@ section. Three things about it are deliberate:
    longer in the repository). A non-positive configured value falls back to
    `JobResultSummary.DefaultMaxLength` rather than throwing.
 
-Job name resolution (`IScheduledJobRepository.Get(ScheduledJobId)`) is wrapped in try/catch with a
-fallback to `GetType().Name` — this is deliberate, not just defensive: it's what makes the class
-constructible in unit tests without a registered `ScheduledJob` definition.
+Job name resolution takes the **display name the job declares on its scheduled-job attribute** first
+(`Cms/ScheduledJobDisplayName`), then the CMS registry's name (`IScheduledJobRepository.Get`), then
+`GetType().Name`. The attribute comes first because the registry's `Name` means different things per
+CMS version: CMS 12 stores the display name there, CMS 13 the class name (its scanner sets
+`Name = Type.Name`, and its admin reads the display name from the attribute). Reading the registry
+recorded and listed every CMS 13 job as `SlowMigrationJob` where the CMS says "Sample: Slow
+Migration" — found by the e2e tests, and the retention screen had the same bug through
+`RegisteredJobNames`; it now prefers `LoggedJobTypeIndex.FindDisplayName`. Executions recorded before
+the fix keep the name they were recorded with. The registry lookup is wrapped in try/catch — deliberate,
+not just defensive: it's what makes the class constructible in unit tests without a registered
+`ScheduledJob` definition.
 
 ### Write path: why some writes are sync and others are buffered
 
@@ -341,7 +373,8 @@ exists purely so `dotnet ef migrations add` works without a `Startup`/`Program` 
 
 Unlike `OptiPowerTools.Hangfire`, which iframes a third-party dashboard it does not own, this package
 owns its markup and renders **inline inside the CMS chrome** — no iframe. The MVC controller + view
-(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Shell.cshtml`) draws the
+(`Cms/ScheduledJobsInsightsCmsController`, `Views/ScheduledJobsInsightsCms/Shell.cshtml` rendered
+through `_ShellLayout.cshtml`, with the page itself in `_ShellComponents.cshtml`) draws the
 Optimizely shell and hosts the components through the Component Tag Helper, so they inherit the
 shell's Axiom styling instead of needing a stand-in stylesheet. That means **Blazor Server**
 (`AddServerSideBlazor()` + `MapBlazorHub()`), not the Blazor Web App model — the latter wants to own
@@ -632,8 +665,62 @@ left out because all three need a second poll tick against a hard-coded two-seco
 alternative was a static test seam. The interval is now the `DetailPollInterval` option — a legitimate
 thing for an installation to tune, which happens to make these tests cheap — so the trade went away
 rather than being accepted. `SlowMigrationJob` is still the way to check the behaviour by hand against
-a real running job. What the suite does **not** cover is any of the five CMS-shell constraints above;
-those are host-integration failures only a real browser catches.
+a real running job. What the unit suite does **not** cover is any of the five CMS-shell constraints
+above; those are host-integration failures only a real browser catches.
+
+That is what `tests/OptiPowerTools.ScheduledJobsInsights.E2E` is for: Playwright against throwaway
+Docker stacks of both CMS versions (`docker-compose.e2e.yml`, run by `scripts/e2e.sh`), local only.
+Things worth knowing before extending it:
+
+- **Wait on `data-sji-interactive`, never on time.** Each page renders that hidden marker on its first
+  interactive render, which prerendering never reaches, so it is the one reliable signal that the
+  circuit is live; `BrowserSession.Open*Async` waits on it. A page that only prerenders — the missing
+  base href, the `blazor.server.js` 404 — fails there instead of passing on prerendered HTML. bUnit
+  pins the marker on all three pages.
+- **The stacks bake the source in** (`Docker/e2e-web.dockerfile`) rather than bind-mounting it like the
+  dev stacks. The Alloy submodule's own `Directory.Build.props` gives every container the same
+  `obj/container` path, so an e2e container and a dev container building the bind-mounted tree at once
+  would overwrite each other's output.
+- **Seeded, not run.** `SeedData` writes executions straight into the tables (tagged `E2E.*`, deleted
+  and rewritten each run), so assertions are exact; it is also what makes `--keep` re-runs stable.
+- **The administrator is checked in the database**, not read off `/util/register`: on CMS 12 that page
+  stops serving its form once a user exists, but the CMS 13 dev host's registration is configured
+  `Enabled` only and keeps serving it.
+- **Version differences are target properties** (`E2ETarget`), asserted rather than skipped — the CMS
+  12 detail page selecting no menu entry is `DetailPageHighlightsMenu: false`, so a fix shows up as a
+  failing expectation to flip.
+- The selected navigation entry is `li.nav-list__link.is-active` on both CMS versions.
+- **Find jobs by type name, never by name.** CMS 13 registers every job with `Name = Type.Name` (its
+  admin reads the display name from the attribute instead), while CMS 12 stores the attribute's display
+  name; `TypeName` is the same on both. `SeedData.ScheduledJobIdAsync` looks jobs up that way.
+- **The CMS admin is a hash-routed SPA** that does not reliably re-render when moved between two of its
+  hash routes in place; `LiveRunTests` reaches it with a full navigation each time. The same test is
+  where CMS 12's queued manual start shows: the run begins on the scheduler's next pass, so it waits
+  for the execution row rather than assuming one.
+- **Read `Status` as a `tinyint`.** `ExecuteScalarAsync` returns a boxed `byte`, so `as int?` reads
+  every row as missing - which made the cleanup test's "was it deleted" checks pass vacuously until
+  it was caught. `SeedData.StatusAsync` converts.
+- **`CspTests` enforces a strict policy by routing**, adding the header to every document, and
+  reports violations into the test through an exposed function: a list kept in the page's window is
+  reset by every navigation, which once let an inline-style regression on the detail page pass.
+  Scripts are judged from violation reports; **inline styles are judged in the DOM**, because a style
+  attribute this package writes and one Blazor's `Virtualize` writes are reported identically. Virtualize
+  draws the log's two scroll spacers as `style="height: …px; flex-shrink: 0;"` divs and sets
+  `overflow-anchor: none` on the console - the only inline styles allowed. Under a policy that blocks
+  inline styles those spacers collapse and the log cannot scroll its full length; no Optimizely back
+  office runs under one, though, since on both versions the CMS shell's own navigation injects a style
+  element (as do CDN fonts its stylesheets load) - both are ignored as not ours.
+- **A second user, `e2eeditor`** (WebEditors → CmsEditors), is written into the Identity tables by
+  `Users`, hashed with Identity's own `PasswordHasher`. An authenticated user lacking the role is sent
+  to `/Util/Login` by Optimizely rather than given a 403; the menu check reads the navigation tree from
+  the shell's `epiplatformnavigation` response and matches menu URLs only - the raw response also
+  carries the site's name, which contains this repository's name.
+- **The job filter's options are cached for 60 seconds**, process-wide, so on a `--keep` stack a
+  freshly seeded job can be missing from the dropdown for up to a minute; `ListPagingTests` reloads
+  until it appears.
+- **Time-zone labels are the browser's id**, legacy spellings included: Chromium reports
+  Asia/Kathmandu as `Asia/Katmandu`. `TimeZoneTests` reads the id back from the browser and proves the
+  conversion with the 45-minute offset instead.
 
 These Sqlite tests validate the C#-side query/repository/cascade logic only — they do not validate the
 literal SQL Server migration SQL. **CI covers that separately**: the Build & Test workflow runs a real
@@ -647,6 +734,102 @@ keys, `nvarchar(max)`, the custom schema, the cascade rules — because `OnModel
 `DateTimeOffsetToBinaryConverter` under Sqlite and the test suite therefore never sees it. It is a
 plain `.sql` file precisely so it can also be run by hand against a local database; the header shows
 how. Extend it whenever a migration adds something whose shape matters.
+
+### The CMS 12 package
+
+`src/OptiPowerTools.ScheduledJobsInsights.Cms12` is the CMS 12 package, and it has almost no source of
+its own. Its csproj **links** every `.cs`, `.razor`, `.razor.css`, `.cshtml` and `wwwroot` file of the
+CMS 13 project and defines `CMS12`. Everything above therefore applies to both packages, and every
+change to the CMS 13 project is also a change to the CMS 12 one — `dotnet test` from the root runs
+both suites, and CI builds, tests and packs both. Chosen over a shared `Core` assembly after a spike
+showed almost nothing differs: the CMS-specific delta is a handful of lines, and an assembly split
+would have moved the frozen public types out of the 1.0.0 assembly to separate nothing that varies.
+
+Where the two CMS versions really differ, and nowhere else:
+
+- **`#if CMS12`** in `Jobs/ScheduledJobsInsightsCleanupJob.cs` (CMS 12 has no `[ScheduledJob]`; its
+  `[EPiServer.PlugIn.ScheduledPlugIn]` takes the same properties), `Cms/CmsAdminUrls.cs` (CMS 12's
+  Settings SPA is `/EPiServer/EPiServer.Cms.UI.Admin/default#/ScheduledJobs`; the CMS 13 path is a 404
+  there) and `Cms/PackageAssets.cs` (the package id, hence the `_content/{PackageId}` path of the static
+  web assets). Tests that assert those values carry the same `#if`.
+- **`Shell.cshtml`**, the one file each package has its own copy of — the CMS 12 one lives in the CMS
+  12 project and the shared one is excluded from the link. CMS 12's `EPiServer.Shell.UI` has no
+  `episerver-resources` or `platform-navigation-wrapper` tag helper, and an unknown tag helper renders
+  as a literal tag with no build error; CMS 12 uses `ClientResources.RenderResources(...)`,
+  `Html.CreatePlatformNavigationMenu()` and `<div @Html.ApplyPlatformNavigation()>` instead. CMS 13
+  *removed* those helpers, so the two cannot share one view. So each `Shell.cshtml` holds **only** its
+  CMS's chrome: a `ShellResources` section and the navigation wrapped around
+  `<partial name="_ShellComponents" />`. The document itself — head, assets, base href, timezone
+  script, antiforgery token, `blazor.server.js` — is `_ShellLayout.cshtml`, shared and linked like
+  every other file. It used to be two full copies; SonarCloud's duplication gate failed the CMS 12 PR
+  on them (75 of 107 new lines), and two copies of that much load-bearing markup were a drift risk
+  anyway. Anything that is not chrome belongs in the layout or the partial, not in either Shell.
+  (On CMS 13, `episerver-resources` renders a `div` of localization data for the shell scripts, not
+  stylesheets — its styling comes with the navigation bundle — so its head has no shell CSS; that is
+  expected.)
+
+Three things in `OptiPowerTools.ScheduledJobsInsights.Cms12.csproj` are load-bearing:
+
+1. **`RootNamespace`** is pinned to `OptiPowerTools.ScheduledJobsInsights`. Razor derives component
+   namespaces from it; left to default, the shared `.razor` files stop compiling, and a site moving from
+   the CMS 12 package to the CMS 13 one would find its types in another namespace.
+2. **`ContentRoot` metadata on the linked `wwwroot` items.** Static web asset discovery otherwise
+   assumes the project's own `wwwroot\`, which does not exist. The nupkg is unaffected — it packs each
+   file by its path — so this only shows in a host that *references the project*: it fails to start
+   with `DirectoryNotFoundException: …Cms12/wwwroot/`. Found by the CMS 12 dev host, after the spike
+   (which used a copied `wwwroot`) had missed it.
+3. **Its own `InternalsVisibleTo`**, to `OptiPowerTools.ScheduledJobsInsights.Cms12.Tests`. The test
+   twin links the CMS 13 test sources with `CMS12` defined, under an assembly name of its own, and
+   suppresses NU1608: CMS 12 constrains `Castle.Core` below 5.0, NSubstitute 6 needs 5.1.1, and the
+   whole suite — every substitute included — passes against 5.1.1.
+
+What both packages share lives in `src/Package.props` and `tests/Tests.props`, imported by each
+csproj; `<Version>` and `<PackageValidationBaselineVersion>` stay in the csproj because the workflows
+grep them out of it. Adding a project to the solution by hand: `dotnet sln add` also rewrites the file
+with a BOM and x64/x86 platforms for every project, and a configuration line in the wrong
+`GlobalSection` makes the solution build "clean" while silently skipping the project.
+
+CMS 12 behaves differently in ways that look like package bugs and are not — the README's
+"Optimizely CMS 12" section is the consumer-facing version of this list:
+
+- **`DefaultEnabled = false` hides a job entirely.** `DefaultPlugInDescriptorRepository` builds each
+  descriptor with `Enabled = DefaultEnabled`, and `PluginScheduledJobLocator` skips disabled ones, so
+  the job is never registered. Hence `SampleDefaults.Enabled`; a job with no `IntervalLength` gets no
+  next execution, so enabling the samples is still safe.
+- **Start Manually needs the scheduler.** CMS 12 queues the start for the scheduler service, so the
+  CMS 12 dev host deliberately leaves `SchedulerOptions.Enabled` on in Development. A queued start
+  survives a restart and runs after the next boot.
+- **`ScheduledJob.Name` is the display name on CMS 12 but the class name on CMS 13.** Anything that
+  shows a job's name reads the attribute first (`ScheduledJobDisplayName`); anything that identifies a
+  job uses `TypeName`, which is the same on both.
+- **Every job is constructed at startup**, outside any execution, to read `IsStoppable`
+  (`DefaultScheduledJobScanner.GetIsStoppable`). `LoggedScheduledJobBase`'s constructor must stay free
+  of side effects; it says so.
+- The shell serves its legacy theme, so plain `<select>`s render unstyled, and the detail page
+  (`?id=`) highlights no menu leaf. Both cosmetic, neither fixed yet.
+
+The CMS 12 dev host, `src/OptiPowerTools.ScheduledJobsInsights.Cms12.Web`, is Optimizely's Alloy
+template on CMS 12 and needs no submodule. It links the CMS 13 host's `Samples/*.cs`; a project-level
+`<Using … Alias="ScheduledJobAttribute">` maps their `[ScheduledJob]` to `[ScheduledPlugIn]`. Its
+Alloy content is not committed — `Docker/cms12-fetch-site-content.sh` extracts it, hash-checked, from
+`EPiServer.Templates` 1.7.2. `docker-compose.cms12.yml` is a separate compose project
+(`sjinsights12-*`, ports 5104/6004) with its own one-database SQL Server image, so it does not depend
+on the CMS 13 submodule either.
+
+In CI the CMS 12 steps run **after** the SonarCloud window (building the linked files inside it would
+index each of them twice), and two of them guard things nothing else does: the nupkg's contents are
+asserted file by file, since a linked glob that stops matching drops files from the package without
+failing anything; and the upgrade path is checked — the CMS 13 package's migrations must be a no-op on
+a database the CMS 12 package created. Both packages compile the same migrations, so that holds by
+construction; the step notices the day it stops.
+
+`publish.yml` releases both, chosen by tag: `v1.2.3` for CMS 13, `cms12-v1.2.3` for CMS 12. One
+workflow, so its guards cannot drift between packages and nuget.org's trusted-publishing policy (which
+names the workflow file) covers both. CMS 12 releases are created `--latest=false`, so the repository's
+"Latest" stays the CMS 13 package; release notes start at the previous tag *of the same package*. The
+CMS 12 package's major.minor tracks the CMS 13 one — the same major.minor means the same features —
+while patches move independently. Features land on CMS 13 first; fixes go to both. The CMS 12 line
+ends when Optimizely ends CMS 12 support or usage has moved to CMS 13, whichever comes first.
 
 ## Code Style (from CONTRIBUTING.md)
 

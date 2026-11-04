@@ -6,7 +6,7 @@
     <!-- NuGet Package Metadata. What both packages share lives in ../Package.props. -->
     <!-- The release workflow overrides this with the tag it was triggered by (-p:Version=…). The
          value here is only what a local `dotnet pack` produces. -->
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Title>OptiPowerTools: ScheduledJobsInsights</Title>
     <Description>Execution history for native Optimizely CMS 13 scheduled jobs. Swap ScheduledJobBase for LoggedScheduledJobBase and every run is recorded: OnStatusChanged messages, the return value, unhandled exceptions, severity-tagged log lines, an optional multi-line result summary, and automatic metrics (duration, allocations, CPU time, GC counts). Stored in EF Core-backed SQL tables and browsable in a Blazor UI embedded in the CMS admin, with an automatic retention cleanup job. Never alters your jobs' success/failure semantics, and an unreachable insights database costs you the history of a run rather than the run itself.</Description>
 
